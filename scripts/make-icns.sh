@@ -1,10 +1,10 @@
 #!/bin/sh
-# Build build/icon.icns from build/icon.png using macOS-only tools
-# (sips + iconutil). No npm dependencies. Run after scripts/make-icon.mjs.
+# Build build/icon.png and build/icon.icns from build/icon.svg: Electron renders
+# the SVG (scripts/make-icon.cjs), then macOS-only sips + iconutil make the icns.
 set -e
 cd "$(dirname "$0")/.."
 
-node scripts/make-icon.mjs
+npx electron scripts/make-icon.cjs
 
 SET=build/icon.iconset
 rm -rf "$SET"

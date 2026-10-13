@@ -1,0 +1,14 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- macOS icon grid: an 824x824 tile with rounded corners, centred on a 1024 canvas. -->
+<rect x="100" y="100" width="824" height="824" rx="185" fill="#D7D7D7"/>
+<g transform="translate(100 100) scale(1.2099853)">
+<path d="M511.411 121.225C525.232 104.823 552 114.596 552 136.046V473.057C552 485.759 541.698 496.057 528.995 496.057H436.484C431.483 447.737 390.642 410.057 341 410.057C291.358 410.057 250.517 447.737 245.516 496.057H152C139.297 496.057 129 485.759 129 473.057V136.046C129 114.596 155.768 104.823 169.589 121.225L322.911 303.183C332.101 314.089 348.899 314.089 358.089 303.183L511.411 121.225Z" fill="#1E2025"/>
+<circle cx="340.5" cy="496.557" r="70.5" fill="url(#dot)"/>
+</g>
+<defs>
+<linearGradient id="dot" x1="340.5" y1="426.057" x2="340.5" y2="567.057" gradientUnits="userSpaceOnUse">
+<stop stop-color="#44C7B5"/>
+<stop offset="1" stop-color="#8E98FF"/>
+</linearGradient>
+</defs>
+</svg>
