@@ -15,6 +15,7 @@
     "e2e": "electron test/e2e.js",
     "smoke:packaged": "npm run build && electron scripts/packaged-hook-smoke.js",
     "dist": "electron-vite build && electron-builder",
+    "dist:public": "electron-vite build && MUFKA_SIGN_IDENTITY=- electron-builder",
     "sign:dev": "node scripts/sign-mac.mjs node_modules/electron/dist/Electron.app"
   },
   "build": {

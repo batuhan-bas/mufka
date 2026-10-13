@@ -149,6 +149,7 @@ npm run dev              # develop with hot reload
 npm start                # build, then run the built app
 npm test                 # unit tests, then build + the real end-to-end test
 npm run dist             # build the signed universal .dmg into dist/
+npm run dist:public      # the same, ad-hoc signed: for sharing / Releases
 npm run sign:dev         # sign the dev Electron so notifications work in npm start
 ```
 
@@ -165,6 +166,11 @@ is ad-hoc signed), which is what lets macOS show notifications. It is **not
 notarized**, so the person installing it needs the one-time **Open Anyway**
 step above. Notarizing needs a paid Apple Developer account; with one, add
 `notarize` to the `mac` build settings and the warning goes away.
+
+For a copy you share or upload to Releases, use **`npm run dist:public`**: it
+signs ad-hoc, so no certificate (and the name and email in it) ends up inside
+the app. macOS may then ask for notification permission again after each
+update.
 
 Bump `version` in `package.json` before building a new copy, so people can
 tell versions apart.
