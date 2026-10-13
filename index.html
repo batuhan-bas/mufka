@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: mufka-att:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mufka</title>
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar" id="sidebar">
+    <div id="side" class="side"></div>
+    <button id="vault-btn" class="vault-btn" type="button" aria-haspopup="menu" data-menu-anchor="vault"
+      title="The folder your notes are stored in. Click to open another folder (e.g. an Obsidian vault).">
+      <span class="vault-label">Notes folder</span><span id="vault-name" class="vault-name">…</span>
+    </button>
+    <div class="side-footer" aria-label="Keyboard">
+      <button id="foot-open" class="foot-btn" type="button" title="Jump to any note">Open <kbd>⌘O</kbd></button>
+      <button id="foot-commands" class="foot-btn" type="button" title="Every command, searchable">Commands <kbd>⌘P</kbd></button>
+      <button id="foot-keys" class="foot-btn" type="button" title="All keyboard shortcuts">Keys <kbd>⌘/</kbd></button>
+    </div>
+  </aside>
+  <main class="content">
+    <div class="pane-bar">
+      <div class="pane-left">
+        <button id="sidebar-toggle" class="sidebar-toggle" type="button"
+          aria-label="Hide sidebar" title="Hide sidebar (⌘\)">⇤</button>
+        <div class="mode-seg" role="group" aria-label="Mode">
+          <button id="mode-notes" type="button" aria-pressed="true" title="Notes, the day page and the graph (⌃Tab switches)">Notes</button>
+          <button id="mode-planner" type="button" aria-pressed="false" title="Week planner with times (⌘1, ⌃Tab switches)">Planner</button>
+        </div>
+        <button id="nav-back" class="pane-btn nav-btn" type="button" aria-label="Back" title="Back (⌘[)" disabled>‹</button>
+        <button id="nav-forward" class="pane-btn nav-btn" type="button" aria-label="Forward" title="Forward (⌘])" disabled>›</button>
+      </div>
+      <div id="pane-title" class="pane-title" aria-live="polite"></div>
+      <div class="pane-right">
+        <button id="rightbar-btn" class="pane-btn" type="button" aria-pressed="false"
+          aria-controls="rightbar" title="Outline, links and tags of this note (⇧⌘\)">Details</button>
+        <div id="pane-actions" class="pane-actions"></div>
+      </div>
+    </div>
+    <div id="content" class="content-col"></div>
+    <div id="status-bar" class="status-bar" aria-live="off" hidden></div>
+  </main>
+  <aside class="rightbar" id="rightbar" aria-label="Note info" hidden></aside>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<div id="reminders" class="reminders" role="region" aria-label="Reminders" aria-live="assertive"></div>
+<div id="menu-layer"></div>
+
+<script type="module" src="src/renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data: mufka-att:" />
+  <title>Export</title>
+  <style>
+    @page { size: A4; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+    body {
+      font-family: "Iowan Old Style", "Charter", Georgia, serif;
+      font-size: 12pt;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    #doc h1 { font-size: 20pt; margin: 0 0 12pt; }
+    #doc .md h1 { font-size: 17pt; }
+    #doc .md h2 { font-size: 15pt; }
+    #doc .md h3 { font-size: 13pt; }
+    h1, h2, h3 { break-after: avoid; }
+    p, li { break-inside: avoid; }
+    ul, ol { padding-left: 20pt; }
+    li.task { list-style: none; margin-left: -20pt; }
+    code { font-family: Menlo, monospace; font-size: 0.9em; }
+    pre { background: #f4f4f4; padding: 8pt; border-radius: 4pt; white-space: pre-wrap; word-break: break-word; break-inside: avoid; }
+    pre code { white-space: pre-wrap; word-break: break-word; }
+    blockquote { border-left: 2pt solid #ccc; margin: 0 0 8pt; padding-left: 10pt; color: #333; }
+    hr { border: none; border-top: 1px solid #ccc; }
+    .callout { border-left: 2pt solid #888; background: #f4f4f4; margin: 0 0 8pt; padding: 6pt 10pt; break-inside: avoid; }
+    .callout-title { font-weight: 600; }
+    .callout-content > :last-child { margin-bottom: 0; }
+    /* Wiki links and external links print as plain black text. */
+    a { color: #000; text-decoration: none; }
+    input[type="checkbox"] { margin-right: 6pt; }
+  </style>
+</head>
+<body>
+<div id="doc"></div>
+
+<script type="module" src="export.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+{
+  "name": "mufka",
+  "productName": "Mufka",
+  "version": "1.0.0",
+  "description": "Personal planner and Markdown notes for macOS: a week planner, an Obsidian-like vault and a graph of your notes.",
+  "author": "Batuhan Baş",
+  "license": "MIT",
+  "private": true,
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "electron-vite build",
+    "test": "node --test test/*.test.mjs && npm run build && npm run e2e",
+    "e2e": "electron test/e2e.js",
+    "smoke:packaged": "npm run build && electron scripts/packaged-hook-smoke.js",
+    "dist": "electron-vite build && electron-builder",
+    "sign:dev": "node scripts/sign-mac.mjs node_modules/electron/dist/Electron.app"
+  },
+  "build": {
+    "appId": "com.mufka.app",
+    "productName": "Mufka",
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "identity": null
+    },
+    "dmg": {
+      "title": "Mufka"
+    },
+    "files": [
+      "out/**/*",
+      "build/**/*",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "afterPack": "scripts/after-pack.cjs",
+    "copyright": "Copyright © 2026 Batuhan Baş"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "vite": "^7.3.7"
+  },
+  "dependencies": {
+    "mdast-util-from-markdown": "^2.1.0",
+    "mdast-util-frontmatter": "^2.0.1",
+    "mdast-util-gfm": "^3.1.0",
+    "micromark-extension-frontmatter": "^2.0.0",
+    "micromark-extension-gfm": "^3.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/batuhan-bas/mufka.git"
+  }
+}
