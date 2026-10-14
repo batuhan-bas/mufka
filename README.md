@@ -63,6 +63,12 @@ note. Nothing planned yet? Home offers to open the Planner.
   a mention into a link) and all tags.
 - **Templates** (Obsidian-compatible), **bookmarks**, drag-and-drop **images**
   and files, export to **PDF** or Markdown, sorting by name or last edit.
+- **Meeting notes from [Wispr Flow](https://wisprflow.ai)**: connect your
+  Wispr account in **Settings** (⌘,) and every meeting its Notetaker records —
+  Zoom, Google Meet, Teams, Slack huddles or in person — arrives in a
+  **Meetings** folder as a note: summary, tasks, your notes and the transcript.
+  Read-only; it checks every 15 minutes. Wispr Flow's dictation also types
+  straight into any note.
 
 <p align="center"><img src="docs/screenshots/note.png" width="85%" alt="A note with the Details panel showing its links"></p>
 
@@ -108,7 +114,10 @@ you delete them.
 
 ## Your notes and your data
 
-Everything stays on your Mac; there is no account and no server.
+Everything stays on your Mac; there is no account and no server. The one
+exception is a Wispr Flow connection you turn on yourself: Mufka then reads
+your meetings from Wispr (it never sends your notes anywhere). The sign-in is
+kept encrypted in your Keychain; **Disconnect** in Settings forgets it.
 
 | What | Where |
 |---|---|
@@ -129,6 +138,7 @@ Everything stays on your Mac; there is no account and no server.
 | ⌘F | Search |
 | ⌘G · ⇧⌘G | Graph · local graph |
 | ⌘E | Edit a note's raw Markdown |
+| ⌘, | Settings (Wispr Flow connection) |
 | ⇧⌘T | Insert a template |
 | ⌘[ · ⌘] | Back · forward |
 | ⌘\\ · ⇧⌘\\ | Sidebar · Details panel |
