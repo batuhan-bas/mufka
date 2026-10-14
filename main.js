@@ -898,6 +898,13 @@ app.whenReady().then(() => {
   // The UI is dark-only; force the native chrome (title bar, menus) to match
   // regardless of the system appearance.
   nativeTheme.themeSource = 'dark';
+  // Unpackaged runs use node_modules' Electron.app, whose bundle icon is
+  // Electron's; show the Mufka icon in the Dock instead. Packaged builds get it
+  // from the bundle (build/icon.icns).
+  if (!app.isPackaged && process.platform === 'darwin') {
+    const icon = path.join(app.getAppPath(), 'build/icon.png');
+    if (fs.existsSync(icon)) app.dock.setIcon(icon);
+  }
   loadVault();
   ensureNotesDirs();
   watchVault();
