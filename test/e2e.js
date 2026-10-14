@@ -1348,8 +1348,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await press(',', ['meta']);
       assert(await waitFor('!!document.querySelector(".settings-dialog")', 2000), 'settings did not open');
       assert(await waitFor('/Not connected/.test(document.querySelector("[data-conn=wispr] .conn-side")?.textContent || "")', 2000), 'no Wispr connection state');
-      // No Microsoft app id in a test run: the calendar row says so, offers no button.
-      assert(await waitFor('/Not set up/.test(document.querySelector("[data-conn=microsoft] .conn-side")?.textContent || "")', 2000), 'no Microsoft calendar state');
+      assert(await waitFor('/Not connected/.test(document.querySelector("[data-conn=microsoft] .conn-side")?.textContent || "")', 2000), 'no Microsoft calendar state');
       assert(!fs.existsSync(path.join(tmp, 'calendars.bin')), 'a calendar sign-in was stored');
       assert(await js('document.activeElement?.textContent === "Connect"'), 'Connect not focused');
       assert(!fs.existsSync(path.join(tmp, 'wispr.bin')), 'a sign-in was stored');
