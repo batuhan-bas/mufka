@@ -1357,6 +1357,12 @@ app.whenReady().then(() => setTimeout(async () => {
     });
 
     await step(56, 'Calendar events: Planner grid, all-day band, details, join, Home', async () => {
+      // Not connected (the real handler, no sign-in): no refresh button.
+      await clickSel('#mode-planner');
+      assert(await waitFor('!!document.querySelector(".planner .pl-head")', 3000), 'Planner did not open');
+      await sleep(400);
+      assert(!(await js('!!document.querySelector(".pl-refresh")')), 'refresh button shown without a calendar');
+      await press('T', ['meta']);
       // Answer the calendar request in main with two events today, as a
       // connected Microsoft calendar would (no network in tests).
       const at = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
