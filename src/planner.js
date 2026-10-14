@@ -54,7 +54,21 @@ export function renderPlanner(container, weekDate, api) {
   add.title = 'New plan: pick the day, a time and whether it repeats (⇧⌘P)';
   add.append(icon('plus', { size: 15 }), el('span', null, 'New plan'));
   add.addEventListener('click', () => api.newPlan(isThisWeek(days, now) ? now : days[0]));
-  head.append(title, sub, add, nav);
+  head.append(title, sub, add);
+  // Calendars connected: read them again now (they also refresh by themselves).
+  if (api.calendarsConnected()) {
+    const r = el('button', 'icon-btn-sq pl-refresh');
+    r.type = 'button';
+    r.title = 'Refresh calendars';
+    r.setAttribute('aria-label', 'Refresh calendars');
+    r.append(icon('refresh', { size: 15 }));
+    r.addEventListener('click', async () => {
+      r.disabled = true; r.classList.add('busy');
+      try { await api.refreshCalendars(); } finally { if (r.isConnected) { r.disabled = false; r.classList.remove('busy'); } }
+    });
+    head.append(r);
+  }
+  head.append(nav);
   root.append(head);
 
   // Plans with no day (older data, or moved here): shown only when there are

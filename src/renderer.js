@@ -739,6 +739,8 @@ function planDialog(heading, { title = '', time = '', endTime = '' }, onSave, op
 const plannerApi = {
   dayItems: (d) => getDayItems(d),
   dayEvents: (d) => (calApi ? eventsForDay(d) : []),
+  calendarsConnected: () => calConnected,
+  refreshCalendars: () => refreshCalendars(),
   openEvent: (ev) => openEventCard(ev),
   weekItems: weekPlans,
   add(o) {
@@ -1183,6 +1185,7 @@ function commandList() {
     { label: 'Copy note as Markdown', when: noteOpen, run: async () => { await notesApi.copy(state.noteContent); showToast('Copied'); } },
     { label: 'Attach file to note', when: noteOpen, run: addFileToNote },
     { label: 'Open settings', hint: '⌘,', run: openSettings },
+    { label: 'Refresh calendars', when: () => calConnected, run: refreshCalendars },
     { label: 'Connect Wispr Flow', run: openSettings },
     { label: 'Insert template', hint: '⇧⌘T', when: noteOpen, run: openTemplatePicker },
     { label: 'Export note as PDF', when: noteOpen, run: () => runExport('pdf', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
@@ -2688,6 +2691,13 @@ function openSettings() {
 
 const calWeeks = new Map(); // Monday's day key → events (null while loading)
 let calStamp = 0;
+let calConnected = false; // what the last answer said
+
+async function refreshCalendars() {
+  const r = await calApi.refresh(); // main re-reads and says 'changed'
+  if (r && r.error) showToast(`Could not refresh calendars: ${r.error}`);
+  else showToast('Calendars refreshed');
+}
 
 function calendarsChanged() {
   calWeeks.clear();
@@ -2704,6 +2714,9 @@ function eventsForDay(d) {
     calApi.events(mon.toISOString(), addDays(mon, 7).toISOString()).then((res) => {
       if (asked !== calStamp) return;
       calWeeks.set(key, res && Array.isArray(res.events) ? res.events : []);
+      const was = calConnected;
+      calConnected = Boolean(res && res.connected);
+      if (was !== calConnected && state.contentView === 'planner') render();
       if (res && res.connected && res.events && res.events.length && (state.contentView === 'planner' || state.contentView === 'day')) render();
     }).catch(() => calWeeks.set(key, []));
   }

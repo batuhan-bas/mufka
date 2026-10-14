@@ -1366,8 +1366,11 @@ app.whenReady().then(() => setTimeout(async () => {
         { id: 'ms:1', source: 'microsoft', calendar: 'Work', color: '#5AA9E6', title: 'Design review', allDay: false, start: at(10, 0), end: at(11, 0), startDate: null, endDate: null, location: 'Teams', joinUrl: 'https://teams.microsoft.com/l/meetup-join/test', webLink: null, organizer: 'Ali', attendees: ['Veli'], cancelled: false, free: false },
         { id: 'ms:2', source: 'microsoft', calendar: 'Work', color: '#D9A13B', title: 'Offsite', allDay: true, start: null, end: null, startDate: key, endDate: next, location: '', joinUrl: null, webLink: null, organizer: '', attendees: [], cancelled: false, free: false },
       ];
+      let asked = 0;
       ipcMain.removeHandler('calendar:events');
-      ipcMain.handle('calendar:events', () => ({ connected: true, events }));
+      ipcMain.handle('calendar:events', () => { asked += 1; return { connected: true, events }; });
+      ipcMain.removeHandler('calendar:refresh');
+      ipcMain.handle('calendar:refresh', () => { wc.send('calendar:changed'); return { microsoft: { connected: true } }; });
       const opened = [];
       const realOpen = shell.openExternal;
       shell.openExternal = async (u) => { opened.push(u); };
@@ -1378,6 +1381,12 @@ app.whenReady().then(() => setTimeout(async () => {
         assert(await js('document.querySelector(".pl-event .pl-block-title").textContent') === 'Design review', 'wrong event title');
         assert(await js('/10:00–11:00/.test(document.querySelector(".pl-event .pl-block-time").textContent)'), 'wrong event time');
         assert(await js(`!!document.querySelector('.pl-allday[data-drop-day="${key}"] .pl-event-chip')`), 'no all-day chip');
+        // Refresh in the Planner's header asks the calendars again.
+        assert(await waitFor('!!document.querySelector(".pl-refresh")', 2000), 'no refresh button');
+        const before = asked;
+        await clickSel('.pl-refresh');
+        assert(await waitFor('(document.getElementById("toast")?.textContent || "").includes("Calendars refreshed")', 3000), 'no refresh toast');
+        assert(await waitFor2(() => asked > before, 3000), 'refresh did not ask again');
         await clickSel('.pl-event');
         assert(await waitFor('!!document.querySelector(".event-card")', 2000), 'no event details');
         assert(await js('/Work/.test(document.querySelector(".event-facts").textContent)'), 'calendar name missing');
