@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import * as np from '../lib/notespath.mjs';
 import * as bm from '../lib/bookmarks.mjs';
+import * as at from '../lib/attach.mjs';
 import { vaultLayout } from '../lib/layout.mjs';
 
 // Exercise original main-process helpers; only Electron trash is replaced.
@@ -25,18 +26,20 @@ function fixture(t) {
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const root = path.join(base, 'vault'); const outside = path.join(base, 'outside');
   fs.mkdirSync(root); fs.mkdirSync(outside);
-  const trashed = [];
+  const trashed = []; const opened = []; const revealed = [];
   let settings = {};
-  const ctx = vm.createContext({ fs, path, np, bm, randomUUID, vaultLayout,
+  const ctx = vm.createContext({ fs, path, np, bm, at, randomUUID, vaultLayout,
     notesRoot: () => root, noteOwnWrite: () => {}, readSettings: () => settings,
     writeSettings: patch => { settings = { ...settings, ...patch }; },
     isDir: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
-    shell: { trashItem: async p => { trashed.push(p); } },
+    shell: { trashItem: async p => { trashed.push(p); }, openPath: async p => { opened.push(p); return ''; }, showItemInFolder: p => revealed.push(p) },
+    attachUnused: () => ['unused.pdf'], cleanableAttachDir: () => 'Attachments',
   });
   for (const name of ['writeFileAtomic', 'checkedVaultPath', 'readJson', 'obsidianSettings',
     'bookmarksRead', 'bookmarksWrite', 'layout', 'dailyRoot', 'ensureNotesDirs', 'safeAbs',
-    'readDaily', 'writeDaily', 'deleteDaily']) vm.runInContext(original(name), ctx);
-  return { root, outside, ctx, trashed };
+    'readDaily', 'writeDaily', 'deleteDaily', 'mutationAbs', 'isGunlukRoot',
+    'attachAbs', 'attachTrash', 'attachOpen', 'trashNote', 'trashFolder']) vm.runInContext(original(name), ctx);
+  return { root, outside, ctx, trashed, opened, revealed };
 }
 test('daily directory symlink cannot read or overwrite outside the vault', t => {
   const { root, outside, ctx } = fixture(t);
@@ -124,4 +127,74 @@ test('valid custom daily folder and bookmarks still round-trip', async t => {
   assert.equal(trashed.length, 1);
   assert.ok(np.realInside(root, trashed[0], fs));
   assert.throws(() => ctx.writeDaily('../escape', 'data'), /bad date/);
+});
+test('attachment cleanup cannot delete paths or referenced files outside its eligible list', async t => {
+  const { root, ctx, trashed } = fixture(t);
+  fs.mkdirSync(path.join(root, 'Attachments'));
+  fs.writeFileSync(path.join(root, 'private.md'), 'private');
+  for (const name of ['unused.pdf', 'used.pdf']) fs.writeFileSync(path.join(root, 'Attachments', name), 'file');
+  await ctx.attachTrash(['../private.md', 'used.pdf', 'unused.pdf']);
+  assert.deepEqual(trashed, [path.join(root, 'Attachments', 'unused.pdf')]);
+});
+test('attachment cleanup stays in its original vault when selection changes during trash', async t => {
+  const { root, outside, ctx, trashed } = fixture(t);
+  for (const vault of [root, outside]) {
+    fs.mkdirSync(path.join(vault, 'Attachments'));
+    for (const name of ['one.pdf', 'two.pdf']) fs.writeFileSync(path.join(vault, 'Attachments', name), 'file');
+  }
+  fs.writeFileSync(path.join(outside, 'note.md'), '[used](Attachments/two.pdf)');
+  ctx.attachUnused = () => ['one.pdf', 'two.pdf'];
+  ctx.shell.trashItem = async p => { trashed.push(p); ctx.notesRoot = () => outside; };
+  await ctx.attachTrash(['one.pdf', 'two.pdf']);
+  assert.deepEqual(trashed, [path.join(root, 'Attachments', 'one.pdf'), path.join(root, 'Attachments', 'two.pdf')]);
+});
+test('note and folder trash reject the vault root and mismatched types', async t => {
+  const { root, ctx, trashed } = fixture(t);
+  fs.mkdirSync(path.join(root, 'folder')); fs.writeFileSync(path.join(root, 'private.pdf'), 'file');
+  for (const rel of ['', '/']) {
+    await assert.rejects(() => ctx.trashFolder(rel), /invalid/);
+    await assert.rejects(() => ctx.trashNote(rel), /invalid/);
+  }
+  await assert.rejects(() => ctx.trashNote('folder'), /invalid/);
+  await assert.rejects(() => ctx.trashFolder('private.pdf'), /invalid/);
+  await assert.rejects(() => ctx.trashNote('private.pdf'), /invalid/);
+  assert.deepEqual(trashed, []);
+});
+test('daily folder protections recognize trailing separators and filesystem aliases', async t => {
+  const { root, ctx, trashed } = fixture(t);
+  fs.mkdirSync(path.join(root, 'Daily'));
+  await assert.rejects(() => ctx.trashFolder('Daily/'), /daily notes/);
+  fs.symlinkSync(path.join(root, 'Daily'), path.join(root, 'DailyAlias'));
+  await assert.rejects(() => ctx.trashFolder('DailyAlias'), /daily notes|invalid/);
+  assert.deepEqual(trashed, []);
+});
+test('unknown files, executable modes, bundle internals and disguised aliases are only revealed', async t => {
+  const { root, ctx, opened, revealed } = fixture(t);
+  const bundle = path.join(root, 'Example.app'); fs.mkdirSync(bundle);
+  fs.writeFileSync(path.join(bundle, 'inside.pdf'), 'file');
+  fs.writeFileSync(path.join(root, 'unknown'), 'file');
+  fs.writeFileSync(path.join(root, 'executable.pdf'), 'file'); fs.chmodSync(path.join(root, 'executable.pdf'), 0o755);
+  fs.symlinkSync(bundle, path.join(root, 'alias.pdf'));
+  for (const rel of ['unknown', 'executable.pdf', 'Example.app/inside.pdf', 'alias.pdf']) await ctx.attachOpen(rel);
+  assert.deepEqual(opened, []); assert.equal(revealed.length, 4);
+});
+test('ordinary PDF opens and OS open failure reaches the caller', async t => {
+  const { root, ctx, opened } = fixture(t);
+  const file = path.join(root, 'report.pdf'); fs.writeFileSync(file, 'file');
+  await ctx.attachOpen('report.pdf'); assert.deepEqual(opened, [fs.realpathSync(file)]);
+  ctx.shell.openPath = async () => 'No application';
+  await assert.rejects(() => ctx.attachOpen('report.pdf'), /No application/);
+});
+test('attachment protocol constrains active SVG document responses', async t => {
+  const { root, ctx } = fixture(t);
+  fs.writeFileSync(path.join(root, 'marker.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>marker()</script></svg>');
+  let handler;
+  Object.assign(ctx, { URL, Response, ATTACH_SCHEME: 'mufka-att', ATTACH_MIME: { '.svg': 'image/svg+xml' },
+    protocol: { handle: (_scheme, fn) => { handler = fn; } } });
+  vm.runInContext(original('registerAttachProtocol'), ctx); ctx.registerAttachProtocol();
+  const response = await handler({ url: 'mufka-att://v/marker.svg' });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-security-policy') || '', /script-src 'none'/);
+  assert.match(response.headers.get('content-security-policy') || '', /sandbox/);
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
 });

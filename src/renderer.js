@@ -1703,8 +1703,10 @@ const attachResolverFor = (scope) => (raw) => resolveAttachment(
 const dailyRel = (key) => (state.layout.daily ? `${state.layout.daily}/${key}.md` : `${key}.md`);
 
 // Open an attachment (image or file) by its resolved vault path, via IPC.
-function openAttachment(rel) {
-  if (rel) notesApi.attachOpen(rel);
+async function openAttachment(rel) {
+  if (!rel) return;
+  const res = await notesApi.attachOpen(rel);
+  if (res?.error) showToast(res.error);
 }
 
 // Scroll the open note's rendered body to a heading by its (folded) text.

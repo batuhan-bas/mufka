@@ -7,6 +7,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
 import crypto, { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -42,6 +43,7 @@ protocol.registerSchemesAsPrivileged([
 app.setName('Mufka');
 
 const DATA_FILE = 'planlar.json';
+const appRenderers = new Set();
 
 function dataPath() {
   return path.join(app.getPath('userData'), DATA_FILE);
@@ -187,6 +189,14 @@ function checkedVaultPath(abs) {
   return abs;
 }
 
+function mutationAbs(rel, kind) {
+  const abs = safeAbs(rel);
+  if (fs.realpathSync(abs) === fs.realpathSync(notesRoot())) throw new Error('invalid mutation path');
+  const st = fs.lstatSync(abs);
+  if (kind === 'folder' ? !st.isDirectory() : !st.isFile() || !/\.md$/i.test(abs)) throw new Error('invalid mutation type');
+  return abs;
+}
+
 // --- attachments (<vault>/Ekler) ----------------------------------------
 
 // Vault-relative folder that new attachments of a note in `noteDir` go to.
@@ -329,25 +339,44 @@ function attachUnused() {
 }
 
 async function attachTrash(names) {
+  const dir = cleanableAttachDir();
+  if (!dir) return { ok: true };
+  const eligible = new Set(attachUnused());
+  const files = [];
   for (const name of (Array.isArray(names) ? names : [])) {
-    const dir = cleanableAttachDir();
-    if (!dir) break;
-    try { await shell.trashItem(attachAbs(`${dir}/${name}`)); } catch { /* skip */ }
+    if (typeof name !== 'string' || /[/\\]/.test(name) || !eligible.has(name)) continue;
+    try { files.push(attachAbs(`${dir}/${name}`)); } catch { /* skip */ }
+  }
+  // Keep the selected vault's paths even if the user switches while trash awaits.
+  for (const file of files) {
+    try { await shell.trashItem(file); } catch { /* skip */ }
   }
   return { ok: true };
 }
 
 // Open in the default app — except files that would run code (a script or an
 // app linked from a note), which are only shown in Finder.
-function attachOpen(rel) {
+async function attachOpen(rel) {
   const abs = attachAbs(rel);
-  if (at.isExecutableName(abs)) shell.showItemInFolder(abs);
-  else shell.openPath(abs);
+  const real = fs.realpathSync(abs);
+  const st = fs.statSync(real);
+  const document = /\.(png|jpe?g|gif|webp|svg|pdf|txt|md|csv|tsv|json|rtf|docx|xlsx|pptx|odt|ods|odp|zip)$/i.test(real);
+  if (!st.isFile() || !document || (st.mode & 0o111) || real.split(path.sep).some(at.isExecutableName)) shell.showItemInFolder(abs);
+  else {
+    const error = await shell.openPath(real);
+    if (error) throw new Error(error);
+  }
   return { ok: true };
 }
 
 // The daily notes folder: shown in the tree but cannot be renamed/moved/trashed.
-function isGunlukRoot(rel) { const d = layout().daily; return d !== '' && rel === d; }
+function isGunlukRoot(rel) {
+  const d = layout().daily;
+  if (d === '') return false;
+  const daily = dailyRoot();
+  const abs = safeAbs(rel);
+  return fs.existsSync(abs) && fs.existsSync(daily) && fs.realpathSync(abs) === fs.realpathSync(daily);
+}
 function relOf(abs) { return np.relFromAbs(notesRoot(), abs); }
 function isDescendantRel(ancestor, other) {
   if (!ancestor) return Boolean(other);
@@ -445,7 +474,7 @@ function applyLinkRewrite(before, oldRel, newRel) {
 }
 
 function renameNoteRel(rel, newName) {
-  const abs = safeAbs(rel);
+  const abs = mutationAbs(rel, 'note');
   const folderAbs = path.dirname(abs);
   const current = np.titleFromFile(path.basename(rel));
   const existing = siblingNames(folderAbs, false).filter((t) => t.toLowerCase() !== current.toLowerCase());
@@ -459,7 +488,7 @@ function renameNoteRel(rel, newName) {
 
 function renameFolder(rel, newName) {
   if (isGunlukRoot(rel)) throw new Error('The daily notes folder cannot be renamed');
-  const abs = safeAbs(rel);
+  const abs = mutationAbs(rel, 'folder');
   const parentAbs = path.dirname(abs);
   const current = path.basename(rel);
   const existing = siblingNames(parentAbs, true).filter((n) => n.toLowerCase() !== current.toLowerCase());
@@ -473,7 +502,7 @@ function renameFolder(rel, newName) {
 
 function moveEntry(srcRel, destFolderRel) {
   if (isGunlukRoot(srcRel)) throw new Error('The daily notes folder cannot be moved');
-  const srcAbs = safeAbs(srcRel);
+  const srcAbs = mutationAbs(srcRel, fs.lstatSync(safeAbs(srcRel)).isDirectory() ? 'folder' : 'note');
   const isFolder = fs.statSync(srcAbs).isDirectory();
   const dest = destFolderRel || '';
   const srcParent = srcRel.includes('/') ? srcRel.slice(0, srcRel.lastIndexOf('/')) : '';
@@ -489,10 +518,10 @@ function moveEntry(srcRel, destFolderRel) {
   return { rel: toRel, ...applyLinkRewrite(before, srcRel, toRel) };
 }
 
-async function trashNote(rel) { await shell.trashItem(safeAbs(rel)); return { ok: true }; }
+async function trashNote(rel) { await shell.trashItem(mutationAbs(rel, 'note')); return { ok: true }; }
 async function trashFolder(rel) {
   if (isGunlukRoot(rel)) throw new Error('The daily notes folder cannot be deleted');
-  await shell.trashItem(safeAbs(rel));
+  await shell.trashItem(mutationAbs(rel, 'folder'));
   return { ok: true };
 }
 
@@ -581,7 +610,11 @@ function registerAttachProtocol() {
       const abs = attachAbs(rel);
       const buf = fs.readFileSync(abs);
       const ext = path.extname(abs).toLowerCase();
-      return new Response(buf, { headers: { 'content-type': ATTACH_MIME[ext] || 'application/octet-stream' } });
+      return new Response(buf, { headers: {
+        'content-type': ATTACH_MIME[ext] || 'application/octet-stream',
+        'content-security-policy': "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
+        'x-content-type-options': 'nosniff',
+      } });
     } catch {
       return new Response('', { status: 404 });
     }
@@ -1035,6 +1068,9 @@ function createWindow() {
       sandbox: true,
     },
   });
+  const rendererId = win.webContents.id;
+  appRenderers.add(rendererId);
+  win.webContents.once('destroyed', () => appRenderers.delete(rendererId));
   loadPage(win, 'index.html');
   // Re-read notes when the window regains focus, so edits made in another app
   // (or Finder) show up.
@@ -1043,11 +1079,29 @@ function createWindow() {
 }
 
 // Synchronous so the renderer can gate dev-only hooks at module load.
-ipcMain.on('mufka:isPackaged', (event) => { event.returnValue = app.isPackaged; });
+function trustedSender(event) {
+  try {
+    if (!appRenderers.has(event.sender.id) || !event.senderFrame || event.senderFrame !== event.sender.mainFrame) return false;
+    const url = new URL(event.senderFrame.url);
+    const dev = process.env.ELECTRON_RENDERER_URL;
+    if (!app.isPackaged && dev) {
+      const expected = new URL(`${dev}/index.html`);
+      return url.origin === expected.origin && url.pathname === expected.pathname;
+    }
+    return url.protocol === 'file:' && fileURLToPath(url) === path.resolve(__dirname, '../renderer/index.html');
+  } catch { return false; }
+}
 
-ipcMain.handle('planner:load', () => readStore());
+function assertTrustedSender(event) {
+  if (!trustedSender(event)) throw new Error('unauthorized IPC sender');
+}
+
+ipcMain.on('mufka:isPackaged', (event) => { event.returnValue = trustedSender(event) && app.isPackaged; });
+
+ipcMain.handle('planner:load', (event) => { assertTrustedSender(event); return readStore(); });
 
 ipcMain.handle('planner:save', (_event, data) => {
+  assertTrustedSender(_event);
   writeStore(data);
   return { ok: true };
 });
@@ -1055,6 +1109,7 @@ ipcMain.handle('planner:save', (_event, data) => {
 // Show a native notification for a plan whose time has arrived. The renderer
 // decides what is due (shared lib) and asks main to display it.
 ipcMain.handle('planner:notify', (event, payload) => {
+  assertTrustedSender(event);
   const title = typeof payload?.title === 'string' ? payload.title : 'Mufka';
   const body = typeof payload?.body === 'string' ? payload.body : '';
   // When the system notification cannot be shown, the window shows the
@@ -1077,6 +1132,7 @@ function pad2(n) { return String(n).padStart(2, '0'); }
 
 // Export the current store to a user-chosen JSON file.
 ipcMain.handle('planner:export', async (_event, data) => {
+  assertTrustedSender(_event);
   const now = new Date();
   const name = `mufka-backup-${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}.json`;
   const res = await dialog.showSaveDialog({
@@ -1092,7 +1148,8 @@ ipcMain.handle('planner:export', async (_event, data) => {
 
 // Read a user-chosen JSON file and hand its contents to the renderer, which
 // migrates and merges. Main never touches the real store during import.
-ipcMain.handle('planner:import', async () => {
+ipcMain.handle('planner:import', async (event) => {
+  assertTrustedSender(event);
   const res = await dialog.showOpenDialog({
     title: 'Import Plans',
     defaultPath: dialogPath(),
@@ -1112,7 +1169,7 @@ ipcMain.handle('planner:import', async () => {
 // Notes IPC. Each handler wraps a helper and reports errors as { error }.
 function wrap(fn) {
   return async (_e, ...args) => {
-    try { return await fn(...args); } catch (err) { return { error: err.message }; }
+    try { assertTrustedSender(_e); return await fn(...args); } catch (err) { return { error: err.message }; }
   };
 }
 ipcMain.handle('notes:tree', wrap(() => walkVault()));
