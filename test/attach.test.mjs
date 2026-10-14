@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isImageName, attachUrl, attachInsertText, resolveAttachment, normalizeRel, isExecutableName,
-  referencedBasenames, unusedAttachments,
+  referencedBasenames, unusedAttachments, isOpenableDocument,
 } from '../lib/attach.mjs';
 
 test('isImageName covers allowed image types only', () => {
@@ -89,4 +89,12 @@ test('unusedAttachments returns files no note references', () => {
   const ekler = ['used.png', 'orphan.pdf', 'embed.gif'];
   const notes = ['see ![](Ekler/used.png)', 'and ![[embed.gif]]'];
   assert.deepEqual(unusedAttachments(ekler, notes), ['orphan.pdf']);
+});
+
+test('only plain data files are openable; the rest is revealed', () => {
+  for (const ok of ['a.png', 'Photo.HEIC', 'scan.tif', 'voice.m4a', 'song.mp3', 'clip.mov', 'film.mp4',
+    'report.pdf', 'old.doc', 'sheet.xls', 'deck.pptx', 'plan.pages', 'budget.numbers', 'talk.key',
+    'notes.txt', 'data.csv', 'conf.yml', 'archive.zip']) assert.ok(isOpenableDocument(ok), ok);
+  for (const no of ['page.html', 'page.htm', 'run.sh', 'App.app', 'setup.pkg', 'x.command', 'noext',
+    'image.png.app', 'script.js', 'tool.exe', 'link.webloc', '', undefined]) assert.ok(!isOpenableDocument(no), String(no));
 });

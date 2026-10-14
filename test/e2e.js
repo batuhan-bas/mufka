@@ -823,7 +823,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor(`${loaded} === 2`, 4000), `images not loaded: ${await js(loaded)}`);
       shellCalls.length = 0;
       await clickEval('document.querySelector(".note-body img.att-img")', 'relative image');
-      assert(await waitFor2(() => shellCalls.some(([k, p]) => k === 'open' && p === path.join(dir, 'img', 'a.png')), 2000), `image not opened: ${JSON.stringify(shellCalls)}`);
+      assert(await waitFor2(() => shellCalls.some(([k, p]) => k === 'open' && p === fs.realpathSync(path.join(dir, 'img', 'a.png'))), 2000), `image not opened: ${JSON.stringify(shellCalls)}`);
       shellCalls.length = 0;
       await clickEval('[...document.querySelectorAll(".note-body a.att-file")].find(a => a.textContent === "betik")', 'script link');
       assert(await waitFor2(() => shellCalls.length > 0, 2000), 'script link did nothing');
