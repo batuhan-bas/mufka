@@ -679,6 +679,7 @@ async function wisprConnect() {
     }
     wisprPatch({ port, redirectUrl });
     const account = await wisprAccount();
+    wisprSync().catch(() => {});
     return { ok: true, account };
   } catch (err) {
     if (err.message === 'cancelled') return { cancelled: true };
@@ -717,9 +718,121 @@ async function wisprAccount() {
   });
 }
 
+// --- Wispr Flow meetings → notes ---
+// Every finalized meeting becomes a note in <vault>/Meetings. What was imported
+// is remembered per vault in wispr-sync.json (ids, note paths, a hash of what
+// Mufka wrote — no content), so a later change in Wispr updates the note, but
+// a note the user edited or deleted is left alone.
+
+function wisprSyncPath() { return path.join(app.getPath('userData'), 'wispr-sync.json'); }
+function wisprSyncRead() { try { return JSON.parse(fs.readFileSync(wisprSyncPath(), 'utf8')) || {}; } catch { return {}; } }
+function wisprSyncWrite(s) { writeFileAtomic(wisprSyncPath(), JSON.stringify(s, null, 2)); }
+const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+async function wisprCall(client, name, args) {
+  const r = await client.callTool({ name, arguments: args });
+  const data = wp.resultData(r);
+  if (r.isError || !data) throw new Error(wp.resultText(r).slice(0, 200) || `Wispr Flow could not answer ${name}`);
+  return data;
+}
+
+// get_meeting with its notes and transcript read to the end (they come in
+// ranges of up to 40,000 characters).
+async function wisprMeeting(client, id) {
+  const first = await wisprCall(client, 'get_meeting', { meeting_id: id, view_content: { char_limit: 40000 }, view_transcript: { char_limit: 40000 } });
+  const whole = async (field, view, start) => {
+    let { text, next } = wp.splitTruncated(first[field]);
+    for (let i = 0; next != null && i < 100; i++) {
+      const more = wp.splitTruncated((await wisprCall(client, 'get_meeting', { meeting_id: id, [view]: { start_char: next, char_limit: 40000 } }))[field]);
+      text += more.text;
+      next = more.next;
+    }
+    return text;
+  };
+  return { ...first, content: await whole('content', 'view_content'), transcript: await whole('transcript', 'view_transcript') };
+}
+
+let wisprSyncing = null;
+let wisprLastError = null;
+
+function wisprSync() {
+  if (wisprSyncing) return wisprSyncing;
+  wisprSyncing = (async () => {
+    const all = wisprSyncRead();
+    const root = notesRoot();
+    const st = (all.vaults ||= {})[root] ||= { meetings: {} };
+    let created = 0; let updated = 0;
+    try {
+      await wisprSession(async (client) => {
+        const meetings = [];
+        let cursor;
+        for (let page = 0; page < 10; page++) {
+          const d = await wisprCall(client, 'search_meetings', { limit: 100, ...(cursor ? { cursor } : {}) });
+          meetings.push(...(Array.isArray(d.meetings) ? d.meetings : []));
+          if (!d.has_more || !d.next_cursor) break;
+          cursor = d.next_cursor;
+        }
+        for (const m of meetings) {
+          const known = st.meetings[m.id];
+          const disk = {};
+          if (known) {
+            const note = readNoteRel(known.rel);
+            if (!note) disk.missing = true;
+            else disk.edited = sha(note.content) !== known.hash;
+          }
+          const action = wp.syncAction(m, known, disk);
+          if (action !== 'create' && action !== 'update') continue;
+          const full = await wisprMeeting(client, m.id);
+          const text = wp.meetingNote({ ...m, ...full });
+          const rel = action === 'create' ? createNote(wp.MEETINGS_FOLDER, wp.meetingTitle(full)).rel : known.rel;
+          writeNoteRel(rel, text);
+          st.meetings[m.id] = { rel, modified: m.modified_at || '', hash: sha(text) };
+          wisprSyncWrite(all); // keep what is done if a later meeting fails
+          if (action === 'create') created++; else updated++;
+        }
+      });
+      wisprLastError = null;
+    } catch (err) {
+      wisprLastError = err.message;
+      throw err;
+    } finally {
+      st.lastSync = new Date().toISOString();
+      wisprSyncWrite(all);
+    }
+    if (created || updated) {
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.webContents.send('notes:changed');
+        w.webContents.send('wispr:synced', { created, updated, folder: wp.MEETINGS_FOLDER });
+      }
+    }
+    return { created, updated, folder: wp.MEETINGS_FOLDER };
+  })().finally(() => { wisprSyncing = null; });
+  return wisprSyncing;
+}
+
+// While connected: shortly after launch, then every 15 minutes. Quiet on
+// failure (the error shows in Settings).
+let wisprTimer = null;
+function wisprSchedule() {
+  clearInterval(wisprTimer);
+  const tick = () => { if (wisprRead().tokens) wisprSync().catch(() => {}); };
+  setTimeout(tick, 5000);
+  wisprTimer = setInterval(tick, wp.SYNC_EVERY_MS);
+}
+
 function wisprStatus() {
   const s = wisprRead();
-  return { connected: Boolean(s.tokens), account: s.account || null, signingIn: Boolean(wisprSignIn) };
+  const v = (wisprSyncRead().vaults || {})[notesRoot()] || {};
+  return {
+    connected: Boolean(s.tokens),
+    account: s.account || null,
+    signingIn: Boolean(wisprSignIn),
+    syncing: Boolean(wisprSyncing),
+    lastSync: v.lastSync || null,
+    lastError: wisprLastError,
+    imported: Object.keys(v.meetings || {}).length,
+    folder: wp.MEETINGS_FOLDER,
+  };
 }
 
 // Forget the sign-in on this Mac (Wispr Flow offers no revocation endpoint;
@@ -1037,6 +1150,7 @@ ipcMain.handle('wispr:connect', wrap(() => wisprConnect()));
 ipcMain.handle('wispr:cancel', wrap(() => { if (wisprSignIn) wisprSignIn.cancel(); return { ok: true }; }));
 ipcMain.handle('wispr:disconnect', wrap(() => wisprDisconnect()));
 ipcMain.handle('wispr:refresh', wrap(async () => ({ account: await wisprAccount() })));
+ipcMain.handle('wispr:sync', wrap(() => wisprSync()));
 ipcMain.handle('notes:openExternal', wrap((url) => {
   if (!/^https?:\/\//i.test(String(url))) return { error: 'blocked' };
   shell.openExternal(url);
@@ -1073,6 +1187,7 @@ app.whenReady().then(() => {
   watchVault();
   registerAttachProtocol();
   buildMenu();
+  wisprSchedule();
   const win = createWindow();
   win.webContents.once('did-finish-load', () => warnIfVaultMissing(win));
   app.on('activate', () => {

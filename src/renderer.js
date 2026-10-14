@@ -2561,7 +2561,14 @@ function openSettings() {
         button('Cancel', true, () => wisprApi.cancel()));
     } else if (s.connected) {
       side.append(elem('span', 'conn-state ok', `Connected \u00b7 ${s.account || 'Wispr Flow'}`),
+        button(s.syncing ? 'Syncing\u2026' : 'Sync now', false, syncNow),
         button('Disconnect', true, async () => { await wisprApi.disconnect(); refresh(); showToast('Wispr Flow disconnected'); }));
+      if (s.syncing) side.querySelector('.btn:not(.quiet)').disabled = true;
+      const info = s.imported
+        ? `${s.imported} meeting${s.imported === 1 ? '' : 's'} in the ${s.folder} folder`
+        : `Meetings will appear in the ${s.folder} folder`;
+      side.append(elem('span', 'conn-info', s.lastSync ? `${info} \u00b7 last synced ${timeAgo(s.lastSync)}` : info));
+      if (s.lastError && !note) note = `Last sync failed: ${s.lastError}`;
     } else {
       side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', false, connect));
     }
@@ -2569,6 +2576,14 @@ function openSettings() {
     if (hadFocus && !box.contains(document.activeElement)) (side.querySelector('button') || done).focus();
   };
   const refresh = async (note) => draw(await wisprApi.status(), note);
+  const syncNow = async () => {
+    const p = wisprApi.sync();
+    refresh();
+    const res = await p;
+    if (res && res.error) { refresh(res.error); return; }
+    if (res && !res.created && !res.updated) showToast('No new meetings in Wispr Flow');
+    refresh();
+  };
   const connect = async () => {
     busy = true; refresh();
     const res = await wisprApi.connect();
@@ -2581,6 +2596,7 @@ function openSettings() {
   const restore = document.activeElement;
   const close = () => { layer.remove(); settingsLayer = null; if (restore && restore.isConnected) restore.focus(); };
   layer._close = close;
+  layer._refresh = () => refresh();
   const actions = elem('div', 'plan-dialog-actions');
   const done = button('Done', false, close);
   actions.append(done);
@@ -2591,6 +2607,23 @@ function openSettings() {
   settingsLayer = layer;
   refresh().then(() => (side.querySelector('button') || done).focus());
 }
+
+function timeAgo(iso) {
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!(min >= 1)) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  return h < 24 ? `${h} h ago` : new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+// Meetings that arrived from Wispr Flow (sync in main, every 15 minutes).
+if (wisprApi) wisprApi.onSynced(({ created, updated, folder }) => {
+  const parts = [];
+  if (created) parts.push(`${created} new meeting${created === 1 ? '' : 's'}`);
+  if (updated) parts.push(`${updated} updated`);
+  showToast(`Wispr Flow: ${parts.join(', ')} in ${folder}`, 5000);
+  if (settingsLayer) settingsLayer._refresh?.();
+});
 
 // Pasting an image while a note is open but no field has focus attaches it.
 document.addEventListener('paste', async (e) => {
@@ -2860,9 +2893,9 @@ function welcomeCard() {
 // --- toast ---
 
 let toastTimer = null;
-function showToast(text) {
+function showToast(text, ms = 2600) {
   toastEl.textContent = text; toastEl.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, 2600);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms);
 }
 
 // --- backup (menu) ---

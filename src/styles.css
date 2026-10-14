@@ -919,3 +919,4 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .conn-state { font-size: 12px; color: var(--muted); margin-right: auto; }
 .conn-state.ok { color: var(--recur); }
 .conn-error { flex-basis: 100%; font-size: 12px; color: var(--today); }
+.conn-info { flex-basis: 100%; font-size: 12px; color: var(--muted); }

@@ -69,4 +69,7 @@ contextBridge.exposeInMainWorld('wispr', {
   cancel: () => ipcRenderer.invoke('wispr:cancel'),
   disconnect: () => ipcRenderer.invoke('wispr:disconnect'),
   refresh: () => ipcRenderer.invoke('wispr:refresh'),
+  // Bring Wispr Flow meetings into the vault now (it also runs every 15 min).
+  sync: () => ipcRenderer.invoke('wispr:sync'),
+  onSynced: (cb) => ipcRenderer.on('wispr:synced', (_e, r) => cb(r)),
 });

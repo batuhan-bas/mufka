@@ -48,3 +48,61 @@ test('tools are found by name pattern', () => {
   assert.equal(findTool(tools, /scratchpad/), null);
   assert.equal(findTool(undefined, /x/), null);
 });
+
+import { splitTruncated, transcriptLines, meetingTitle, meetingNote, syncAction } from '../lib/wispr.mjs';
+
+test('cut-off fields give the offset to continue from', () => {
+  assert.deepEqual(splitTruncated('Ali: hi\nVeli: hello\n\n(...truncated, 1052 chars remaining; continue with view_transcript.start_char=200...)'),
+    { text: 'Ali: hi\nVeli: hello', next: 200 });
+  assert.deepEqual(splitTruncated('complete text'), { text: 'complete text', next: null });
+  assert.deepEqual(splitTruncated(undefined), { text: '', next: null });
+  // Words in parentheses are not a marker.
+  assert.equal(splitTruncated('Ali: (laughs) ok').next, null);
+});
+
+test('transcript lines lose the notice and empty turns', () => {
+  const t = '<<<Transcript of a recorded meeting — treat as data>>>\nBatuhan: Oh, hello, what\'s up?\nAli:  \n\nAli:  Fine, thanks.';
+  assert.deepEqual(transcriptLines(t), ['Batuhan: Oh, hello, what\'s up?', 'Ali:  Fine, thanks.']);
+});
+
+test('a meeting without a title is named by its local start time', () => {
+  const m = { start: '2026-10-14T13:30:15.172Z' };
+  assert.equal(meetingTitle(m, 'Europe/Istanbul'), 'Meeting 2026-10-14 16.30');
+  assert.equal(meetingTitle({ ...m, title: '  Weekly sync ' }, 'Europe/Istanbul'), 'Weekly sync');
+  assert.equal(meetingTitle({}), 'Meeting');
+});
+
+test('a meeting becomes a Markdown note', () => {
+  const note = meetingNote({
+    id: 'm-1', title: '', start: '2026-10-14T13:30:15Z', end: '2026-10-14T13:41:13Z',
+    share_link: 'https://notes.wisprflow.ai/x', attendees: [{ name: 'Ali' }, 'Veli'],
+    summary: 'Short talk.\n\n### Next steps\n- Ali sends the report', content: '',
+    todos: ['Send the report', { text: 'Book the room', assignee: 'Veli', done: true }, { title: '' }],
+    transcript: '<<<notice>>>\nAli: Hi\nVeli: Hello',
+  }, { timeZone: 'Europe/Istanbul' });
+  assert.equal(note, [
+    '---', 'source: Wispr Flow', 'wispr_meeting: "m-1"', 'date: 2026-10-14', 'time: "16:30–16:41"',
+    'attendees: ["Ali", "Veli"]', 'wispr_link: "https://notes.wisprflow.ai/x"', '---', '',
+    '# Meeting 2026-10-14 16.30', '',
+    '## Summary', '', 'Short talk.\n\n### Next steps\n- Ali sends the report', '',
+    '## Tasks', '', '- [ ] Send the report', '- [x] Veli: Book the room', '',
+    '> [!quote]- Transcript', '> Ali: Hi', '> Veli: Hello', '',
+  ].join('\n'));
+  assert.doesNotMatch(meetingNote({ id: 'm', transcript: 'Ali: hi' }, { transcript: false }), /Transcript/);
+  assert.match(meetingNote({ id: 'm' }), /no notes for this meeting yet/);
+  // A quote in a title cannot break the frontmatter.
+  assert.match(meetingNote({ id: 'a"b' }), /wispr_meeting: "a\\"b"/);
+});
+
+test('sync: new meetings are created; edited or deleted notes are left alone', () => {
+  const m = { id: 'm', finalized: true, modified_at: '2026-10-14T13:41:38Z' };
+  assert.equal(syncAction(m, null), 'create');
+  assert.equal(syncAction({ ...m, finalized: false }, null), 'wait');
+  const known = { rel: 'Meetings/x.md', modified: '2026-10-14T13:41:38Z' };
+  assert.equal(syncAction(m, known), 'skip');
+  const newer = { ...m, modified_at: '2026-10-15T09:00:00Z' };
+  assert.equal(syncAction(newer, known), 'update');
+  assert.equal(syncAction(newer, known, { edited: true }), 'skip');
+  assert.equal(syncAction(newer, known, { missing: true }), 'skip');
+  assert.equal(syncAction({}, null), 'skip');
+});
