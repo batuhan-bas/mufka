@@ -12,7 +12,15 @@ const root = import.meta.dirname;
 export default defineConfig({
   main: {
     build: {
-      rollupOptions: { input: { index: resolve(root, 'main.js') } },
+      rollupOptions: {
+        input: { index: resolve(root, 'main.js') },
+        // zod's sources carry comments Rollup cannot place ("contains an
+        // annotation that Rollup cannot interpret"); harmless, so not shown.
+        onwarn(warning, warn) {
+          if (warning.code === 'INVALID_ANNOTATION' && /node_modules/.test(warning.id || '')) return;
+          warn(warning);
+        },
+      },
     },
   },
   preload: {
