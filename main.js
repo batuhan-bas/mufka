@@ -360,7 +360,7 @@ async function attachOpen(rel) {
   const abs = attachAbs(rel);
   const real = fs.realpathSync(abs);
   const st = fs.statSync(real);
-  const document = /\.(png|jpe?g|gif|webp|svg|pdf|txt|md|csv|tsv|json|rtf|docx|xlsx|pptx|odt|ods|odp|zip)$/i.test(real);
+  const document = at.isOpenableDocument(real);
   if (!st.isFile() || !document || (st.mode & 0o111) || real.split(path.sep).some(at.isExecutableName)) shell.showItemInFolder(abs);
   else {
     const error = await shell.openPath(real);
