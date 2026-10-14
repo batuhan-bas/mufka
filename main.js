@@ -5,6 +5,7 @@
 import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeTheme, clipboard, nativeImage, protocol } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import * as np from './lib/notespath.mjs';
 import * as lk from './lib/links.mjs';
 import * as at from './lib/attach.mjs';
@@ -70,10 +71,17 @@ function writeStore(data) {
 }
 
 function writeFileAtomic(file, text) {
-  const tmp = `${file}.tmp`;
+  const tmp = `${file}.${randomUUID()}.tmp`;
   noteOwnWrite(file);
-  fs.writeFileSync(tmp, text, 'utf8');
-  fs.renameSync(tmp, file);
+  // Exclusive creation prevents a vault-supplied symlink from becoming a writer.
+  const fd = fs.openSync(tmp, 'wx');
+  try {
+    try { fs.writeFileSync(fd, text, 'utf8'); }
+    finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, file);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
 }
 
 // --- settings -------------------------------------------------------------
@@ -113,10 +121,10 @@ function notesRoot() { return vault.root || defaultNotesRoot(); }
 // Obsidian settings if it has them, else the folders Mufka used before
 // (Günlük, Ekler) if present, else Daily / Attachments. Re-read on each use —
 // two tiny files — so a change in Obsidian applies right away.
-function readJson(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
+function readJson(file) { try { return JSON.parse(fs.readFileSync(checkedVaultPath(file), 'utf8')); } catch { return null; } }
 function obsidianSettings() {
   const dir = path.join(notesRoot(), '.obsidian');
-  if (!isDir(dir)) return null;
+  if (!isDir(dir) || !np.realInside(notesRoot(), dir, fs)) return null;
   return {
     dailyNotes: readJson(path.join(dir, 'daily-notes.json')) || undefined,
     app: readJson(path.join(dir, 'app.json')) || {},
@@ -135,7 +143,7 @@ function bookmarksRead() {
 }
 function bookmarksWrite(json) {
   const dir = path.join(notesRoot(), '.obsidian');
-  if (isDir(dir)) { writeFileAtomic(path.join(dir, 'bookmarks.json'), JSON.stringify(json, null, 2)); return; }
+  if (isDir(dir)) { writeFileAtomic(checkedVaultPath(path.join(dir, 'bookmarks.json')), JSON.stringify(json, null, 2)); return; }
   writeSettings({ bookmarks: { ...(readSettings().bookmarks || {}), [notesRoot()]: json } });
 }
 function bookmarksToggle(rel) {
@@ -155,7 +163,7 @@ function bookmarksFollow(oldRel, newRel) {
 }
 
 function layout() { return vaultLayout(obsidianSettings(), (name) => isDir(path.join(notesRoot(), name))); }
-function dailyRoot() { return path.join(notesRoot(), ...layout().daily.split('/').filter(Boolean)); }
+function dailyRoot() { return checkedVaultPath(path.join(notesRoot(), ...layout().daily.split('/').filter(Boolean))); }
 // Only the vault root itself is created on demand. Günlük and Ekler appear when
 // the first daily note / attachment is written, so opening an existing folder
 // (e.g. an Obsidian vault) does not add folders to it.
@@ -164,7 +172,10 @@ function ensureNotesDirs() { fs.mkdirSync(notesRoot(), { recursive: true }); }
 // Resolve a vault-relative path to a safe absolute path, or throw.
 function safeAbs(rel) {
   ensureNotesDirs();
-  const abs = np.vaultPath(notesRoot(), rel || '');
+  return checkedVaultPath(np.vaultPath(notesRoot(), rel || ''));
+}
+
+function checkedVaultPath(abs) {
   if (!np.isInside(notesRoot(), abs) || !np.realInside(notesRoot(), abs, fs)) {
     throw new Error('invalid path');
   }
@@ -481,8 +492,7 @@ async function trashFolder(rel) {
 }
 
 function readDaily(dateKey) {
-  const p = np.dailyFilePath(dailyRoot(), dateKey);
-  if (!np.isInside(notesRoot(), p)) throw new Error('invalid daily path');
+  const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
   try {
     return { content: fs.readFileSync(p, 'utf8'), mtime: fs.statSync(p).mtimeMs };
   } catch (err) {
@@ -492,16 +502,14 @@ function readDaily(dateKey) {
 }
 
 function writeDaily(dateKey, content) {
-  fs.mkdirSync(dailyRoot(), { recursive: true });
-  const p = np.dailyFilePath(dailyRoot(), dateKey);
-  if (!np.isInside(notesRoot(), p)) throw new Error('invalid daily path');
+  const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
+  fs.mkdirSync(path.dirname(p), { recursive: true });
   writeFileAtomic(p, String(content ?? ''));
   return { ok: true };
 }
 
 async function deleteDaily(dateKey) {
-  const p = np.dailyFilePath(dailyRoot(), dateKey);
-  if (!np.isInside(notesRoot(), p)) throw new Error('invalid daily path');
+  const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
   await shell.trashItem(p);
   return { ok: true };
 }
