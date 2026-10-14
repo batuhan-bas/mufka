@@ -144,7 +144,7 @@ Electron + plain JavaScript (no UI framework), built with
 and is shared verbatim by the app and the tests.
 
 ```sh
-npm install              # dependencies (Electron downloads on first run)
+npm install              # dependencies, then downloads Electron (pnpm works too)
 npm run dev              # develop with hot reload
 npm start                # build, then run the built app
 npm test                 # unit tests, then build + the real end-to-end test
