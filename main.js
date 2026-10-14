@@ -2,10 +2,14 @@
 // never touches the filesystem directly; it talks through the preload bridge.
 // Bundled by electron-vite into out/main/index.js.
 
-import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeTheme, clipboard, nativeImage, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import http from 'node:http';
+import crypto, { randomUUID } from 'node:crypto';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import * as np from './lib/notespath.mjs';
 import * as lk from './lib/links.mjs';
 import * as at from './lib/attach.mjs';
@@ -13,6 +17,7 @@ import * as bm from './lib/bookmarks.mjs';
 import { resolveVaultRoot, vaultChoiceError } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
 import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
+import * as wp from './lib/wispr.mjs';
 
 // Where the renderer pages come from: the Vite dev server while developing
 // (`electron-vite dev` sets ELECTRON_RENDERER_URL), the built files otherwise.
@@ -583,6 +588,269 @@ function registerAttachProtocol() {
   });
 }
 
+// --- Wispr Flow connection -------------------------------------------------
+// Mufka is a client of Wispr Flow's read-only MCP server. Signing in happens in
+// the default browser (OAuth: dynamic client registration + PKCE); the browser
+// returns to a one-shot server on 127.0.0.1. The registration and the tokens
+// are stored encrypted with safeStorage (a key in the macOS Keychain) and never
+// reach the renderer. All network use is here, in main, and only after the
+// user connects.
+
+const WISPR_FILE = 'wispr.bin';
+function wisprPath() { return path.join(app.getPath('userData'), WISPR_FILE); }
+function wisprRead() {
+  try {
+    return JSON.parse(safeStorage.decryptString(Buffer.from(fs.readFileSync(wisprPath(), 'utf8'), 'base64'))) || {};
+  } catch { return {}; }
+}
+function wisprWrite(state) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('macOS did not allow Mufka to encrypt the sign-in');
+  fs.mkdirSync(path.dirname(wisprPath()), { recursive: true });
+  writeFileAtomic(wisprPath(), safeStorage.encryptString(JSON.stringify(state)).toString('base64'));
+}
+function wisprPatch(patch) {
+  const next = { ...wisprRead(), ...patch };
+  for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+  wisprWrite(next);
+}
+
+// The SDK drives discovery, registration, PKCE, token exchange and refresh
+// through this provider. `onRedirect` opens the sign-in page; outside of
+// "Connect" there is nobody to sign in, so it fails instead.
+function wisprProvider(redirectUrl, state, onRedirect) {
+  let verifier = null;
+  return {
+    get redirectUrl() { return redirectUrl; },
+    get clientMetadata() { return wp.clientMetadata(redirectUrl); },
+    state: () => state,
+    clientInformation: () => { const s = wisprRead(); return s.redirectUrl === redirectUrl ? s.client : undefined; },
+    saveClientInformation: (client) => wisprPatch({ client, redirectUrl }),
+    tokens: () => wisprRead().tokens,
+    saveTokens: (tokens) => wisprPatch({ tokens }),
+    redirectToAuthorization: (url) => onRedirect(url),
+    saveCodeVerifier: (v) => { verifier = v; },
+    codeVerifier: () => { if (!verifier) throw new Error('No sign-in in progress'); return verifier; },
+    invalidateCredentials: (scope) => {
+      if (scope === 'all' || scope === 'client') wisprPatch({ client: undefined, tokens: undefined });
+      else if (scope === 'tokens') wisprPatch({ tokens: undefined });
+    },
+  };
+}
+
+let wisprSignIn = null; // { cancel }
+
+// One-shot loopback server on 127.0.0.1 (the port of the last sign-in when it
+// is free, so the registered redirect stays valid; else any free port).
+function wisprListen(port) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.once('error', (err) => {
+      if (port && err.code === 'EADDRINUSE') wisprListen(0).then(resolve, reject);
+      else reject(err);
+    });
+    server.listen(port || 0, '127.0.0.1', () => resolve(server));
+  });
+}
+
+async function wisprConnect() {
+  if (wisprSignIn) throw new Error('Already signing in');
+  const saved = wisprRead();
+  const server = await wisprListen(saved.port);
+  const port = server.address().port;
+  const redirectUrl = wp.redirectUrlFor(port);
+  const state = crypto.randomBytes(16).toString('hex');
+  let cancel;
+  const code = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Sign-in took too long; try again')), wp.SIGN_IN_TIMEOUT_MS);
+    cancel = () => { clearTimeout(timer); reject(new Error('cancelled')); };
+    server.on('request', (req, res) => {
+      const r = wp.parseCallback(req.url, state);
+      if (!r) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(wp.callbackPage(r.ok));
+      clearTimeout(timer);
+      if (r.ok) resolve(r.code); else reject(new Error(r.error));
+    });
+  });
+  code.catch(() => {});
+  wisprSignIn = { cancel };
+  try {
+    const provider = wisprProvider(redirectUrl, state, (url) => {
+      if (!/^https:\/\//.test(url.href)) throw new Error('Unexpected sign-in address');
+      shell.openExternal(url.href);
+    });
+    let result = await auth(provider, { serverUrl: wp.MCP_URL });
+    if (result !== 'AUTHORIZED') {
+      result = await auth(provider, { serverUrl: wp.MCP_URL, authorizationCode: await code });
+      if (result !== 'AUTHORIZED') throw new Error('Wispr Flow did not authorize Mufka');
+    }
+    wisprPatch({ port, redirectUrl });
+    const account = await wisprAccount();
+    wisprSync().catch(() => {});
+    return { ok: true, account };
+  } catch (err) {
+    if (err.message === 'cancelled') return { cancelled: true };
+    throw err;
+  } finally {
+    wisprSignIn = null;
+    server.close();
+  }
+}
+
+// Run `fn(client)` on a fresh MCP session with the stored sign-in. When the
+// tokens are gone and cannot be refreshed, the user has to connect again.
+async function wisprSession(fn) {
+  const s = wisprRead();
+  if (!s.tokens) throw new Error('Wispr Flow is not connected');
+  const provider = wisprProvider(s.redirectUrl, null, () => {
+    wisprPatch({ tokens: undefined });
+    throw new Error('Wispr Flow signed Mufka out; connect again in Settings');
+  });
+  const client = new Client({ name: 'Mufka', version: app.getVersion() });
+  await client.connect(new StreamableHTTPClientTransport(new URL(wp.MCP_URL), { authProvider: provider }));
+  try { return await fn(client); } finally { await client.close().catch(() => {}); }
+}
+
+// Who is signed in, and which tools the server offers (kept, without any
+// content, so imports can follow the server's own descriptions).
+async function wisprAccount() {
+  return wisprSession(async (client) => {
+    const { tools } = await client.listTools();
+    const summary = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+    fs.writeFileSync(path.join(app.getPath('userData'), 'wispr-tools.json'), JSON.stringify(summary, null, 2));
+    const tool = wp.findTool(tools, /account/i);
+    const name = tool ? wp.accountName(await client.callTool({ name: tool.name, arguments: {} })) : '';
+    wisprPatch({ account: name || 'Wispr Flow account', tools: tools.map((t) => t.name) });
+    return name || 'Wispr Flow account';
+  });
+}
+
+// --- Wispr Flow meetings → notes ---
+// Every finalized meeting becomes a note in <vault>/Meetings. What was imported
+// is remembered per vault in wispr-sync.json (ids, note paths, a hash of what
+// Mufka wrote — no content), so a later change in Wispr updates the note, but
+// a note the user edited or deleted is left alone.
+
+function wisprSyncPath() { return path.join(app.getPath('userData'), 'wispr-sync.json'); }
+function wisprSyncRead() { try { return JSON.parse(fs.readFileSync(wisprSyncPath(), 'utf8')) || {}; } catch { return {}; } }
+function wisprSyncWrite(s) { writeFileAtomic(wisprSyncPath(), JSON.stringify(s, null, 2)); }
+const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+async function wisprCall(client, name, args) {
+  const r = await client.callTool({ name, arguments: args });
+  const data = wp.resultData(r);
+  if (r.isError || !data) throw new Error(wp.resultText(r).slice(0, 200) || `Wispr Flow could not answer ${name}`);
+  return data;
+}
+
+// get_meeting with its notes and transcript read to the end (they come in
+// ranges of up to 40,000 characters).
+async function wisprMeeting(client, id) {
+  const first = await wisprCall(client, 'get_meeting', { meeting_id: id, view_content: { char_limit: 40000 }, view_transcript: { char_limit: 40000 } });
+  const whole = async (field, view, start) => {
+    let { text, next } = wp.splitTruncated(first[field]);
+    for (let i = 0; next != null && i < 100; i++) {
+      const more = wp.splitTruncated((await wisprCall(client, 'get_meeting', { meeting_id: id, [view]: { start_char: next, char_limit: 40000 } }))[field]);
+      text += more.text;
+      next = more.next;
+    }
+    return text;
+  };
+  return { ...first, content: await whole('content', 'view_content'), transcript: await whole('transcript', 'view_transcript') };
+}
+
+let wisprSyncing = null;
+let wisprLastError = null;
+
+function wisprSync() {
+  if (wisprSyncing) return wisprSyncing;
+  wisprSyncing = (async () => {
+    const all = wisprSyncRead();
+    const root = notesRoot();
+    const st = (all.vaults ||= {})[root] ||= { meetings: {} };
+    let created = 0; let updated = 0;
+    try {
+      await wisprSession(async (client) => {
+        const meetings = [];
+        let cursor;
+        for (let page = 0; page < 10; page++) {
+          const d = await wisprCall(client, 'search_meetings', { limit: 100, ...(cursor ? { cursor } : {}) });
+          meetings.push(...(Array.isArray(d.meetings) ? d.meetings : []));
+          if (!d.has_more || !d.next_cursor) break;
+          cursor = d.next_cursor;
+        }
+        for (const m of meetings) {
+          const known = st.meetings[m.id];
+          const disk = {};
+          if (known) {
+            const note = readNoteRel(known.rel);
+            if (!note) disk.missing = true;
+            else disk.edited = sha(note.content) !== known.hash;
+          }
+          const action = wp.syncAction(m, known, disk);
+          if (action !== 'create' && action !== 'update') continue;
+          const full = await wisprMeeting(client, m.id);
+          const text = wp.meetingNote({ ...m, ...full });
+          const rel = action === 'create' ? createNote(wp.MEETINGS_FOLDER, wp.meetingTitle(full)).rel : known.rel;
+          writeNoteRel(rel, text);
+          st.meetings[m.id] = { rel, modified: m.modified_at || '', hash: sha(text) };
+          wisprSyncWrite(all); // keep what is done if a later meeting fails
+          if (action === 'create') created++; else updated++;
+        }
+      });
+      wisprLastError = null;
+    } catch (err) {
+      wisprLastError = err.message;
+      throw err;
+    } finally {
+      st.lastSync = new Date().toISOString();
+      wisprSyncWrite(all);
+    }
+    if (created || updated) {
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.webContents.send('notes:changed');
+        w.webContents.send('wispr:synced', { created, updated, folder: wp.MEETINGS_FOLDER });
+      }
+    }
+    return { created, updated, folder: wp.MEETINGS_FOLDER };
+  })().finally(() => { wisprSyncing = null; });
+  return wisprSyncing;
+}
+
+// While connected: shortly after launch, then every 15 minutes. Quiet on
+// failure (the error shows in Settings).
+let wisprTimer = null;
+function wisprSchedule() {
+  clearInterval(wisprTimer);
+  const tick = () => { if (wisprRead().tokens) wisprSync().catch(() => {}); };
+  setTimeout(tick, 5000);
+  wisprTimer = setInterval(tick, wp.SYNC_EVERY_MS);
+}
+
+function wisprStatus() {
+  const s = wisprRead();
+  const v = (wisprSyncRead().vaults || {})[notesRoot()] || {};
+  return {
+    connected: Boolean(s.tokens),
+    account: s.account || null,
+    signingIn: Boolean(wisprSignIn),
+    syncing: Boolean(wisprSyncing),
+    lastSync: v.lastSync || null,
+    lastError: wisprLastError,
+    imported: Object.keys(v.meetings || {}).length,
+    folder: wp.MEETINGS_FOLDER,
+  };
+}
+
+// Forget the sign-in on this Mac (Wispr Flow offers no revocation endpoint;
+// the access can also be removed in Wispr Flow's own settings).
+function wisprDisconnect() {
+  if (wisprSignIn) wisprSignIn.cancel();
+  fs.rmSync(wisprPath(), { force: true });
+  fs.rmSync(path.join(app.getPath('userData'), 'wispr-tools.json'), { force: true });
+  return { ok: true };
+}
+
 // Send a menu action to the renderer (export / import / search).
 function sendMenu(action) {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
@@ -599,6 +867,8 @@ function buildMenu() {
       label: appName,
       submenu: [
         { role: 'about' },
+        { type: 'separator' },
+        { label: 'Settings…', click: () => sendMenu('settings') },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -882,6 +1152,12 @@ ipcMain.handle('attach:trash', wrap((names) => attachTrash(names)));
 ipcMain.handle('app:copy', wrap(async (text) => { await clipboard.writeText(String(text ?? '')); return { ok: true }; }));
 ipcMain.handle('notes:exportMarkdown', wrap((title, content) => exportMarkdown(title, content)));
 ipcMain.handle('notes:exportPDF', wrap((title, src, noteDir) => exportPDF(title, src, noteDir)));
+ipcMain.handle('wispr:status', wrap(() => wisprStatus()));
+ipcMain.handle('wispr:connect', wrap(() => wisprConnect()));
+ipcMain.handle('wispr:cancel', wrap(() => { if (wisprSignIn) wisprSignIn.cancel(); return { ok: true }; }));
+ipcMain.handle('wispr:disconnect', wrap(() => wisprDisconnect()));
+ipcMain.handle('wispr:refresh', wrap(async () => ({ account: await wisprAccount() })));
+ipcMain.handle('wispr:sync', wrap(() => wisprSync()));
 ipcMain.handle('notes:openExternal', wrap((url) => {
   if (!/^https?:\/\//i.test(String(url))) return { error: 'blocked' };
   shell.openExternal(url);
@@ -918,6 +1194,7 @@ app.whenReady().then(() => {
   watchVault();
   registerAttachProtocol();
   buildMenu();
+  wisprSchedule();
   const win = createWindow();
   win.webContents.once('did-finish-load', () => warnIfVaultMissing(win));
   app.on('activate', () => {

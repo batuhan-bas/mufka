@@ -1343,6 +1343,16 @@ app.whenReady().then(() => setTimeout(async () => {
       // guides: a depth class per level
       assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 2000), 'no coloured guide');
     });
+
+    await step(55, 'Settings: Wispr Flow connection shown, offline', async () => {
+      await press(',', ['meta']);
+      assert(await waitFor('!!document.querySelector(".settings-dialog")', 2000), 'settings did not open');
+      assert(await waitFor('/Not connected/.test(document.querySelector(".conn-side")?.textContent || "")', 2000), 'no connection state');
+      assert(await js('document.activeElement?.textContent === "Connect"'), 'Connect not focused');
+      assert(!fs.existsSync(path.join(tmp, 'wispr.bin')), 'a sign-in was stored');
+      await press('Escape');
+      assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }
