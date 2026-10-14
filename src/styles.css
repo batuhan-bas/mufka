@@ -906,3 +906,16 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .tree-guide { width: 2px; border-radius: 1px; }
 .tree-guide.on-path { filter: none; }
 .tree-guide:not(.on-path) { opacity: 0.55; }
+
+/* --- settings --- */
+.settings-dialog { width: min(560px, calc(100vw - 32px)); }
+.settings-section { display: flex; flex-direction: column; gap: 10px; }
+.settings-heading { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
+.conn-row { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+.conn-text { display: flex; flex-direction: column; gap: 2px; }
+.conn-name { font-size: 14px; }
+.conn-note { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.conn-side { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.conn-state { font-size: 12px; color: var(--muted); margin-right: auto; }
+.conn-state.ok { color: var(--recur); }
+.conn-error { flex-basis: 100%; font-size: 12px; color: var(--today); }

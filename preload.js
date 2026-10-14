@@ -61,3 +61,12 @@ contextBridge.exposeInMainWorld('notes', {
   // Fired when the window regains focus so the renderer can re-read the folder.
   onChanged: (cb) => ipcRenderer.on('notes:changed', () => cb()),
 });
+
+// Wispr Flow connection (sign-in happens in the browser; tokens stay in main).
+contextBridge.exposeInMainWorld('wispr', {
+  status: () => ipcRenderer.invoke('wispr:status'),
+  connect: () => ipcRenderer.invoke('wispr:connect'),
+  cancel: () => ipcRenderer.invoke('wispr:cancel'),
+  disconnect: () => ipcRenderer.invoke('wispr:disconnect'),
+  refresh: () => ipcRenderer.invoke('wispr:refresh'),
+});

@@ -48,6 +48,7 @@
     "copyright": "Copyright © 2026 Batuhan Baş"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
     "electron": "^44.7.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
