@@ -791,7 +791,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 
 /* Missed: a red-pencil mark that says "you let this one slip". */
 .pl-task.missed { box-shadow: inset 2px 0 0 var(--today); }
-.pl-task.missed .pl-task-title { color: var(--today); }
+.pl-task.missed .pl-task-title { color: var(--text); }
 .pl-missed-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--today); border: 1px solid var(--today); border-radius: 3px; padding: 0 3px; line-height: 1.4; flex: none; align-self: center; }
 .pl-today-btn { flex: none; font: inherit; font-size: 11px; background: var(--ground); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; cursor: pointer; color: var(--text); align-self: center; }
 .pl-today-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -814,8 +814,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .pl-block-title { color: var(--text); overflow-wrap: normal; word-break: normal; overflow: hidden; text-overflow: ellipsis; }
 .pl-block.done { background: var(--panel); border-color: var(--line); border-left-color: var(--line-strong); }
 .pl-block.done .pl-block-title { text-decoration: line-through; color: var(--muted); }
-.pl-block.missed { background: color-mix(in srgb, var(--today) 7%, var(--ground)); border-color: color-mix(in srgb, var(--today) 35%, transparent); border-left-color: var(--today); }
-.pl-block.missed .pl-block-title { color: var(--today); }
+.pl-block.missed { border-left-color: var(--today); }
 .pl-block .pl-menu { visibility: hidden; padding: 0; }
 .pl-block:hover .pl-menu, .pl-block:focus-within .pl-menu { visibility: visible; }
 .pl-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
@@ -833,7 +832,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .plan-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .pl-list-day .pl-day-head { border-right: none; padding: 2px 0 6px; }
 .pl-list-day .pl-task-body { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 6px; }
-.pl-block.missed .pl-block-time { color: var(--today); font-weight: 600; }
+.pl-block.missed .pl-block-time { color: var(--today); opacity: 1; }
 
 /* --- Repeating plans: their own colour, a ↻ and the rule --- */
 .pl-block.recurring { background: var(--recur-soft); border-color: color-mix(in srgb, var(--recur) 30%, transparent); border-left: 3px dashed var(--recur); color: var(--recur); }
