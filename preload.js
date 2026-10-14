@@ -73,3 +73,16 @@ contextBridge.exposeInMainWorld('wispr', {
   sync: () => ipcRenderer.invoke('wispr:sync'),
   onSynced: (cb) => ipcRenderer.on('wispr:synced', (_e, r) => cb(r)),
 });
+
+// Calendars shown in the Planner (read-only; sign-in and requests stay in main).
+contextBridge.exposeInMainWorld('calendars', {
+  status: () => ipcRenderer.invoke('calendar:status'),
+  connect: () => ipcRenderer.invoke('calendar:connect'),
+  cancel: () => ipcRenderer.invoke('calendar:cancel'),
+  disconnect: () => ipcRenderer.invoke('calendar:disconnect'),
+  refresh: () => ipcRenderer.invoke('calendar:refresh'),
+  setShown: (id, shown) => ipcRenderer.invoke('calendar:setShown', id, shown),
+  events: (from, to) => ipcRenderer.invoke('calendar:events', from, to),
+  // Main says the calendars changed (connected, hidden, refreshed…).
+  onChanged: (cb) => ipcRenderer.on('calendar:changed', () => cb()),
+});

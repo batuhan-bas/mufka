@@ -32,10 +32,12 @@ import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
 import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
 import { buildTagIndex, scanTags } from '../lib/tags.mjs';
+import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
 
 const plansApi = window.planner;
 const notesApi = window.notes;
 const wisprApi = window.wispr;
+const calApi = window.calendars;
 
 const state = {
   store: emptyStore(),
@@ -736,6 +738,8 @@ function planDialog(heading, { title = '', time = '', endTime = '' }, onSave, op
 
 const plannerApi = {
   dayItems: (d) => getDayItems(d),
+  dayEvents: (d) => (calApi ? eventsForDay(d) : []),
+  openEvent: (ev) => openEventCard(ev),
   weekItems: weekPlans,
   add(o) {
     if (o.scope === 'week') {
@@ -1268,9 +1272,15 @@ function renderDayPage() {
 
   // The day's plans, to read (and tick off). Planning happens in the Planner:
   // a click on a plan opens it there.
-  if (!items.length) col.append(emptyDayCard(date));
-  const timed = items.filter((p) => p.time);
-  if (timed.length) col.append(section('Scheduled', timed.map((p) => agendaRow(p, date))));
+  const events = calApi ? eventsForDay(date) : [];
+  if (!items.length && !events.length) col.append(emptyDayCard(date));
+  // Plans and calendar events by time; all-day events first.
+  const timed = [
+    ...events.filter((e) => !e.time).map((e) => ({ at: '', row: () => agendaEventRow(e) })),
+    ...[...items.filter((p) => p.time).map((p) => ({ at: p.time, row: () => agendaRow(p, date) })),
+      ...events.filter((e) => e.time).map((e) => ({ at: e.time, row: () => agendaEventRow(e) }))].sort((a, b) => a.at.localeCompare(b.at)),
+  ];
+  if (timed.length) col.append(section('Scheduled', timed.map((x) => x.row())));
   const untimed = items.filter((p) => !p.time);
   if (untimed.length) col.append(section('To-dos', untimed.map((p) => agendaRow(p, date))));
   if (items.length) {
@@ -2534,9 +2544,28 @@ function openSettings() {
   const box = elem('div', 'palette plan-dialog settings-dialog');
   box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Settings');
   box.append(elem('div', 'plan-dialog-title', 'Settings'));
+  // Calendars: Microsoft (Outlook / Microsoft 365, Teams meetings).
+  const calSection = elem('section', 'settings-section');
+  calSection.append(elem('h3', 'settings-heading', 'Calendars'));
+  const msRow = elem('div', 'conn-row');
+  msRow.dataset.conn = 'microsoft';
+  const msText = elem('div', 'conn-text');
+  msText.append(
+    elem('span', 'conn-name', 'Microsoft (Outlook, Teams)'),
+    elem('span', 'conn-note', 'Your Outlook and Microsoft 365 calendars, Teams meetings included, in the Planner and on Home. Read-only; you sign in on Microsoft\u2019s own page.'),
+  );
+  const msSide = elem('div', 'conn-side');
+  const msList = elem('div', 'cal-list');
+  msList.setAttribute('role', 'group');
+  msList.setAttribute('aria-label', 'Calendars shown');
+  msRow.append(msText, msSide, msList);
+  calSection.append(msRow);
+  box.append(calSection);
+
   const section = elem('section', 'settings-section');
-  section.append(elem('h3', 'settings-heading', 'Connections'));
+  section.append(elem('h3', 'settings-heading', 'Meeting notes'));
   const row = elem('div', 'conn-row');
+  row.dataset.conn = 'wispr';
   const text = elem('div', 'conn-text');
   text.append(
     elem('span', 'conn-name', 'Wispr Flow'),
@@ -2595,6 +2624,49 @@ function openSettings() {
     refresh();
   };
 
+  let msBusy = false;
+  const msDraw = (all, note) => {
+    if (!layer.isConnected) return;
+    const s = all.microsoft;
+    const hadFocus = box.contains(document.activeElement);
+    msSide.replaceChildren();
+    msList.replaceChildren();
+    if (!s.available) {
+      msSide.append(elem('span', 'conn-state', 'Not set up in this copy of Mufka'));
+    } else if (s.signingIn || msBusy) {
+      msSide.append(elem('span', 'conn-state', 'Waiting for sign-in in your browser\u2026'),
+        button('Cancel', true, () => calApi.cancel()));
+    } else if (s.connected) {
+      msSide.append(elem('span', 'conn-state ok', `Connected \u00b7 ${s.account || 'Microsoft'}`),
+        button('Refresh', true, async () => { const r = await calApi.refresh(); msDraw(r && r.microsoft ? r : await calApi.status(), r && r.error); }),
+        button('Disconnect', true, async () => { await calApi.disconnect(); msRefresh(); showToast('Microsoft calendar disconnected'); }));
+      for (const c of s.calendars) {
+        const l = elem('label', 'cal-item');
+        const box2 = document.createElement('input');
+        box2.type = 'checkbox'; box2.checked = c.shown;
+        box2.addEventListener('change', () => calApi.setShown(c.id, box2.checked));
+        const dot = elem('span', 'cal-dot');
+        dot.style.background = c.color;
+        dot.setAttribute('aria-hidden', 'true');
+        l.append(box2, dot, elem('span', null, c.name));
+        msList.append(l);
+      }
+    } else {
+      msSide.append(elem('span', 'conn-state', 'Not connected'), button('Connect', false, msConnect));
+    }
+    if (note) msSide.append(elem('span', 'conn-error', note));
+    if (hadFocus && !box.contains(document.activeElement)) (msSide.querySelector('button') || done).focus();
+  };
+  const msRefresh = async (note) => msDraw(await calApi.status(), note);
+  const msConnect = async () => {
+    msBusy = true; msRefresh();
+    const res = await calApi.connect();
+    msBusy = false;
+    if (res && res.error) { msRefresh(res.error); return; }
+    if (res && res.ok) showToast(`Microsoft calendar connected as ${res.account}`);
+    msRefresh();
+  };
+
   const restore = document.activeElement;
   const close = () => { layer.remove(); settingsLayer = null; if (restore && restore.isConnected) restore.focus(); };
   layer._close = close;
@@ -2607,7 +2679,101 @@ function openSettings() {
   layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
   document.body.append(layer);
   settingsLayer = layer;
-  refresh().then(() => (side.querySelector('button') || done).focus());
+  Promise.all([msRefresh(), refresh()]).then(() => (msSide.querySelector('button') || side.querySelector('button') || done).focus());
+}
+
+// --- calendar events (read-only) ---
+// Fetched per Planner week from main (Microsoft Graph), kept here until a
+// refresh. A day asks for its week; the first ask fetches and re-renders.
+
+const calWeeks = new Map(); // Monday's day key → events (null while loading)
+let calStamp = 0;
+
+function calendarsChanged() {
+  calWeeks.clear();
+  calStamp = Date.now();
+  render();
+}
+
+function eventsForDay(d) {
+  const mon = startOfWeek(d);
+  const key = dayKey(mon);
+  if (!calWeeks.has(key)) {
+    calWeeks.set(key, null);
+    const asked = calStamp;
+    calApi.events(mon.toISOString(), addDays(mon, 7).toISOString()).then((res) => {
+      if (asked !== calStamp) return;
+      calWeeks.set(key, res && Array.isArray(res.events) ? res.events : []);
+      if (res && res.connected && res.events && res.events.length && (state.contentView === 'planner' || state.contentView === 'day')) render();
+    }).catch(() => calWeeks.set(key, []));
+  }
+  return eventsOnDay(calWeeks.get(key) || [], d);
+}
+
+// When main says they changed, every 10 minutes, and when the window comes
+// back after a while.
+if (calApi) {
+  calApi.onChanged(() => calendarsChanged());
+  setInterval(() => { if (calWeeks.size) calendarsChanged(); }, 10 * 60 * 1000);
+  window.addEventListener('focus', () => { if (calWeeks.size && Date.now() - calStamp > 2 * 60 * 1000) calendarsChanged(); });
+}
+
+// A calendar event's details: when, which calendar, where, who; join / open.
+function openEventCard(ev) {
+  const layer = elem('div', 'palette-layer');
+  const box = elem('div', 'palette plan-dialog event-card');
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', ev.title);
+  box.style.setProperty('--ev', ev.color);
+  box.append(elem('div', 'plan-dialog-title event-title', ev.title));
+  const facts = elem('dl', 'event-facts');
+  const fact = (k, v) => { if (v) facts.append(elem('dt', null, k), elem('dd', null, v)); };
+  fact('When', eventWhen(ev));
+  fact('Calendar', ev.calendar);
+  fact('Where', ev.location);
+  fact('Organizer', ev.organizer);
+  if (ev.attendees && ev.attendees.length) fact('With', ev.attendees.length > 6 ? `${ev.attendees.slice(0, 6).join(', ')} and ${ev.attendees.length - 6} more` : ev.attendees.join(', '));
+  box.append(facts);
+  const restore = document.activeElement;
+  const close = () => { layer.remove(); document.removeEventListener('keydown', onKey, true); if (restore && restore.isConnected) restore.focus(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  document.addEventListener('keydown', onKey, true);
+  const actions = elem('div', 'plan-dialog-actions');
+  const btn = (label, cls, fn) => { const b = elem('button', cls, label); b.type = 'button'; b.addEventListener('click', fn); return b; };
+  if (ev.webLink) actions.append(btn('Open in Outlook', 'btn quiet', () => notesApi.openExternal(ev.webLink)));
+  actions.append(btn('Close', 'btn quiet', close));
+  if (ev.joinUrl) actions.append(btn('Join meeting', 'btn', () => { notesApi.openExternal(ev.joinUrl); close(); }));
+  box.append(actions);
+  layer.append(box);
+  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
+  document.body.append(layer);
+  (actions.querySelector('.btn:not(.quiet)') || actions.lastChild).focus();
+}
+
+// One calendar event on the day page (Home): time, title, a join button.
+function agendaEventRow(ev) {
+  const li = elem('li', 'plan-row agenda-row event-row');
+  li.style.setProperty('--ev', ev.color);
+  li.append(elem('span', 'event-dot'));
+  const open = elem('button', 'agenda-open');
+  open.type = 'button';
+  open.title = 'Show details';
+  if (ev.time) {
+    const chips = elem('span', 'chips');
+    chips.append(elem('span', 'chip', ev.time));
+    if (ev.endTime) chips.append(elem('span', 'chip-dash', '\u2013'), elem('span', 'chip', ev.endTime === '24:00' ? '00:00' : ev.endTime));
+    open.append(chips);
+  } else open.append(elem('span', 'chip', 'All day'));
+  open.append(elem('span', 'plan-title', ev.title));
+  open.addEventListener('click', () => openEventCard(ev));
+  li.append(open);
+  if (ev.joinUrl) {
+    const join = elem('button', 'btn quiet event-join', 'Join');
+    join.type = 'button';
+    join.title = 'Join the online meeting';
+    join.addEventListener('click', () => notesApi.openExternal(ev.joinUrl));
+    li.append(join);
+  }
+  return li;
 }
 
 function timeAgo(iso) {
