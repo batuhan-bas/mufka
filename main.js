@@ -1053,7 +1053,7 @@ async function calConnect(id) {
   }
 }
 
-const MS_SELECT = 'id,subject,start,end,isAllDay,isCancelled,showAs,location,onlineMeeting,onlineMeetingUrl,webLink,organizer,attendees,bodyPreview';
+const MS_SELECT = 'id,subject,start,end,isAllDay,isCancelled,isOrganizer,showAs,location,onlineMeeting,onlineMeetingUrl,webLink,organizer,attendees,bodyPreview';
 const G_FIELDS = 'items(id,status,summary,start,end,location,description,hangoutLink,conferenceData/entryPoints,htmlLink,organizer,attendees(email,displayName,self,resource,responseStatus),transparency),nextPageToken';
 
 async function providerEvents(id, a, b) {

@@ -122,3 +122,11 @@ test('Google events become Mufka events', () => {
   assert.equal(fromGoogle({ id: 'e', start: {} }, gcal), null);
   assert.equal(fromGoogle({ id: 'f', status: 'cancelled', start: { date: '2026-10-15' } }, gcal).cancelled, true);
 });
+
+test('your own meetings show no organizer line', () => {
+  const g = fromGoogle({ id: 'o', start: { dateTime: '2026-10-15T17:30:00Z' }, organizer: { email: 'me@x.com', self: true } }, { id: 'p' });
+  assert.equal(g.organizer, '');
+  const m = fromGraph({ id: 'o', isOrganizer: true, start: { dateTime: '2026-10-15T17:30:00' }, organizer: { emailAddress: { name: 'Me' } } }, { id: 'c' });
+  assert.equal(m.organizer, '');
+  assert.equal(fromGraph({ id: 'o2', start: { dateTime: '2026-10-15T17:30:00' }, organizer: { emailAddress: { name: 'Ali' } } }, { id: 'c' }).organizer, 'Ali');
+});
