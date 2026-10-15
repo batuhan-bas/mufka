@@ -2,7 +2,7 @@
 // never touches the filesystem directly; it talks through the preload bridge.
 // Bundled by electron-vite into out/main/index.js.
 
-import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -19,6 +19,7 @@ import { resolveVaultRoot, vaultChoiceError } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
 import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
+import * as cal from './lib/calendar.mjs';
 
 // Where the renderer pages come from: the Vite dev server while developing
 // (`electron-vite dev` sets ELECTRON_RENDERER_URL), the built files otherwise.
@@ -629,23 +630,29 @@ function registerAttachProtocol() {
 // reach the renderer. All network use is here, in main, and only after the
 // user connects.
 
-const WISPR_FILE = 'wispr.bin';
-function wisprPath() { return path.join(app.getPath('userData'), WISPR_FILE); }
-function wisprRead() {
+// Sign-ins (tokens) live in userData/<name>.bin: JSON encrypted with
+// safeStorage, whose key is in the macOS Keychain.
+function secretPath(name) { return path.join(app.getPath('userData'), name); }
+function secretRead(name) {
   try {
-    return JSON.parse(safeStorage.decryptString(Buffer.from(fs.readFileSync(wisprPath(), 'utf8'), 'base64'))) || {};
+    return JSON.parse(safeStorage.decryptString(Buffer.from(fs.readFileSync(secretPath(name), 'utf8'), 'base64'))) || {};
   } catch { return {}; }
 }
-function wisprWrite(state) {
+function secretWrite(name, state) {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('macOS did not allow Mufka to encrypt the sign-in');
-  fs.mkdirSync(path.dirname(wisprPath()), { recursive: true });
-  writeFileAtomic(wisprPath(), safeStorage.encryptString(JSON.stringify(state)).toString('base64'));
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  writeFileAtomic(secretPath(name), safeStorage.encryptString(JSON.stringify(state)).toString('base64'));
 }
-function wisprPatch(patch) {
-  const next = { ...wisprRead(), ...patch };
+function secretPatch(name, patch) {
+  const next = { ...secretRead(name), ...patch };
   for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
-  wisprWrite(next);
+  secretWrite(name, next);
 }
+
+const WISPR_FILE = 'wispr.bin';
+function wisprPath() { return secretPath(WISPR_FILE); }
+function wisprRead() { return secretRead(WISPR_FILE); }
+function wisprPatch(patch) { secretPatch(WISPR_FILE, patch); }
 
 // The SDK drives discovery, registration, PKCE, token exchange and refresh
 // through this provider. `onRedirect` opens the sign-in page; outside of
@@ -674,14 +681,14 @@ let wisprSignIn = null; // { cancel }
 
 // One-shot loopback server on 127.0.0.1 (the port of the last sign-in when it
 // is free, so the registered redirect stays valid; else any free port).
-function wisprListen(port) {
+function wisprListen(port, host = '127.0.0.1') {
   return new Promise((resolve, reject) => {
     const server = http.createServer();
     server.once('error', (err) => {
-      if (port && err.code === 'EADDRINUSE') wisprListen(0).then(resolve, reject);
+      if (port && err.code === 'EADDRINUSE') wisprListen(0, host).then(resolve, reject);
       else reject(err);
     });
-    server.listen(port || 0, '127.0.0.1', () => resolve(server));
+    server.listen(port || 0, host, () => resolve(server));
   });
 }
 
@@ -881,6 +888,190 @@ function wisprDisconnect() {
   if (wisprSignIn) wisprSignIn.cancel();
   fs.rmSync(wisprPath(), { force: true });
   fs.rmSync(path.join(app.getPath('userData'), 'wispr-tools.json'), { force: true });
+  return { ok: true };
+}
+
+// --- calendars: Microsoft (Outlook / Microsoft 365, Teams meetings) -------
+// Read-only. Sign-in is OAuth 2.0 with PKCE in the default browser against
+// Mufka's own public app registration (no secret), back to a one-shot server
+// on localhost. Only calendar read access is requested. Tokens are kept in
+// calendars.bin (encrypted); events are read from Microsoft Graph on demand
+// for the weeks the Planner shows and cached for a few minutes.
+
+const CAL_FILE = 'calendars.bin';
+const msState = () => secretRead(CAL_FILE).microsoft || {};
+const msPatch = (patch) => {
+  const next = { ...msState(), ...patch };
+  for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+  secretPatch(CAL_FILE, { microsoft: next });
+};
+function msClientId() { return process.env.MUFKA_MS_CLIENT_ID || cal.MS_CLIENT_ID; }
+
+async function msToken(params) {
+  const body = new URLSearchParams({ client_id: msClientId(), scope: cal.MS_SCOPES.join(' '), ...params });
+  const res = await net.fetch(`${cal.MS_AUTHORITY}/token`, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: body.toString(),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || !j.access_token) {
+    const err = new Error(String(j.error_description || j.error || `Microsoft sign-in failed (HTTP ${res.status})`).split('\n')[0].slice(0, 200));
+    err.code = j.error;
+    throw err;
+  }
+  return { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (Number(j.expires_in || 3600) - 120) * 1000 };
+}
+
+// A valid access token, refreshed when it is about to expire. A refused
+// refresh (revoked, expired) signs Mufka out.
+async function msAccess() {
+  const s = msState();
+  if (!s.tokens) throw new Error('Microsoft calendar is not connected');
+  if (s.tokens.expires_at > Date.now()) return s.tokens.access_token;
+  try {
+    const t = await msToken({ grant_type: 'refresh_token', refresh_token: s.tokens.refresh_token });
+    msPatch({ tokens: { ...t, refresh_token: t.refresh_token || s.tokens.refresh_token } });
+    return t.access_token;
+  } catch (err) {
+    if (err.code === 'invalid_grant' || err.code === 'interaction_required') {
+      msPatch({ tokens: undefined });
+      throw new Error('Microsoft signed Mufka out; connect again in Settings');
+    }
+    throw err;
+  }
+}
+
+// GET from Microsoft Graph (paging links included); nothing else is fetched.
+async function graphGet(pathOrUrl, retried = false) {
+  const url = pathOrUrl.startsWith('https://') ? pathOrUrl : `${cal.GRAPH}${pathOrUrl}`;
+  if (!url.startsWith(`${cal.GRAPH}/`)) throw new Error('blocked');
+  const res = await net.fetch(url, { headers: { authorization: `Bearer ${await msAccess()}`, prefer: 'outlook.timezone="UTC"' } });
+  if (res.status === 401 && !retried) {
+    const s = msState();
+    if (s.tokens) msPatch({ tokens: { ...s.tokens, expires_at: 0 } });
+    return graphGet(pathOrUrl, true);
+  }
+  if (!res.ok) throw new Error(`Microsoft Graph could not answer (HTTP ${res.status})`);
+  return res.json();
+}
+
+async function msCalendars() {
+  const j = await graphGet('/me/calendars?$select=id,name,hexColor,color,isDefaultCalendar&$top=100');
+  const list = (j.value || []).map((c) => ({ id: c.id, name: c.name, hexColor: c.hexColor, color: c.color, isDefault: Boolean(c.isDefaultCalendar) }));
+  const s = msState();
+  // New calendars start shown; a hidden one stays hidden.
+  const hidden = new Set(s.hidden || []);
+  msPatch({ calendars: list, hidden: [...hidden].filter((id) => list.some((c) => c.id === id)) });
+  return list;
+}
+
+let msSignIn = null;
+async function msConnect() {
+  if (!msClientId()) throw new Error('Microsoft sign-in is not set up in this copy of Mufka');
+  if (msSignIn) throw new Error('Already signing in');
+  const server = await wisprListen(0, 'localhost');
+  const redirectUri = `http://localhost:${server.address().port}`;
+  const state = crypto.randomBytes(16).toString('hex');
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  let cancel;
+  const code = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Sign-in took too long; try again')), wp.SIGN_IN_TIMEOUT_MS);
+    cancel = () => { clearTimeout(timer); reject(new Error('cancelled')); };
+    server.on('request', (req, res) => {
+      const r = cal.parseMsCallback(req.url, state);
+      if (!r) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(cal.callbackPage(r.ok));
+      clearTimeout(timer);
+      if (r.ok) resolve(r.code); else reject(new Error(r.error));
+    });
+  });
+  code.catch(() => {});
+  msSignIn = { cancel };
+  try {
+    shell.openExternal(cal.msAuthorizeUrl({ clientId: msClientId(), redirectUri, state, challenge }));
+    const tokens = await msToken({ grant_type: 'authorization_code', code: await code, redirect_uri: redirectUri, code_verifier: verifier });
+    msPatch({ tokens });
+    const me = await graphGet('/me?$select=displayName,userPrincipalName');
+    msPatch({ account: me.displayName || me.userPrincipalName || 'Microsoft account' });
+    await msCalendars();
+    calendarsChanged();
+    return { ok: true, account: msState().account };
+  } catch (err) {
+    if (err.message === 'cancelled') return { cancelled: true };
+    throw err;
+  } finally {
+    msSignIn = null;
+    server.close();
+  }
+}
+
+const EVENT_SELECT = 'id,subject,start,end,isAllDay,isCancelled,showAs,location,onlineMeeting,onlineMeetingUrl,webLink,organizer,attendees,bodyPreview';
+const eventCache = new Map(); // "from|to" → { at, events }
+
+// Events of the shown calendars between two instants (at most 62 days).
+async function calendarEvents(from, to) {
+  const a = new Date(from); const b = new Date(to);
+  if (Number.isNaN(+a) || Number.isNaN(+b) || b <= a || b - a > 62 * 864e5) throw new Error('Bad date range');
+  const s = msState();
+  if (!s.tokens) return { events: [], connected: false };
+  const key = `${a.toISOString()}|${b.toISOString()}`;
+  const hit = eventCache.get(key);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return { events: hit.events, connected: true };
+  try {
+    const hidden = new Set(s.hidden || []);
+    const events = [];
+    for (const [i, c] of (s.calendars || []).entries()) {
+      if (hidden.has(c.id)) continue;
+      let url = `/me/calendars/${encodeURIComponent(c.id)}/calendarView?startDateTime=${a.toISOString()}&endDateTime=${b.toISOString()}&$top=200&$select=${EVENT_SELECT}`;
+      for (let n = 0; url && n < 20; n++) {
+        const j = await graphGet(url);
+        for (const ev of j.value || []) { const e = cal.fromGraph(ev, c, i); if (e) events.push(e); }
+        url = j['@odata.nextLink'] || null;
+      }
+    }
+    eventCache.set(key, { at: Date.now(), events });
+    return { events, connected: true };
+  } catch (err) {
+    if (hit) return { events: hit.events, connected: true, error: err.message };
+    throw err;
+  }
+}
+
+// Tell the windows to drop their events and ask again.
+function calendarsChanged() {
+  eventCache.clear();
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send('calendar:changed');
+}
+
+function calendarStatus() {
+  const s = msState();
+  const hidden = new Set(s.hidden || []);
+  return {
+    microsoft: {
+      available: Boolean(msClientId()),
+      connected: Boolean(s.tokens),
+      signingIn: Boolean(msSignIn),
+      account: s.account || null,
+      calendars: (s.calendars || []).map((c, i) => ({ id: c.id, name: c.name, color: cal.calendarColor(c, i), shown: !hidden.has(c.id), isDefault: c.isDefault })),
+    },
+  };
+}
+
+function setCalendarShown(id, shown) {
+  const s = msState();
+  if (!(s.calendars || []).some((c) => c.id === id)) throw new Error('Unknown calendar');
+  const hidden = new Set(s.hidden || []);
+  if (shown) hidden.delete(id); else hidden.add(id);
+  msPatch({ hidden: [...hidden] });
+  calendarsChanged();
+  return calendarStatus();
+}
+
+function msDisconnect() {
+  if (msSignIn) msSignIn.cancel();
+  secretPatch(CAL_FILE, { microsoft: undefined });
+  calendarsChanged();
   return { ok: true };
 }
 
@@ -1215,6 +1406,13 @@ ipcMain.handle('wispr:cancel', wrap(() => { if (wisprSignIn) wisprSignIn.cancel(
 ipcMain.handle('wispr:disconnect', wrap(() => wisprDisconnect()));
 ipcMain.handle('wispr:refresh', wrap(async () => ({ account: await wisprAccount() })));
 ipcMain.handle('wispr:sync', wrap(() => wisprSync()));
+ipcMain.handle('calendar:status', wrap(() => calendarStatus()));
+ipcMain.handle('calendar:connect', wrap(() => msConnect()));
+ipcMain.handle('calendar:cancel', wrap(() => { if (msSignIn) msSignIn.cancel(); return { ok: true }; }));
+ipcMain.handle('calendar:disconnect', wrap(() => msDisconnect()));
+ipcMain.handle('calendar:refresh', wrap(async () => { await msCalendars(); calendarsChanged(); return calendarStatus(); }));
+ipcMain.handle('calendar:setShown', wrap((id, shown) => setCalendarShown(String(id), Boolean(shown))));
+ipcMain.handle('calendar:events', wrap((from, to) => calendarEvents(String(from), String(to))));
 ipcMain.handle('notes:openExternal', wrap((url) => {
   if (!/^https?:\/\//i.test(String(url))) return { error: 'blocked' };
   shell.openExternal(url);

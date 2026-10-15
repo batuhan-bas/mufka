@@ -6,10 +6,11 @@
 
 **Your week and your notes, in one calm Mac app.**
 
-A week planner with times and repeating plans, and an Obsidian‑like Markdown
-notes vault with links, backlinks and a graph — local, private, no account.
+A week planner with times, repeating plans and your Outlook / Teams calendar,
+and an Obsidian‑like Markdown notes vault with links, backlinks and a graph —
+local and private.
 
-![The Planner: the week with to-dos on top and an hour grid below](docs/screenshots/planner.png)
+![The Planner: the week with to-dos on top, an hour grid below and calendar meetings in their colour](docs/screenshots/planner.png)
 
 </div>
 
@@ -36,20 +37,28 @@ Mufka has two modes, switched at the top left (**Notes | Planner**, or ⌃Tab).
   and **Repeat** — every day, weekdays, every week, chosen days, or monthly.
 - **Repeating plans** look different (teal, dashed edge, ↻ and their rule), so
   "this happens every Tuesday" is visible at a glance.
-- **Missed** plans — not done after their time — turn red with a one-click
-  **→ Today**. Nothing moves on its own.
+- **Missed** plans — not done after their time — get a coral edge and a
+  one-click **→ Today**. Nothing moves on its own.
+- **Your calendar in the week:** connect **Microsoft (Outlook, Teams)** in
+  **Settings** (⌘,) and your meetings appear next to your plans, in each
+  calendar's colour; all-day events sit on top. Click one for when, where and
+  who, and **Join meeting** for Teams, Zoom or Meet links. Read-only: Mufka
+  never changes your calendar. Choose which calendars to show; ↻ refreshes.
 - Move plans by **dragging** (to another day or time; drag the bottom edge to
   change the end), with the ⋯ menu, or with the keyboard (⌥←/→ a day, ⌥↑/↓ 15
   minutes). Every change can be undone with ⌘Z.
+
+<p align="center"><img src="docs/screenshots/calendar-event.png" width="85%" alt="A Teams meeting from the calendar, with Join meeting"></p>
 
 <p align="center"><img src="docs/screenshots/new-plan.png" width="85%" alt="New plan: title, day, time and repeat on chosen days"></p>
 
 ### Home — today
 
-Today's date, what you planned for it (tick things off here) and the day's
-note. Nothing planned yet? Home offers to open the Planner.
+Today's date, what you planned for it and today's meetings in time order
+(tick plans off here, **Join** a meeting), and the day's note. Nothing planned
+yet? Home offers to open the Planner.
 
-<p align="center"><img src="docs/screenshots/home.png" width="85%" alt="Home: today's plans and the daily note"></p>
+<p align="center"><img src="docs/screenshots/home.png" width="85%" alt="Home: today's plans and meetings, and the daily note"></p>
 
 ### Notes — an Obsidian-like vault
 
@@ -114,10 +123,14 @@ you delete them.
 
 ## Your notes and your data
 
-Everything stays on your Mac; there is no account and no server. The one
-exception is a Wispr Flow connection you turn on yourself: Mufka then reads
-your meetings from Wispr (it never sends your notes anywhere). The sign-in is
-kept encrypted in your Keychain; **Disconnect** in Settings forgets it.
+Everything stays on your Mac; there is no account and no server. The exceptions
+are the connections you turn on yourself in **Settings**: your **Microsoft
+calendar** (Mufka reads your events; it asks only for calendar read access) and
+**Wispr Flow** (Mufka reads your meetings). Mufka never sends your notes or
+plans anywhere. Sign-ins are kept encrypted in your Keychain; **Disconnect**
+forgets them.
+
+<p align="center"><img src="docs/screenshots/settings.png" width="70%" alt="Settings: the Microsoft calendar and Wispr Flow connections"></p>
 
 | What | Where |
 |---|---|
@@ -138,7 +151,7 @@ kept encrypted in your Keychain; **Disconnect** in Settings forgets it.
 | ⌘F | Search |
 | ⌘G · ⇧⌘G | Graph · local graph |
 | ⌘E | Edit a note's raw Markdown |
-| ⌘, | Settings (Wispr Flow connection) |
+| ⌘, | Settings (calendar and Wispr Flow connections) |
 | ⇧⌘T | Insert a template |
 | ⌘[ · ⌘] | Back · forward |
 | ⌘\\ · ⇧⌘\\ | Sidebar · Details panel |

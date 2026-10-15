@@ -791,7 +791,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 
 /* Missed: a red-pencil mark that says "you let this one slip". */
 .pl-task.missed { box-shadow: inset 2px 0 0 var(--today); }
-.pl-task.missed .pl-task-title { color: var(--today); }
+.pl-task.missed .pl-task-title { color: var(--text); }
 .pl-missed-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--today); border: 1px solid var(--today); border-radius: 3px; padding: 0 3px; line-height: 1.4; flex: none; align-self: center; }
 .pl-today-btn { flex: none; font: inherit; font-size: 11px; background: var(--ground); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; cursor: pointer; color: var(--text); align-self: center; }
 .pl-today-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -814,8 +814,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .pl-block-title { color: var(--text); overflow-wrap: normal; word-break: normal; overflow: hidden; text-overflow: ellipsis; }
 .pl-block.done { background: var(--panel); border-color: var(--line); border-left-color: var(--line-strong); }
 .pl-block.done .pl-block-title { text-decoration: line-through; color: var(--muted); }
-.pl-block.missed { background: color-mix(in srgb, var(--today) 7%, var(--ground)); border-color: color-mix(in srgb, var(--today) 35%, transparent); border-left-color: var(--today); }
-.pl-block.missed .pl-block-title { color: var(--today); }
+.pl-block.missed { border-left-color: var(--today); }
 .pl-block .pl-menu { visibility: hidden; padding: 0; }
 .pl-block:hover .pl-menu, .pl-block:focus-within .pl-menu { visibility: visible; }
 .pl-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
@@ -833,7 +832,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .plan-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .pl-list-day .pl-day-head { border-right: none; padding: 2px 0 6px; }
 .pl-list-day .pl-task-body { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 6px; }
-.pl-block.missed .pl-block-time { color: var(--today); font-weight: 600; }
+.pl-block.missed .pl-block-time { color: var(--today); opacity: 1; }
 
 /* --- Repeating plans: their own colour, a ↻ and the rule --- */
 .pl-block.recurring { background: var(--recur-soft); border-color: color-mix(in srgb, var(--recur) 30%, transparent); border-left: 3px dashed var(--recur); color: var(--recur); }
@@ -920,3 +919,26 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .conn-state.ok { color: var(--recur); }
 .conn-error { flex-basis: 100%; font-size: 12px; color: var(--today); }
 .conn-info { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+
+/* --- calendar events (read-only) --- */
+.pl-event { --ev: var(--accent); background: color-mix(in srgb, var(--ev) 18%, var(--ground)); border-color: color-mix(in srgb, var(--ev) 40%, transparent); border-left-color: var(--ev); cursor: pointer; }
+.pl-event .pl-block-title { color: var(--text); }
+.pl-event.free { background: transparent; border-style: dashed; }
+.pl-event-chip { --ev: var(--accent); display: block; width: 100%; text-align: left; font: inherit; font-size: 12px; color: var(--text); background: color-mix(in srgb, var(--ev) 18%, var(--ground)); border: 0; border-left: 3px solid var(--ev); border-radius: 4px; padding: 2px 6px; margin-bottom: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.pl-event-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.event-row { --ev: var(--accent); }
+.event-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ev); flex: none; margin: 0 4px; }
+.event-join { margin-left: auto; }
+.event-card { width: min(460px, calc(100vw - 32px)); border-top: 3px solid var(--ev); }
+.event-title { font-size: 16px; }
+.event-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+.event-facts dt { color: var(--muted); }
+.event-facts dd { margin: 0; overflow-wrap: anywhere; }
+.cal-list { display: flex; flex-direction: column; gap: 4px; }
+.cal-list:empty { display: none; }
+.cal-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.cal-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.pl-refresh { margin-left: 4px; }
+.pl-refresh.busy svg { opacity: 0.5; }
+@media (prefers-reduced-motion: no-preference) { .pl-refresh.busy svg { animation: pl-spin 0.9s linear infinite; } }
+@keyframes pl-spin { to { transform: rotate(360deg); } }

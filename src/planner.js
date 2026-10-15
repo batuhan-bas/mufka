@@ -54,7 +54,21 @@ export function renderPlanner(container, weekDate, api) {
   add.title = 'New plan: pick the day, a time and whether it repeats (⇧⌘P)';
   add.append(icon('plus', { size: 15 }), el('span', null, 'New plan'));
   add.addEventListener('click', () => api.newPlan(isThisWeek(days, now) ? now : days[0]));
-  head.append(title, sub, add, nav);
+  head.append(title, sub, add);
+  // Calendars connected: read them again now (they also refresh by themselves).
+  if (api.calendarsConnected()) {
+    const r = el('button', 'icon-btn-sq pl-refresh');
+    r.type = 'button';
+    r.title = 'Refresh calendars';
+    r.setAttribute('aria-label', 'Refresh calendars');
+    r.append(icon('refresh', { size: 15 }));
+    r.addEventListener('click', async () => {
+      r.disabled = true; r.classList.add('busy');
+      try { await api.refreshCalendars(); } finally { if (r.isConnected) { r.disabled = false; r.classList.remove('busy'); } }
+    });
+    head.append(r);
+  }
+  head.append(nav);
   root.append(head);
 
   // Plans with no day (older data, or moved here): shown only when there are
@@ -78,7 +92,7 @@ export function renderPlanner(container, weekDate, api) {
 
   const scroller = root.querySelector('.pl-scroll');
   if (scroller) {
-    const layouts = days.map((d) => layoutDay(api.dayItems(d).filter((p) => p.time)));
+    const layouts = days.map((d) => layoutDay([...api.dayItems(d).filter((p) => p.time), ...api.dayEvents(d).filter((e) => !e.allDay)]));
     scroller.scrollTop = scrollTop != null ? scrollTop : firstHour(layouts) * HOUR;
     scroller.addEventListener('scroll', () => { scrollTop = scroller.scrollTop; });
   }
@@ -99,6 +113,7 @@ function gridView(days, api, now) {
     const key = dayKey(d);
     const band = el('div', `pl-allday${key < dayKey(now) ? ' past' : ''}${isToday(d, now) ? ' today' : ''}`);
     band.dataset.dropDay = key;
+    for (const ev of api.dayEvents(d).filter((x) => x.allDay)) band.append(eventChip(ev, api));
     for (const p of api.dayItems(d).filter((x) => !x.time)) band.append(taskRow(p, key, api, now));
     band.append(addButton(`Add a to-do on ${WD_LONG[(d.getDay() + 6) % 7]}`, (t) => api.add({ scope: 'day', date: d, title: t }), '+ To-do'));
     dropZone(band, api, () => ({ scope: 'day', key, untimed: true }));
@@ -152,7 +167,8 @@ function hourColumn(d, api, now) {
     line.setAttribute('aria-hidden', 'true');
     col.append(line);
   }
-  for (const it of layoutDay(api.dayItems(d).filter((p) => p.time))) col.append(block(it, key, api, now));
+  const timed = [...api.dayItems(d).filter((p) => p.time), ...api.dayEvents(d).filter((e) => !e.allDay)];
+  for (const it of layoutDay(timed)) col.append(it.plan.kind === 'event' ? eventBlock(it, api) : block(it, key, api, now));
   // Hovering an empty hour says how to add a plan there.
   const hint = el('div', 'pl-hint');
   hint.setAttribute('aria-hidden', 'true');
@@ -175,6 +191,41 @@ function hourColumn(d, api, now) {
   });
   dropZone(col, api, (e) => ({ scope: 'day', key, at: minutesAt(col, e.clientY) }));
   return col;
+}
+
+// A calendar event (read-only): in the calendar's colour, opens its details.
+function eventBlock(it, api) {
+  const ev = it.plan;
+  const b = el('div', `pl-block pl-event${ev.free ? ' free' : ''}`);
+  b.style.setProperty('--ev', ev.color);
+  b.style.top = `${(it.start / 60) * HOUR}px`;
+  b.style.height = `${Math.max(18, ((it.end - it.start) / 60) * HOUR - 2)}px`;
+  b.style.left = `calc(${(it.lane / it.lanes) * 100}% + 2px)`;
+  b.style.width = `calc(${100 / it.lanes}% - 4px)`;
+  b.tabIndex = 0;
+  b.setAttribute('role', 'button');
+  const end = ev.endTime === '24:00' ? '00:00' : ev.endTime;
+  b.setAttribute('aria-label', `${ev.title}, ${ev.time}–${end}, ${ev.calendar || 'calendar'}${ev.joinUrl ? ', online meeting' : ''}`);
+  b.title = `${ev.title} · ${ev.calendar || 'Calendar'}`;
+  const body = el('div', 'pl-block-body');
+  body.append(el('span', 'pl-block-title', ev.title), el('span', 'pl-block-time', `${ev.time}–${end}`));
+  if (it.end - it.start < 45) b.classList.add('short');
+  b.append(body);
+  const open = (e) => { e.stopPropagation(); api.openEvent(ev); };
+  b.addEventListener('click', open);
+  b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(e); } });
+  return b;
+}
+
+// An all-day calendar event in a day's top band.
+function eventChip(ev, api) {
+  const c = el('button', 'pl-event-chip');
+  c.type = 'button';
+  c.style.setProperty('--ev', ev.color);
+  c.textContent = ev.title;
+  c.title = `${ev.title} · all day · ${ev.calendar || 'Calendar'}`;
+  c.addEventListener('click', (e) => { e.stopPropagation(); api.openEvent(ev); });
+  return c;
 }
 
 function minutesAt(col, clientY) {
@@ -361,6 +412,11 @@ function listView(days, api, now) {
     sec.dataset.dropDay = key;
     sec.append(dayHeader(d, i, api, now));
     const items = api.dayItems(d);
+    for (const ev of api.dayEvents(d)) {
+      const c = eventChip(ev, api);
+      if (ev.time) c.prepend(el('span', 'pl-list-time', `${ev.time}–${ev.endTime === '24:00' ? '00:00' : ev.endTime} `));
+      sec.append(c);
+    }
     for (const p of items.filter((x) => x.time)) {
       const r = taskRow(p, key, api, now);
       r.querySelector('.pl-task-body')?.prepend(el('span', 'pl-list-time', `${p.time}${p.endTime ? `–${p.endTime}` : ''}`));

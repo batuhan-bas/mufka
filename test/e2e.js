@@ -5,7 +5,7 @@
 // failed step (prints which step). Run: npm test, or npm run build then
 // npm run e2e (electron test/e2e.js).
 
-const { app, BrowserWindow, Menu, Notification, dialog, shell, clipboard, ClipboardItem } = require('electron');
+const { app, BrowserWindow, Menu, Notification, dialog, shell, clipboard, ClipboardItem, ipcMain } = require('electron');
 const path = require('path'); const fs = require('fs'); const os = require('os'); const zlib = require('zlib');
 
 // Build a tiny valid PNG (RGBA) with only node:zlib, so the clipboard-paste test
@@ -1344,14 +1344,66 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 2000), 'no coloured guide');
     });
 
-    await step(55, 'Settings: Wispr Flow connection shown, offline', async () => {
+    await step(55, 'Settings: calendar and Wispr Flow connections shown, offline', async () => {
       await press(',', ['meta']);
       assert(await waitFor('!!document.querySelector(".settings-dialog")', 2000), 'settings did not open');
-      assert(await waitFor('/Not connected/.test(document.querySelector(".conn-side")?.textContent || "")', 2000), 'no connection state');
+      assert(await waitFor('/Not connected/.test(document.querySelector("[data-conn=wispr] .conn-side")?.textContent || "")', 2000), 'no Wispr connection state');
+      assert(await waitFor('/Not connected/.test(document.querySelector("[data-conn=microsoft] .conn-side")?.textContent || "")', 2000), 'no Microsoft calendar state');
+      assert(!fs.existsSync(path.join(tmp, 'calendars.bin')), 'a calendar sign-in was stored');
       assert(await js('document.activeElement?.textContent === "Connect"'), 'Connect not focused');
       assert(!fs.existsSync(path.join(tmp, 'wispr.bin')), 'a sign-in was stored');
       await press('Escape');
       assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
+    });
+
+    await step(56, 'Calendar events: Planner grid, all-day band, details, join, Home', async () => {
+      // Not connected (the real handler, no sign-in): no refresh button.
+      await clickSel('#mode-planner');
+      assert(await waitFor('!!document.querySelector(".planner .pl-head")', 3000), 'Planner did not open');
+      await sleep(400);
+      assert(!(await js('!!document.querySelector(".pl-refresh")')), 'refresh button shown without a calendar');
+      await press('T', ['meta']);
+      // Answer the calendar request in main with two events today, as a
+      // connected Microsoft calendar would (no network in tests).
+      const at = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+      const key = todayKey;
+      const next = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+      const events = [
+        { id: 'ms:1', source: 'microsoft', calendar: 'Work', color: '#5AA9E6', title: 'Design review', allDay: false, start: at(10, 0), end: at(11, 0), startDate: null, endDate: null, location: 'Teams', joinUrl: 'https://teams.microsoft.com/l/meetup-join/test', webLink: null, organizer: 'Ali', attendees: ['Veli'], cancelled: false, free: false },
+        { id: 'ms:2', source: 'microsoft', calendar: 'Work', color: '#D9A13B', title: 'Offsite', allDay: true, start: null, end: null, startDate: key, endDate: next, location: '', joinUrl: null, webLink: null, organizer: '', attendees: [], cancelled: false, free: false },
+      ];
+      let asked = 0;
+      ipcMain.removeHandler('calendar:events');
+      ipcMain.handle('calendar:events', () => { asked += 1; return { connected: true, events }; });
+      ipcMain.removeHandler('calendar:refresh');
+      ipcMain.handle('calendar:refresh', () => { wc.send('calendar:changed'); return { microsoft: { connected: true } }; });
+      const opened = [];
+      const realOpen = shell.openExternal;
+      shell.openExternal = async (u) => { opened.push(u); };
+      try {
+        wc.send('calendar:changed'); // what main sends after a sign-in
+        await clickSel('#mode-planner');
+        assert(await waitFor('!!document.querySelector(".pl-event")', 4000), 'no event block in the Planner');
+        assert(await js('document.querySelector(".pl-event .pl-block-title").textContent') === 'Design review', 'wrong event title');
+        assert(await js('/10:00–11:00/.test(document.querySelector(".pl-event .pl-block-time").textContent)'), 'wrong event time');
+        assert(await js(`!!document.querySelector('.pl-allday[data-drop-day="${key}"] .pl-event-chip')`), 'no all-day chip');
+        // Refresh in the Planner's header asks the calendars again.
+        assert(await waitFor('!!document.querySelector(".pl-refresh")', 2000), 'no refresh button');
+        const before = asked;
+        await clickSel('.pl-refresh');
+        assert(await waitFor('(document.getElementById("toast")?.textContent || "").includes("Calendars refreshed")', 3000), 'no refresh toast');
+        assert(await waitFor2(() => asked > before, 3000), 'refresh did not ask again');
+        await clickSel('.pl-event');
+        assert(await waitFor('!!document.querySelector(".event-card")', 2000), 'no event details');
+        assert(await js('/Work/.test(document.querySelector(".event-facts").textContent)'), 'calendar name missing');
+        await clickEval('[...document.querySelectorAll(".event-card .btn")].find(b => b.textContent === "Join meeting")', 'Join meeting');
+        assert(await waitFor2(() => opened.includes('https://teams.microsoft.com/l/meetup-join/test'), 2000), `join did not open: ${JSON.stringify(opened)}`);
+        assert(await waitFor('!document.querySelector(".event-card")', 2000), 'details stayed open');
+        await press('T', ['meta']);
+        assert(await waitFor('[...document.querySelectorAll(".event-row .plan-title")].map(e => e.textContent).join("|") === "Offsite|Design review"', 3000), 'Home does not list the events');
+      } finally {
+        shell.openExternal = realOpen;
+      }
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
