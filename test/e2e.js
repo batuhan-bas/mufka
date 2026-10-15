@@ -1287,6 +1287,9 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('.pl-new');
       assert(await waitFor('!!document.querySelector(".plan-dialog #dlg-repeat")', 2000), 'New plan dialog missing');
       await typeText('Yuzme');
+      // Start on this week's Monday, so Tuesday and Thursday are in the week
+      // whatever day the test runs.
+      await js(`(() => { const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const i = document.getElementById('dlg-date'); i.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
       await js(`(() => { const s = document.getElementById('dlg-repeat'); s.focus(); })()`);
       await js(`(() => { const s = document.getElementById('dlg-repeat'); s.value = 'custom'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
       assert(await waitFor('!document.querySelector(".plan-dialog-days").hidden', 1000), 'day toggles did not appear');
