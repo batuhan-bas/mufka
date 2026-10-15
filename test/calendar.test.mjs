@@ -85,3 +85,40 @@ test('when an event happens, in words', () => {
   assert.match(eventWhen(ev('2026-10-15T20:00:00', '2026-10-15T22:30:00')), /^Thu 15 Oct 23:00 – Fri 16 Oct 01:30$/);
   assert.equal(eventWhen(fromGraph({ id: 'a', isAllDay: true, start: { dateTime: '2026-10-15T00:00:00' }, end: { dateTime: '2026-10-17T00:00:00' } }, cal)), 'All day · 2 days');
 });
+
+import { GOOGLE_SCOPES, googleAuthorizeUrl, fromGoogle, callbackPage } from '../lib/calendar.mjs';
+
+test('Google sign-in: calendar read only, offline access, PKCE', () => {
+  assert.deepEqual(GOOGLE_SCOPES, ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly']);
+  const u = new URL(googleAuthorizeUrl({ clientId: 'id.apps', redirectUri: 'http://127.0.0.1:5050', state: 's', challenge: 'ch' }));
+  assert.equal(u.origin + u.pathname, 'https://accounts.google.com/o/oauth2/v2/auth');
+  assert.equal(u.searchParams.get('access_type'), 'offline');
+  assert.equal(u.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(u.searchParams.get('redirect_uri'), 'http://127.0.0.1:5050');
+  assert.match(callbackPage(true, 'Google'), /Google calendar/);
+});
+
+test('Google events become Mufka events', () => {
+  const gcal = { id: 'primary', name: 'Me', hexColor: '#039be5' };
+  const timed = fromGoogle({
+    id: 'a', summary: 'Planning', status: 'confirmed',
+    start: { dateTime: '2026-10-15T09:30:00+03:00' }, end: { dateTime: '2026-10-15T10:00:00+03:00' },
+    hangoutLink: 'https://meet.google.com/abc-defg-hij', htmlLink: 'https://www.google.com/calendar/event?eid=x',
+    organizer: { email: 'ali@x.com', displayName: 'Ali' },
+    attendees: [{ email: 'me@x.com', self: true, responseStatus: 'accepted' }, { email: 'veli@x.com' }, { email: 'room@x.com', resource: true }],
+  }, gcal);
+  assert.equal(timed.id, 'g:a');
+  assert.equal(timed.start, '2026-10-15T06:30:00.000Z');
+  assert.equal(timed.joinUrl, 'https://meet.google.com/abc-defg-hij');
+  assert.deepEqual([timed.organizer, timed.attendees, timed.color, timed.cancelled], ['Ali', ['veli@x.com'], '#039be5', false]);
+  const allDay = fromGoogle({ id: 'b', summary: 'Trip', start: { date: '2026-10-16' }, end: { date: '2026-10-18' }, transparency: 'transparent' }, gcal);
+  assert.deepEqual([allDay.allDay, allDay.startDate, allDay.endDate, allDay.free], [true, '2026-10-16', '2026-10-18', true]);
+  const zoom = fromGoogle({ id: 'c', start: { dateTime: '2026-10-15T12:00:00Z' }, end: { dateTime: '2026-10-15T13:00:00Z' },
+    conferenceData: { entryPoints: [{ entryPointType: 'phone', uri: 'tel:+1' }, { entryPointType: 'video', uri: 'https://acme.zoom.us/j/1' }] } }, gcal);
+  assert.equal(zoom.joinUrl, 'https://acme.zoom.us/j/1');
+  assert.equal(zoom.title, '(No title)');
+  const declined = fromGoogle({ id: 'd', start: { dateTime: '2026-10-15T12:00:00Z' }, attendees: [{ self: true, responseStatus: 'declined' }] }, gcal);
+  assert.equal(declined.cancelled, true);
+  assert.equal(fromGoogle({ id: 'e', start: {} }, gcal), null);
+  assert.equal(fromGoogle({ id: 'f', status: 'cancelled', start: { date: '2026-10-15' } }, gcal).cancelled, true);
+});

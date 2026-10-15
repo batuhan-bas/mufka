@@ -1349,6 +1349,8 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('!!document.querySelector(".settings-dialog")', 2000), 'settings did not open');
       assert(await waitFor('/Not connected/.test(document.querySelector("[data-conn=wispr] .conn-side")?.textContent || "")', 2000), 'no Wispr connection state');
       assert(await waitFor('/Not connected/.test(document.querySelector("[data-conn=microsoft] .conn-side")?.textContent || "")', 2000), 'no Microsoft calendar state');
+      // Google needs the build's client (.env.local): connectable, or "not set up" without it.
+      assert(await waitFor('/Not connected|Not set up/.test(document.querySelector("[data-conn=google] .conn-side")?.textContent || "")', 2000), 'no Google calendar state');
       assert(!fs.existsSync(path.join(tmp, 'calendars.bin')), 'a calendar sign-in was stored');
       assert(await js('document.activeElement?.textContent === "Connect"'), 'Connect not focused');
       assert(!fs.existsSync(path.join(tmp, 'wispr.bin')), 'a sign-in was stored');
