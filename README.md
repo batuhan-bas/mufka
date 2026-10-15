@@ -10,7 +10,7 @@ A week planner with times, repeating plans and your Outlook, Teams and Google
 calendars, and an Obsidian‑like Markdown notes vault with links, backlinks and
 a graph — local and private.
 
-**[mufka.app](https://mufka.app)** · [Download](https://github.com/batuhan-bas/mufka/releases/latest) · [Privacy](https://mufka.app/privacy)
+**[mufka.app](https://mufka.app)** · [Download](https://github.com/batuhan-bas/mufka/releases/latest) · [Privacy](https://mufka.app/privacy) · [Support](https://mufka.app/support)
 
 ![The Planner: the week with to-dos on top, an hour grid below and calendar meetings in their colour](docs/screenshots/planner.png)
 
