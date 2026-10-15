@@ -6,9 +6,11 @@
 
 **Your week and your notes, in one calm Mac app.**
 
-A week planner with times, repeating plans and your Outlook / Teams calendar,
-and an Obsidian‑like Markdown notes vault with links, backlinks and a graph —
-local and private.
+A week planner with times, repeating plans and your Outlook, Teams and Google
+calendars, and an Obsidian‑like Markdown notes vault with links, backlinks and
+a graph — local and private.
+
+**[mufka.app](https://mufka.app)** · [Download](https://github.com/batuhan-bas/mufka/releases/latest) · [Privacy](https://mufka.app/privacy)
 
 ![The Planner: the week with to-dos on top, an hour grid below and calendar meetings in their colour](docs/screenshots/planner.png)
 
@@ -39,11 +41,12 @@ Mufka has two modes, switched at the top left (**Notes | Planner**, or ⌃Tab).
   "this happens every Tuesday" is visible at a glance.
 - **Missed** plans — not done after their time — get a coral edge and a
   one-click **→ Today**. Nothing moves on its own.
-- **Your calendar in the week:** connect **Microsoft (Outlook, Teams)** in
-  **Settings** (⌘,) and your meetings appear next to your plans, in each
-  calendar's colour; all-day events sit on top. Click one for when, where and
-  who, and **Join meeting** for Teams, Zoom or Meet links. Read-only: Mufka
-  never changes your calendar. Choose which calendars to show; ↻ refreshes.
+- **Your calendars in the week:** connect **Microsoft (Outlook, Teams)** and
+  **Google Calendar** in **Settings** (⌘,) and your meetings appear next to
+  your plans, in each calendar's colour; all-day events sit on top. Click one
+  for when, where and who, and **Join meeting** for Teams, Meet or Zoom links.
+  Read-only: Mufka never changes your calendars. Choose which calendars to
+  show; ↻ refreshes.
 - Move plans by **dragging** (to another day or time; drag the bottom edge to
   change the end), with the ⋯ menu, or with the keyboard (⌥←/→ a day, ⌥↑/↓ 15
   minutes). Every change can be undone with ⌘Z.
@@ -124,13 +127,13 @@ you delete them.
 ## Your notes and your data
 
 Everything stays on your Mac; there is no account and no server. The exceptions
-are the connections you turn on yourself in **Settings**: your **Microsoft
-calendar** (Mufka reads your events; it asks only for calendar read access) and
-**Wispr Flow** (Mufka reads your meetings). Mufka never sends your notes or
-plans anywhere. Sign-ins are kept encrypted in your Keychain; **Disconnect**
-forgets them.
+are the connections you turn on yourself in **Settings**: your **Microsoft**
+and **Google** calendars (Mufka reads your events; it asks only for calendar
+read access) and **Wispr Flow** (Mufka reads your meetings). Mufka never sends
+your notes or plans anywhere. Sign-ins are kept encrypted in your Keychain;
+**Disconnect** forgets them. Details: the [privacy policy](https://mufka.app/privacy).
 
-<p align="center"><img src="docs/screenshots/settings.png" width="70%" alt="Settings: the Microsoft calendar and Wispr Flow connections"></p>
+<p align="center"><img src="docs/screenshots/settings.png" width="70%" alt="Settings: the Microsoft and Google calendars and Wispr Flow"></p>
 
 | What | Where |
 |---|---|
@@ -194,6 +197,18 @@ For a copy you share or upload to Releases, use **`npm run dist:public`**: it
 signs ad-hoc, so no certificate (and the name and email in it) ends up inside
 the app. macOS may then ask for notification permission again after each
 update.
+
+**Google Calendar** needs an OAuth client of type *Desktop app* (Google Cloud
+Console → Google Auth Platform → Clients). Its id and secret are not in this
+repository; put them in a git-ignored `.env.local` before building:
+
+```sh
+MAIN_VITE_GOOGLE_CLIENT_ID=….apps.googleusercontent.com
+MAIN_VITE_GOOGLE_CLIENT_SECRET=…
+```
+
+Without it, Settings shows Google as "not set up"; everything else works.
+Microsoft uses Mufka's public app registration (`lib/calendar.mjs`).
 
 Bump `version` in `package.json` before building a new copy, so people can
 tell versions apart.
