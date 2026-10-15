@@ -994,7 +994,8 @@ async function calCalendars(id) {
     list = (j.value || []).map((c) => ({ id: c.id, name: c.name, hexColor: c.hexColor, color: c.color, isDefault: Boolean(c.isDefaultCalendar) }));
   } else {
     const j = await calGet(id, `${cal.GCAL}/users/me/calendarList?minAccessRole=reader&maxResults=250`);
-    list = (j.items || []).map((c) => ({ id: c.id, name: c.summaryOverride || c.summary || c.id, hexColor: c.backgroundColor, isDefault: Boolean(c.primary) }));
+    // The primary calendar is named after the account's address: show a name.
+    list = (j.items || []).map((c) => ({ id: c.id, name: c.summaryOverride || (c.primary ? 'My calendar' : c.summary || 'Calendar'), hexColor: c.backgroundColor, isDefault: Boolean(c.primary) }));
     googleHidden = (j.items || []).filter((c) => c.selected === false).map((c) => c.id);
   }
   const s = calState(id);
