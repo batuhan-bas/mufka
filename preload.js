@@ -77,11 +77,12 @@ contextBridge.exposeInMainWorld('wispr', {
 // Calendars shown in the Planner (read-only; sign-in and requests stay in main).
 contextBridge.exposeInMainWorld('calendars', {
   status: () => ipcRenderer.invoke('calendar:status'),
-  connect: () => ipcRenderer.invoke('calendar:connect'),
-  cancel: () => ipcRenderer.invoke('calendar:cancel'),
-  disconnect: () => ipcRenderer.invoke('calendar:disconnect'),
+  // provider: 'microsoft' | 'google'
+  connect: (provider) => ipcRenderer.invoke('calendar:connect', provider),
+  cancel: (provider) => ipcRenderer.invoke('calendar:cancel', provider),
+  disconnect: (provider) => ipcRenderer.invoke('calendar:disconnect', provider),
   refresh: () => ipcRenderer.invoke('calendar:refresh'),
-  setShown: (id, shown) => ipcRenderer.invoke('calendar:setShown', id, shown),
+  setShown: (provider, calendarId, shown) => ipcRenderer.invoke('calendar:setShown', provider, calendarId, shown),
   events: (from, to) => ipcRenderer.invoke('calendar:events', from, to),
   // Main says the calendars changed (connected, hidden, refreshed…).
   onChanged: (cb) => ipcRenderer.on('calendar:changed', () => cb()),

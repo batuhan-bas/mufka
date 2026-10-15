@@ -891,30 +891,59 @@ function wisprDisconnect() {
   return { ok: true };
 }
 
-// --- calendars: Microsoft (Outlook / Microsoft 365, Teams meetings) -------
-// Read-only. Sign-in is OAuth 2.0 with PKCE in the default browser against
-// Mufka's own public app registration (no secret), back to a one-shot server
-// on localhost. Only calendar read access is requested. Tokens are kept in
-// calendars.bin (encrypted); events are read from Microsoft Graph on demand
-// for the weeks the Planner shows and cached for a few minutes.
+// --- calendars: Microsoft (Outlook, Teams) and Google -----------------------
+// Read-only. Each provider: OAuth 2.0 authorization code + PKCE in the
+// default browser, back to a one-shot server on loopback, `state` checked;
+// only calendar read access is requested. Tokens live in calendars.bin
+// (encrypted), are refreshed here, and never reach the renderer. Events are
+// read for the weeks the Planner shows and cached for a few minutes.
 
 const CAL_FILE = 'calendars.bin';
-const msState = () => secretRead(CAL_FILE).microsoft || {};
-const msPatch = (patch) => {
-  const next = { ...msState(), ...patch };
-  for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
-  secretPatch(CAL_FILE, { microsoft: next });
+const PROVIDERS = {
+  microsoft: {
+    name: 'Microsoft',
+    clientId: () => process.env.MUFKA_MS_CLIENT_ID || cal.MS_CLIENT_ID,
+    secret: () => '',
+    host: 'localhost', // Microsoft ignores the port of http://localhost
+    authorizeUrl: (o) => cal.msAuthorizeUrl(o),
+    tokenUrl: `${cal.MS_AUTHORITY}/token`,
+    scopes: cal.MS_SCOPES,
+    apiBase: `${cal.GRAPH}/`,
+  },
+  google: {
+    name: 'Google',
+    clientId: () => process.env.MUFKA_GOOGLE_CLIENT_ID || import.meta.env.MAIN_VITE_GOOGLE_CLIENT_ID || '',
+    secret: () => process.env.MUFKA_GOOGLE_CLIENT_SECRET || import.meta.env.MAIN_VITE_GOOGLE_CLIENT_SECRET || '',
+    host: '127.0.0.1', // Google's loopback redirect for desktop apps
+    authorizeUrl: (o) => cal.googleAuthorizeUrl(o),
+    tokenUrl: cal.GOOGLE_TOKEN,
+    scopes: cal.GOOGLE_SCOPES,
+    apiBase: `${cal.GOOGLE_API}/`,
+  },
 };
-function msClientId() { return process.env.MUFKA_MS_CLIENT_ID || cal.MS_CLIENT_ID; }
+function provider(id) {
+  const p = PROVIDERS[id];
+  if (!p) throw new Error('Unknown calendar provider');
+  return p;
+}
+const calState = (id) => secretRead(CAL_FILE)[id] || {};
+const calPatch = (id, patch) => {
+  const next = { ...calState(id), ...patch };
+  for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+  secretPatch(CAL_FILE, { [id]: next });
+};
 
-async function msToken(params) {
-  const body = new URLSearchParams({ client_id: msClientId(), scope: cal.MS_SCOPES.join(' '), ...params });
-  const res = await net.fetch(`${cal.MS_AUTHORITY}/token`, {
+async function calToken(id, params) {
+  const p = provider(id);
+  const body = new URLSearchParams({ client_id: p.clientId(), ...params });
+  if (id === 'microsoft') body.set('scope', p.scopes.join(' '));
+  if (p.secret()) body.set('client_secret', p.secret());
+  const res = await net.fetch(p.tokenUrl, {
     method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: body.toString(),
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok || !j.access_token) {
-    const err = new Error(String(j.error_description || j.error || `Microsoft sign-in failed (HTTP ${res.status})`).split('\n')[0].slice(0, 200));
+    const err = new Error(String(j.error_description || j.error || `${p.name} sign-in failed (HTTP ${res.status})`).split('\n')[0].slice(0, 200));
     err.code = j.error;
     throw err;
   }
@@ -922,54 +951,67 @@ async function msToken(params) {
 }
 
 // A valid access token, refreshed when it is about to expire. A refused
-// refresh (revoked, expired) signs Mufka out.
-async function msAccess() {
-  const s = msState();
-  if (!s.tokens) throw new Error('Microsoft calendar is not connected');
+// refresh (revoked, expired) signs Mufka out of that provider.
+async function calAccess(id) {
+  const s = calState(id);
+  if (!s.tokens) throw new Error(`${provider(id).name} calendar is not connected`);
   if (s.tokens.expires_at > Date.now()) return s.tokens.access_token;
   try {
-    const t = await msToken({ grant_type: 'refresh_token', refresh_token: s.tokens.refresh_token });
-    msPatch({ tokens: { ...t, refresh_token: t.refresh_token || s.tokens.refresh_token } });
+    const t = await calToken(id, { grant_type: 'refresh_token', refresh_token: s.tokens.refresh_token });
+    calPatch(id, { tokens: { ...t, refresh_token: t.refresh_token || s.tokens.refresh_token } });
     return t.access_token;
   } catch (err) {
     if (err.code === 'invalid_grant' || err.code === 'interaction_required') {
-      msPatch({ tokens: undefined });
-      throw new Error('Microsoft signed Mufka out; connect again in Settings');
+      calPatch(id, { tokens: undefined });
+      throw new Error(`${provider(id).name} signed Mufka out; connect again in Settings`);
     }
     throw err;
   }
 }
 
-// GET from Microsoft Graph (paging links included); nothing else is fetched.
-async function graphGet(pathOrUrl, retried = false) {
-  const url = pathOrUrl.startsWith('https://') ? pathOrUrl : `${cal.GRAPH}${pathOrUrl}`;
-  if (!url.startsWith(`${cal.GRAPH}/`)) throw new Error('blocked');
-  const res = await net.fetch(url, { headers: { authorization: `Bearer ${await msAccess()}`, prefer: 'outlook.timezone="UTC"' } });
+// GET JSON from the provider's API; nothing outside its API base is fetched.
+async function calGet(id, url, retried = false) {
+  if (!url.startsWith(provider(id).apiBase)) throw new Error('blocked');
+  const headers = { authorization: `Bearer ${await calAccess(id)}` };
+  if (id === 'microsoft') headers.prefer = 'outlook.timezone="UTC"';
+  const res = await net.fetch(url, { headers });
   if (res.status === 401 && !retried) {
-    const s = msState();
-    if (s.tokens) msPatch({ tokens: { ...s.tokens, expires_at: 0 } });
-    return graphGet(pathOrUrl, true);
+    const s = calState(id);
+    if (s.tokens) calPatch(id, { tokens: { ...s.tokens, expires_at: 0 } });
+    return calGet(id, url, true);
   }
-  if (!res.ok) throw new Error(`Microsoft Graph could not answer (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(`${provider(id).name} calendar could not answer (HTTP ${res.status})`);
   return res.json();
 }
 
-async function msCalendars() {
-  const j = await graphGet('/me/calendars?$select=id,name,hexColor,color,isDefaultCalendar&$top=100');
-  const list = (j.value || []).map((c) => ({ id: c.id, name: c.name, hexColor: c.hexColor, color: c.color, isDefault: Boolean(c.isDefaultCalendar) }));
-  const s = msState();
-  // New calendars start shown; a hidden one stays hidden.
-  const hidden = new Set(s.hidden || []);
-  msPatch({ calendars: list, hidden: [...hidden].filter((id) => list.some((c) => c.id === id)) });
+// The account's calendars. New ones start shown (for Google: as shown in
+// Google Calendar itself); a calendar the user hid stays hidden.
+async function calCalendars(id) {
+  let list;
+  let googleHidden = [];
+  if (id === 'microsoft') {
+    const j = await calGet(id, `${cal.GRAPH}/me/calendars?$select=id,name,hexColor,color,isDefaultCalendar&$top=100`);
+    list = (j.value || []).map((c) => ({ id: c.id, name: c.name, hexColor: c.hexColor, color: c.color, isDefault: Boolean(c.isDefaultCalendar) }));
+  } else {
+    const j = await calGet(id, `${cal.GCAL}/users/me/calendarList?minAccessRole=reader&maxResults=250`);
+    // The primary calendar is named after the account's address: show a name.
+    list = (j.items || []).map((c) => ({ id: c.id, name: c.summaryOverride || (c.primary ? 'My calendar' : c.summary || 'Calendar'), hexColor: c.backgroundColor, isDefault: Boolean(c.primary) }));
+    googleHidden = (j.items || []).filter((c) => c.selected === false).map((c) => c.id);
+  }
+  const s = calState(id);
+  const known = new Set((s.calendars || []).map((c) => c.id));
+  const hidden = new Set([...(s.hidden || []), ...googleHidden.filter((cid) => !known.has(cid))]);
+  calPatch(id, { calendars: list, hidden: [...hidden].filter((cid) => list.some((c) => c.id === cid)) });
   return list;
 }
 
-let msSignIn = null;
-async function msConnect() {
-  if (!msClientId()) throw new Error('Microsoft sign-in is not set up in this copy of Mufka');
-  if (msSignIn) throw new Error('Already signing in');
-  const server = await wisprListen(0, 'localhost');
-  const redirectUri = `http://localhost:${server.address().port}`;
+const calSignIns = {}; // provider id → { cancel }
+async function calConnect(id) {
+  const p = provider(id);
+  if (!p.clientId()) throw new Error(`${p.name} sign-in is not set up in this copy of Mufka`);
+  if (calSignIns[id]) throw new Error('Already signing in');
+  const server = await wisprListen(0, p.host);
+  const redirectUri = `http://${p.host}:${server.address().port}`;
   const state = crypto.randomBytes(16).toString('hex');
   const verifier = crypto.randomBytes(32).toString('base64url');
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
@@ -981,61 +1023,88 @@ async function msConnect() {
       const r = cal.parseMsCallback(req.url, state);
       if (!r) { res.writeHead(404); res.end(); return; }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(cal.callbackPage(r.ok));
+      res.end(cal.callbackPage(r.ok, p.name));
       clearTimeout(timer);
       if (r.ok) resolve(r.code); else reject(new Error(r.error));
     });
   });
   code.catch(() => {});
-  msSignIn = { cancel };
+  calSignIns[id] = { cancel };
   try {
-    shell.openExternal(cal.msAuthorizeUrl({ clientId: msClientId(), redirectUri, state, challenge }));
-    const tokens = await msToken({ grant_type: 'authorization_code', code: await code, redirect_uri: redirectUri, code_verifier: verifier });
-    msPatch({ tokens });
-    const me = await graphGet('/me?$select=displayName,userPrincipalName');
-    msPatch({ account: me.displayName || me.userPrincipalName || 'Microsoft account' });
-    await msCalendars();
+    shell.openExternal(p.authorizeUrl({ clientId: p.clientId(), redirectUri, state, challenge }));
+    const tokens = await calToken(id, { grant_type: 'authorization_code', code: await code, redirect_uri: redirectUri, code_verifier: verifier });
+    calPatch(id, { tokens });
+    if (id === 'microsoft') {
+      const me = await calGet(id, `${cal.GRAPH}/me?$select=displayName,userPrincipalName`);
+      calPatch(id, { account: me.displayName || me.userPrincipalName || 'Microsoft account' });
+    } else {
+      const me = await calGet(id, `${cal.GOOGLE_API}/oauth2/v3/userinfo`);
+      calPatch(id, { account: me.name || me.email || 'Google account' });
+    }
+    await calCalendars(id);
     calendarsChanged();
-    return { ok: true, account: msState().account };
+    return { ok: true, account: calState(id).account };
   } catch (err) {
     if (err.message === 'cancelled') return { cancelled: true };
     throw err;
   } finally {
-    msSignIn = null;
+    delete calSignIns[id];
     server.close();
   }
 }
 
-const EVENT_SELECT = 'id,subject,start,end,isAllDay,isCancelled,showAs,location,onlineMeeting,onlineMeetingUrl,webLink,organizer,attendees,bodyPreview';
+const MS_SELECT = 'id,subject,start,end,isAllDay,isCancelled,isOrganizer,showAs,location,onlineMeeting,onlineMeetingUrl,webLink,organizer,attendees,bodyPreview';
+const G_FIELDS = 'items(id,status,summary,start,end,location,description,hangoutLink,conferenceData/entryPoints,htmlLink,organizer,attendees(email,displayName,self,resource,responseStatus),transparency),nextPageToken';
+
+async function providerEvents(id, a, b) {
+  const s = calState(id);
+  const hidden = new Set(s.hidden || []);
+  const out = [];
+  for (const [i, c] of (s.calendars || []).entries()) {
+    if (hidden.has(c.id)) continue;
+    if (id === 'microsoft') {
+      let url = `${cal.GRAPH}/me/calendars/${encodeURIComponent(c.id)}/calendarView?startDateTime=${a.toISOString()}&endDateTime=${b.toISOString()}&$top=200&$select=${MS_SELECT}`;
+      for (let n = 0; url && n < 20; n++) {
+        const j = await calGet(id, url);
+        for (const ev of j.value || []) { const e = cal.fromGraph(ev, c, i); if (e) out.push(e); }
+        url = j['@odata.nextLink'] || null;
+      }
+    } else {
+      let token = '';
+      for (let n = 0; n < 20; n++) {
+        const q = new URLSearchParams({ timeMin: a.toISOString(), timeMax: b.toISOString(), singleEvents: 'true', orderBy: 'startTime', maxResults: '250', fields: G_FIELDS });
+        if (token) q.set('pageToken', token);
+        const j = await calGet(id, `${cal.GCAL}/calendars/${encodeURIComponent(c.id)}/events?${q}`);
+        for (const ev of j.items || []) { const e = cal.fromGoogle(ev, c, i); if (e) out.push(e); }
+        token = j.nextPageToken || '';
+        if (!token) break;
+      }
+    }
+  }
+  return out;
+}
+
 const eventCache = new Map(); // "from|to" → { at, events }
 
-// Events of the shown calendars between two instants (at most 62 days).
+// Events of the shown calendars of every connected provider between two
+// instants (at most 62 days). One failing provider does not hide the other.
 async function calendarEvents(from, to) {
   const a = new Date(from); const b = new Date(to);
   if (Number.isNaN(+a) || Number.isNaN(+b) || b <= a || b - a > 62 * 864e5) throw new Error('Bad date range');
-  const s = msState();
-  if (!s.tokens) return { events: [], connected: false };
+  const connected = Object.keys(PROVIDERS).filter((id) => calState(id).tokens);
+  if (!connected.length) return { events: [], connected: false };
   const key = `${a.toISOString()}|${b.toISOString()}`;
   const hit = eventCache.get(key);
   if (hit && Date.now() - hit.at < 5 * 60 * 1000) return { events: hit.events, connected: true };
-  try {
-    const hidden = new Set(s.hidden || []);
-    const events = [];
-    for (const [i, c] of (s.calendars || []).entries()) {
-      if (hidden.has(c.id)) continue;
-      let url = `/me/calendars/${encodeURIComponent(c.id)}/calendarView?startDateTime=${a.toISOString()}&endDateTime=${b.toISOString()}&$top=200&$select=${EVENT_SELECT}`;
-      for (let n = 0; url && n < 20; n++) {
-        const j = await graphGet(url);
-        for (const ev of j.value || []) { const e = cal.fromGraph(ev, c, i); if (e) events.push(e); }
-        url = j['@odata.nextLink'] || null;
-      }
-    }
-    eventCache.set(key, { at: Date.now(), events });
-    return { events, connected: true };
-  } catch (err) {
-    if (hit) return { events: hit.events, connected: true, error: err.message };
-    throw err;
+  const results = await Promise.allSettled(connected.map((id) => providerEvents(id, a, b)));
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length === results.length) {
+    if (hit) return { events: hit.events, connected: true, error: failed[0].reason.message };
+    throw failed[0].reason;
   }
+  const events = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+  eventCache.set(key, { at: Date.now(), events });
+  return { events, connected: true, ...(failed.length ? { error: failed[0].reason.message } : {}) };
 }
 
 // Tell the windows to drop their events and ask again.
@@ -1045,32 +1114,45 @@ function calendarsChanged() {
 }
 
 function calendarStatus() {
-  const s = msState();
-  const hidden = new Set(s.hidden || []);
-  return {
-    microsoft: {
-      available: Boolean(msClientId()),
+  const out = {};
+  for (const id of Object.keys(PROVIDERS)) {
+    const s = calState(id);
+    const hidden = new Set(s.hidden || []);
+    out[id] = {
+      available: Boolean(provider(id).clientId()),
       connected: Boolean(s.tokens),
-      signingIn: Boolean(msSignIn),
+      signingIn: Boolean(calSignIns[id]),
       account: s.account || null,
       calendars: (s.calendars || []).map((c, i) => ({ id: c.id, name: c.name, color: cal.calendarColor(c, i), shown: !hidden.has(c.id), isDefault: c.isDefault })),
-    },
-  };
+    };
+  }
+  return out;
 }
 
-function setCalendarShown(id, shown) {
-  const s = msState();
-  if (!(s.calendars || []).some((c) => c.id === id)) throw new Error('Unknown calendar');
+function setCalendarShown(id, calId, shown) {
+  const s = calState(id);
+  if (!(s.calendars || []).some((c) => c.id === calId)) throw new Error('Unknown calendar');
   const hidden = new Set(s.hidden || []);
-  if (shown) hidden.delete(id); else hidden.add(id);
-  msPatch({ hidden: [...hidden] });
+  if (shown) hidden.delete(calId); else hidden.add(calId);
+  calPatch(id, { hidden: [...hidden] });
   calendarsChanged();
   return calendarStatus();
 }
 
-function msDisconnect() {
-  if (msSignIn) msSignIn.cancel();
-  secretPatch(CAL_FILE, { microsoft: undefined });
+async function calRefresh() {
+  const errors = [];
+  for (const id of Object.keys(PROVIDERS)) {
+    if (!calState(id).tokens) continue;
+    try { await calCalendars(id); } catch (err) { errors.push(err.message); }
+  }
+  calendarsChanged();
+  return { ...calendarStatus(), ...(errors.length ? { error: errors[0] } : {}) };
+}
+
+function calDisconnect(id) {
+  provider(id);
+  if (calSignIns[id]) calSignIns[id].cancel();
+  secretPatch(CAL_FILE, { [id]: undefined });
   calendarsChanged();
   return { ok: true };
 }
@@ -1407,11 +1489,11 @@ ipcMain.handle('wispr:disconnect', wrap(() => wisprDisconnect()));
 ipcMain.handle('wispr:refresh', wrap(async () => ({ account: await wisprAccount() })));
 ipcMain.handle('wispr:sync', wrap(() => wisprSync()));
 ipcMain.handle('calendar:status', wrap(() => calendarStatus()));
-ipcMain.handle('calendar:connect', wrap(() => msConnect()));
-ipcMain.handle('calendar:cancel', wrap(() => { if (msSignIn) msSignIn.cancel(); return { ok: true }; }));
-ipcMain.handle('calendar:disconnect', wrap(() => msDisconnect()));
-ipcMain.handle('calendar:refresh', wrap(async () => { await msCalendars(); calendarsChanged(); return calendarStatus(); }));
-ipcMain.handle('calendar:setShown', wrap((id, shown) => setCalendarShown(String(id), Boolean(shown))));
+ipcMain.handle('calendar:connect', wrap((id) => calConnect(String(id))));
+ipcMain.handle('calendar:cancel', wrap((id) => { const s = calSignIns[String(id)]; if (s) s.cancel(); return { ok: true }; }));
+ipcMain.handle('calendar:disconnect', wrap((id) => calDisconnect(String(id))));
+ipcMain.handle('calendar:refresh', wrap(() => calRefresh()));
+ipcMain.handle('calendar:setShown', wrap((id, calId, shown) => setCalendarShown(String(id), String(calId), Boolean(shown))));
 ipcMain.handle('calendar:events', wrap((from, to) => calendarEvents(String(from), String(to))));
 ipcMain.handle('notes:openExternal', wrap((url) => {
   if (!/^https?:\/\//i.test(String(url))) return { error: 'blocked' };

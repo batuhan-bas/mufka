@@ -5,3 +5,5 @@ dist/
 *.log
 out/
 pnpm-lock.yaml
+.env.local
+.env.*.local

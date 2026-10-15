@@ -907,7 +907,9 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .tree-guide:not(.on-path) { opacity: 0.55; }
 
 /* --- settings --- */
-.settings-dialog { width: min(560px, calc(100vw - 32px)); }
+.settings-dialog { width: min(560px, calc(100vw - 32px)); max-height: 80vh; overflow-y: auto; }
+/* More connections than fit: the dialog scrolls, Done stays in reach. */
+.settings-dialog > .plan-dialog-actions { position: sticky; bottom: -14px; margin: 0 -16px -14px; padding: 10px 16px 14px; background: var(--ground); border-top: 1px solid var(--line); }
 .settings-section { display: flex; flex-direction: column; gap: 10px; }
 .settings-heading { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
 .conn-row { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }

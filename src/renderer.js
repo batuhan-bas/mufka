@@ -2547,22 +2547,25 @@ function openSettings() {
   const box = elem('div', 'palette plan-dialog settings-dialog');
   box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Settings');
   box.append(elem('div', 'plan-dialog-title', 'Settings'));
-  // Calendars: Microsoft (Outlook / Microsoft 365, Teams meetings).
+  // Calendars: Microsoft (Outlook / Microsoft 365, Teams) and Google.
   const calSection = elem('section', 'settings-section');
   calSection.append(elem('h3', 'settings-heading', 'Calendars'));
-  const msRow = elem('div', 'conn-row');
-  msRow.dataset.conn = 'microsoft';
-  const msText = elem('div', 'conn-text');
-  msText.append(
-    elem('span', 'conn-name', 'Microsoft (Outlook, Teams)'),
-    elem('span', 'conn-note', 'Your Outlook and Microsoft 365 calendars, Teams meetings included, in the Planner and on Home. Read-only; you sign in on Microsoft\u2019s own page.'),
-  );
-  const msSide = elem('div', 'conn-side');
-  const msList = elem('div', 'cal-list');
-  msList.setAttribute('role', 'group');
-  msList.setAttribute('aria-label', 'Calendars shown');
-  msRow.append(msText, msSide, msList);
-  calSection.append(msRow);
+  const calRows = [
+    ['microsoft', 'Microsoft (Outlook, Teams)', 'Your Outlook and Microsoft 365 calendars, Teams meetings included. Read-only; you sign in on Microsoft\u2019s own page.'],
+    ['google', 'Google Calendar', 'Your Google calendars, Meet links included. Read-only; you sign in on Google\u2019s own page.'],
+  ].map(([id, name, about]) => {
+    const r = elem('div', 'conn-row');
+    r.dataset.conn = id;
+    const tx = elem('div', 'conn-text');
+    tx.append(elem('span', 'conn-name', name), elem('span', 'conn-note', about));
+    const sd = elem('div', 'conn-side');
+    const ls = elem('div', 'cal-list');
+    ls.setAttribute('role', 'group');
+    ls.setAttribute('aria-label', `${name}: calendars shown`);
+    r.append(tx, sd, ls);
+    calSection.append(r);
+    return { id, name, side: sd, list: ls, busy: false };
+  });
   box.append(calSection);
 
   const section = elem('section', 'settings-section');
@@ -2627,47 +2630,49 @@ function openSettings() {
     refresh();
   };
 
-  let msBusy = false;
-  const msDraw = (all, note) => {
+  const calDraw = (row, all, note) => {
     if (!layer.isConnected) return;
-    const s = all.microsoft;
+    const s = all[row.id];
     const hadFocus = box.contains(document.activeElement);
-    msSide.replaceChildren();
-    msList.replaceChildren();
-    if (!s.available) {
-      msSide.append(elem('span', 'conn-state', 'Not set up in this copy of Mufka'));
-    } else if (s.signingIn || msBusy) {
-      msSide.append(elem('span', 'conn-state', 'Waiting for sign-in in your browser\u2026'),
-        button('Cancel', true, () => calApi.cancel()));
+    row.side.replaceChildren();
+    row.list.replaceChildren();
+    if (!s || !s.available) {
+      row.side.append(elem('span', 'conn-state', 'Not set up in this copy of Mufka'));
+    } else if (s.signingIn || row.busy) {
+      row.side.append(elem('span', 'conn-state', 'Waiting for sign-in in your browser\u2026'),
+        button('Cancel', true, () => calApi.cancel(row.id)));
     } else if (s.connected) {
-      msSide.append(elem('span', 'conn-state ok', `Connected \u00b7 ${s.account || 'Microsoft'}`),
-        button('Refresh', true, async () => { const r = await calApi.refresh(); msDraw(r && r.microsoft ? r : await calApi.status(), r && r.error); }),
-        button('Disconnect', true, async () => { await calApi.disconnect(); msRefresh(); showToast('Microsoft calendar disconnected'); }));
+      row.side.append(elem('span', 'conn-state ok', `Connected \u00b7 ${s.account || row.name}`),
+        button('Refresh', true, async () => { const r = await calApi.refresh(); calRefreshAll(r && r.error); }),
+        button('Disconnect', true, async () => { await calApi.disconnect(row.id); calRefreshAll(); showToast(`${row.name} disconnected`); }));
       for (const c of s.calendars) {
         const l = elem('label', 'cal-item');
-        const box2 = document.createElement('input');
-        box2.type = 'checkbox'; box2.checked = c.shown;
-        box2.addEventListener('change', () => calApi.setShown(c.id, box2.checked));
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = c.shown;
+        cb.addEventListener('change', () => calApi.setShown(row.id, c.id, cb.checked));
         const dot = elem('span', 'cal-dot');
         dot.style.background = c.color;
         dot.setAttribute('aria-hidden', 'true');
-        l.append(box2, dot, elem('span', null, c.name));
-        msList.append(l);
+        l.append(cb, dot, elem('span', null, c.name));
+        row.list.append(l);
       }
     } else {
-      msSide.append(elem('span', 'conn-state', 'Not connected'), button('Connect', false, msConnect));
+      row.side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', false, () => calConnectRow(row)));
     }
-    if (note) msSide.append(elem('span', 'conn-error', note));
-    if (hadFocus && !box.contains(document.activeElement)) (msSide.querySelector('button') || done).focus();
+    if (note) row.side.append(elem('span', 'conn-error', note));
+    if (hadFocus && !box.contains(document.activeElement)) (row.side.querySelector('button') || done).focus();
   };
-  const msRefresh = async (note) => msDraw(await calApi.status(), note);
-  const msConnect = async () => {
-    msBusy = true; msRefresh();
-    const res = await calApi.connect();
-    msBusy = false;
-    if (res && res.error) { msRefresh(res.error); return; }
-    if (res && res.ok) showToast(`Microsoft calendar connected as ${res.account}`);
-    msRefresh();
+  const calRefreshAll = async (note, only) => {
+    const all = await calApi.status();
+    for (const row of calRows) calDraw(row, all, only && only !== row ? undefined : note);
+  };
+  const calConnectRow = async (row) => {
+    row.busy = true; calRefreshAll();
+    const res = await calApi.connect(row.id);
+    row.busy = false;
+    if (res && res.error) { calRefreshAll(res.error, row); return; }
+    if (res && res.ok) showToast(`${row.name} connected as ${res.account}`);
+    calRefreshAll();
   };
 
   const restore = document.activeElement;
@@ -2682,7 +2687,7 @@ function openSettings() {
   layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
   document.body.append(layer);
   settingsLayer = layer;
-  Promise.all([msRefresh(), refresh()]).then(() => (msSide.querySelector('button') || side.querySelector('button') || done).focus());
+  Promise.all([calRefreshAll(), refresh()]).then(() => (box.querySelector('.conn-side button') || done).focus());
 }
 
 // --- calendar events (read-only) ---
@@ -2752,7 +2757,7 @@ function openEventCard(ev) {
   document.addEventListener('keydown', onKey, true);
   const actions = elem('div', 'plan-dialog-actions');
   const btn = (label, cls, fn) => { const b = elem('button', cls, label); b.type = 'button'; b.addEventListener('click', fn); return b; };
-  if (ev.webLink) actions.append(btn('Open in Outlook', 'btn quiet', () => notesApi.openExternal(ev.webLink)));
+  if (ev.webLink) actions.append(btn(ev.source === 'google' ? 'Open in Google Calendar' : 'Open in Outlook', 'btn quiet', () => notesApi.openExternal(ev.webLink)));
   actions.append(btn('Close', 'btn quiet', close));
   if (ev.joinUrl) actions.append(btn('Join meeting', 'btn', () => { notesApi.openExternal(ev.joinUrl); close(); }));
   box.append(actions);
