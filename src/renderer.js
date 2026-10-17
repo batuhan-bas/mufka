@@ -1975,7 +1975,7 @@ async function doMove(srcKey, destFolderRel) {
   if (!srcKey) return;
   const isFolder = srcKey[0] === 'f';
   const rel = srcKey.slice(2);
-  if (isGunluk(rel)) return;
+  if (isGunluk(rel)) { showToast('The daily notes folder stays in its place; drag it beside another item to reorder'); return; }
   if (!canMoveInto(rel, isFolder, destFolderRel)) return;
   const res = await notesApi.move(rel, destFolderRel);
   if (res && res.rel) remapRel(rel, res.rel);
@@ -2081,7 +2081,8 @@ async function dropBeside(srcKey, targetRel, where) {
   if (!rel || rel === targetRel) return;
   const dest = folderOf(targetRel);
   if (folderOf(rel) !== dest) {
-    if (isGunluk(rel) || !canMoveInto(rel, isFolder, dest)) return;
+    if (isGunluk(rel)) { showToast('The daily notes folder stays in its place; drag it beside another item to reorder'); return; }
+    if (!canMoveInto(rel, isFolder, dest)) return;
     const res = await notesApi.move(rel, dest);
     if (!res || !res.rel) { reportLinks(res); return; }
     remapRel(rel, res.rel);
@@ -2227,7 +2228,8 @@ function folderRow(f, depth) {
   row.append(elem('span', 'tree-count', String(f.count)));
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; toggleFolder(f.rel); });
   addMenuBtn(row, `f:${f.rel}`, () => folderMenuItems(f));
-  if (!isGunluk(f.rel)) makeDraggable(row, `f:${f.rel}`);
+  // The daily notes folder can change places but not move into another folder.
+  makeDraggable(row, `f:${f.rel}`);
   setupRowDrop(row, f.rel, true);
   return row;
 }

@@ -1507,7 +1507,7 @@ app.whenReady().then(() => setTimeout(async () => {
         for (let i = 1; i <= 5; i++) await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x + i * 4, y: from.y + i * 3, button: 'left', buttons: 1 });
         const data = await Promise.race([got, sleep(3000).then(() => null)]);
         assert(data, 'the drag did not start');
-        const to = await js(`(() => { ${row(toName)}.scrollIntoView({ block: 'nearest' }); const b = ${row(toName)}.getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.top + b.height * ${edge === 'before' ? 0.15 : 0.85}) }; })()`);
+        const to = await js(`(() => { ${row(toName)}.scrollIntoView({ block: 'nearest' }); const b = ${row(toName)}.getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.top + b.height * ${edge === 'before' ? 0.15 : edge === 'into' ? 0.5 : 0.85}) }; })()`);
         for (const type of ['dragEnter', 'dragOver', 'drop']) await wc.debugger.sendCommand('Input.dispatchDragEvent', { type, x: to.x, y: to.y, data });
         await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', clickCount: 1 });
         await wc.debugger.sendCommand('Input.setInterceptDrags', { enabled: false });
@@ -1524,6 +1524,19 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('#mode-notes');
       if ((await js(`${row('Sira')}?.querySelector('.tri')?.textContent`)) !== '▾') await clickEval(row('Sira'), 'Sira');
       assert(await namesAre('C3,A1,D4,B2', 4000), `after reload: ${await names()}`);
+      // The daily notes folder changes places like the rest but never moves into a folder.
+      const daily = await js('window.notes.layout().then(l => l.daily)');
+      assert(await js(`${row(daily)}?.getAttribute('draggable') === 'true' && getComputedStyle(${row(daily)}).cursor === 'grab'`), 'daily folder is not draggable or shows no hand');
+      const top = () => js(`[...document.querySelectorAll('.tree-row.folder-row')].filter(r => !r.dataset.rel.includes('/')).map(r => r.dataset.rel)`);
+      const before = await top();
+      const last = before[before.length - 1];
+      await drag(daily, last, 'after');
+      await sleep(400);
+      assert((await top()).at(-1) === daily, `daily folder did not move to the end: ${JSON.stringify(await top())}`);
+      await drag(daily, 'Sira', 'into');
+      await sleep(400);
+      assert(fs.existsSync(path.join(vault, daily)) && !fs.existsSync(path.join(vault, 'Sira', daily)), 'daily folder moved into another folder');
+      assert(await waitFor('(document.getElementById("toast")?.textContent || "").includes("daily notes folder")', 2000), 'no note about the daily folder');
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
