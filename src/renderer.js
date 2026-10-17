@@ -28,6 +28,7 @@ import { attachHoverPreview, hidePreview } from './hover-preview.js';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
 import { applyTemplate } from '../lib/template.mjs';
+import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs';
 import { countText } from '../lib/wordcount.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
 import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
@@ -441,6 +442,7 @@ function renderPlaces() {
 function renderNotesSection() {
   const body = sidebarSection('notes', 'Notes', [
     iconAction('newNote', 'New note', () => newNote(), 'New note in the selected folder (⌘N)'),
+    iconAction('template', 'New note from template', () => newFromTemplate(), 'New note from a template: daily, meeting, project, budget, trip…'),
     iconAction('newFolder', 'New folder', () => newFolder(), 'New folder in the selected folder'),
     sortButton(),
   ], 'notes');
@@ -1085,26 +1087,69 @@ function insertIntoNote(text) {
   render();
 }
 
+// Mufka's own templates (lib/builtin-templates.mjs) and the vault's Templates
+// folder; one there with the same name takes the built-in one's place.
+function allTemplates() { return templateChoices(templateNotes()); }
+async function templateText(choice) {
+  if (choice.kind === 'builtin') return BUILTIN_TEMPLATES.find((b) => b.id === choice.id)?.text ?? '';
+  const res = await notesApi.read(choice.rel).catch(() => null);
+  return res && !res.error ? res.content : '';
+}
+function templateRows(q, run) {
+  return fuzzyFilter(q, allTemplates(), (c) => c.name).map(({ item, indices }) => ({
+    label: item.name, indices,
+    detail: item.kind === 'builtin' ? 'Built-in' : (state.layout.templates || ''),
+    run: () => run(item),
+  }));
+}
 function openTemplatePicker() {
-  const list = templateNotes();
-  if (!state.layout.templates || !list.length) {
-    showToast(state.layout.templates ? `No templates in ${state.layout.templates}` : 'Create a "Templates" folder for templates');
-    return;
-  }
   openPalette({
     id: 'templates',
     placeholder: 'Insert a template…',
     keepEditor: true,
     footer: '↑↓ navigate · ↵ insert · esc close',
-    items: (q) => fuzzyFilter(q, list, (n) => n.title).map(({ item, indices }) => ({
-      label: item.title, indices,
-      run: async () => {
-        const res = await notesApi.read(item.rel);
-        if (!res || res.error) return;
-        insertIntoNote(fillTemplate(res.content, state.openNote ? noteTitleOf(state.openNote) : ''));
-      },
-    })),
+    items: (q) => templateRows(q, async (item) => {
+      insertIntoNote(fillTemplate(await templateText(item), state.openNote ? noteTitleOf(state.openNote) : ''));
+    }),
   });
+}
+// A new note from a template: choose one, then name the note (a name is
+// suggested), and it opens filled in.
+function newFromTemplate(parentRel = targetFolder()) {
+  openPalette({
+    id: 'new-from-template',
+    placeholder: 'New note from a template…',
+    footer: '↑↓ navigate · ↵ choose · esc close',
+    items: (q) => templateRows(q, (item) => {
+      const b = item.kind === 'builtin' ? BUILTIN_TEMPLATES.find((x) => x.id === item.id) : null;
+      const name = b ? fillTemplate(b.title, '') : item.name;
+      state.araQuery = ''; setSectionOpen('notes', true); if (state.sidebarCollapsed) setSidebar(false);
+      if (parentRel) ensureExpanded(parentRel);
+      startTreeEdit({ kind: 'new-note', parentRel, template: item, name });
+    }),
+  });
+}
+// Copy the built-in templates into the Templates folder (made if missing), so
+// they can be changed; ones already there are left alone.
+async function copyBuiltinTemplates() {
+  const dir = state.layout.templates || 'Templates';
+  if (!state.treeFolders.includes(dir)) {
+    const made = await notesApi.createFolder(folderOf(dir), dir.slice(dir.lastIndexOf('/') + 1));
+    if (!made || made.error) { showToast('Could not make the Templates folder'); return; }
+  }
+  const have = new Set(state.notesFlat.filter((n) => n.rel.startsWith(`${dir}/`)).map((n) => n.title.toLowerCase()));
+  let added = 0;
+  for (const b of BUILTIN_TEMPLATES) {
+    if (have.has(b.name.toLowerCase())) continue;
+    const res = await notesApi.create(dir, b.name);
+    if (res && res.rel) { await notesApi.write(res.rel, b.text); added += 1; }
+  }
+  const lay = await notesApi.layout().catch(() => null);
+  if (lay && !lay.error) state.layout = { ...state.layout, ...lay };
+  await refreshTree();
+  ensureExpanded(dir);
+  render();
+  showToast(added ? `${added} templates copied to ${dir}; change them there` : `The templates are already in ${dir}`);
 }
 
 // --- quick switcher (Cmd+O) and command palette (Cmd+P) ---
@@ -1195,6 +1240,8 @@ function commandList() {
     { label: 'Refresh calendars', when: () => calConnected, run: refreshCalendars },
     { label: 'Connect Wispr Flow', run: openSettings },
     { label: 'Insert template', hint: '⇧⌘T', when: noteOpen, run: openTemplatePicker },
+    { label: 'New note from template', run: () => newFromTemplate() },
+    { label: 'Copy built-in templates to the Templates folder', run: copyBuiltinTemplates },
     { label: 'Export note as PDF', when: noteOpen, run: () => runExport('pdf', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Export note as Markdown', when: noteOpen, run: () => runExport('md', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Show unused attachments', run: showUnusedAttachments },
@@ -1895,7 +1942,7 @@ function startTreeEdit(edit) {
 function treeEditDefault() {
   const e = state.treeEdit;
   if (!e) return '';
-  if (e.kind === 'new-note') return 'Untitled';
+  if (e.kind === 'new-note') return e.name || 'Untitled';
   if (e.kind === 'new-folder') return 'New folder';
   if (e.kind === 'rename-note') return state.notesFlat.find((n) => n.rel === e.rel)?.title || '';
   if (e.kind === 'rename-folder') return e.rel.slice(e.rel.lastIndexOf('/') + 1);
@@ -1910,6 +1957,12 @@ async function commitTreeEdit(value) {
   if (!name) { render(); return; }
   if (e.kind === 'new-note') {
     const res = await notesApi.create(e.parentRel, name);
+    if (res && res.rel && e.template) {
+      await notesApi.write(res.rel, fillTemplate(await templateText(e.template), noteTitleOf(res.rel)));
+      await refreshTree();
+      await openNote(res.rel, 'oku', { keepTab: true });
+      return;
+    }
     await refreshTree();
     if (res && res.rel) { await openNote(res.rel, 'duzenle', { keepTab: true }); return; }
   } else if (e.kind === 'new-folder') {
@@ -2253,6 +2306,7 @@ function noteRow(n, depth) {
 function folderMenuItems(f) {
   const items = [
     { label: 'New note', fn: () => { closeMenu(); newNoteIn(f.rel); } },
+    { label: 'New note from template…', fn: () => { closeMenu(); newFromTemplate(f.rel); } },
     { label: 'New folder', fn: () => { closeMenu(); newFolderIn(f.rel); } },
     { label: 'Icon…', fn: () => openIconPicker(`f:${f.rel}`, f.rel) },
     { label: 'Colour…', fn: () => openColorPicker(`f:${f.rel}`, f.rel, 'folder') },

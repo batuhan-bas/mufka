@@ -1538,6 +1538,48 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(fs.existsSync(path.join(vault, daily)) && !fs.existsSync(path.join(vault, 'Sira', daily)), 'daily folder moved into another folder');
       assert(await waitFor('(document.getElementById("toast")?.textContent || "").includes("daily notes folder")', 2000), 'no note about the daily folder');
     });
+
+    // 59. Templates that come with Mufka: the sidebar button lists them; a
+    //     budget note is named for the month, filled, and shows its tables and
+    //     checklists. Copied into the Templates folder they become editable,
+    //     and a changed one takes the built-in one's place.
+    await step(59, 'built-in templates: new note from one, copy and override', async () => {
+      await clickSel('#mode-notes');
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      const shown = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-label')].map(e => e.textContent)`);
+      for (const n of ['Daily note', 'Meeting notes', 'Weekly review', 'Project', 'Book notes', 'Recipe', 'Habit tracker', 'Budget', 'Travel plan']) assert(shown.includes(n), `${n} missing from ${JSON.stringify(shown)}`);
+      await typeText('Budget'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      const d = new Date();
+      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      assert(await js('document.getElementById("tree-edit").value') === `Budget ${month}`, `suggested name: ${await js('document.getElementById("tree-edit").value')}`);
+      await enter();
+      // New notes go to the selected folder; find it wherever that is.
+      const findNote = (name) => { const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (e.name.startsWith('.')) continue; const p = path.join(dir, e.name); if (e.isDirectory()) { const r = walk(p); if (r) return r; } else if (e.name === name) return p; } return null; }; return walk(vault); };
+      let file = null;
+      assert(await waitFor2(() => (file = findNote(`Budget ${month}.md`)) && fs.readFileSync(file, 'utf8').includes('## Expenses'), 3000), 'budget note not made from the template');
+      assert(!fs.readFileSync(file, 'utf8').includes('{{'), 'template variables left in the note');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${month}"`, 3000), 'budget note did not open');
+      assert(await waitFor('document.querySelectorAll(".note-body table").length >= 4 && document.querySelectorAll(".note-body input[type=checkbox]").length >= 4 && !!document.querySelector(".note-body .callout")', 3000), 'tables, checklists or callout not shown');
+      // Copy them into the Templates folder, change one: it wins over the built-in.
+      await press('P', ['meta']); await typeText('Copy built-in templates'); await enter();
+      const tdir = path.join(vault, 'Templates');
+      assert(await waitFor2(() => ['Daily note', 'Budget', 'Travel plan', 'Recipe'].every((n) => fs.existsSync(path.join(tdir, `${n}.md`))), 3000), `templates not copied: ${fs.existsSync(tdir) ? fs.readdirSync(tdir) : 'no folder'}`);
+      assert(fs.readFileSync(path.join(tdir, 'Budget.md'), 'utf8').includes('{{date:YYYY-MM}}'), 'copied template is filled, should stay a template');
+      fs.writeFileSync(path.join(tdir, 'Recipe.md'), '# {{title}}\n\nMine');
+      await sleep(900);
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open again');
+      const recipes = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-item')].filter(e => e.querySelector('.palette-label')?.textContent === 'Recipe').map(e => e.textContent)`);
+      assert(recipes.length === 1 && !recipes[0].includes('Built-in'), `Recipe should come from the vault once: ${JSON.stringify(recipes)}`);
+      await typeText('Recipe'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field for the recipe');
+      await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Pilav'; return true; })()`);
+      await enter();
+      assert(await waitFor2(() => { const f = findNote('Pilav.md'); return f && fs.readFileSync(f, 'utf8') === '# Pilav\n\nMine'; }, 3000), 'the changed template was not used');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }
