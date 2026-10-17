@@ -1381,6 +1381,10 @@ function createWindow() {
     minWidth: 640,
     minHeight: 480,
     title: 'Mufka',
+    // Like Obsidian: no system title bar; the traffic lights sit in Mufka's own
+    // top bar, which drags the window (src/styles.css, "Title bar").
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 15 } } : {}),
+    backgroundColor: '#1e2025',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -1395,6 +1399,9 @@ function createWindow() {
   // Re-read notes when the window regains focus, so edits made in another app
   // (or Finder) show up.
   win.on('focus', () => win.webContents.send('notes:changed'));
+  // Full screen hides the traffic lights, so the bar no longer leaves room for them.
+  win.on('enter-full-screen', () => win.webContents.send('window:fullscreen', true));
+  win.on('leave-full-screen', () => win.webContents.send('window:fullscreen', false));
   return win;
 }
 

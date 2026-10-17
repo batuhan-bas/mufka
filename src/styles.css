@@ -81,6 +81,18 @@ input, textarea, select { font: inherit; color: inherit; }
   overflow: hidden;
 }
 .side { flex: 1; overflow: auto; padding: 16px 14px; }
+
+/* --- Title bar (macOS) ---
+   There is no system title bar: the traffic lights sit at the top left, over
+   the sidebar's first strip, and the pane bar is the window's title bar. Both
+   drag the window (double-click zooms); controls in them stay clickable. With
+   the sidebar closed the bar makes room for the lights; full screen has none. */
+.titlebar-room { display: none; }
+.mac .titlebar-room { display: block; flex: 0 0 44px; height: 44px; -webkit-app-region: drag; }
+.mac .pane-bar { -webkit-app-region: drag; }
+.mac .pane-bar button, .mac .pane-bar a, .mac .pane-bar input, .mac .pane-bar [role="group"], .mac .pane-bar .pane-actions > * { -webkit-app-region: no-drag; }
+.mac:not(.fullscreen) #app.sidebar-collapsed .pane-bar { padding-left: 84px; }
+.mac.fullscreen .titlebar-room { flex-basis: 12px; height: 12px; }
 .tabs { display: flex; border-top: 1px solid var(--line); }
 .tab {
   flex: 1;

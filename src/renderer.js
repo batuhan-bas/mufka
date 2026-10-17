@@ -38,6 +38,9 @@ import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
 import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
 
 const plansApi = window.planner;
+// macOS: Mufka draws its own title bar (styles.css, "Title bar").
+if (plansApi.isMac) document.documentElement.classList.add('mac');
+if (plansApi.onFullScreen) plansApi.onFullScreen((on) => document.documentElement.classList.toggle('fullscreen', on));
 const notesApi = window.notes;
 const wisprApi = window.wispr;
 const calApi = window.calendars;

@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('planner', {
   isPackaged: ipcRenderer.sendSync('mufka:isPackaged'),
   // Menu bar actions (Dosya, Görünüm tabs, new note).
   onMenu: (cb) => ipcRenderer.on('menu:action', (_e, action) => cb(action)),
+  // macOS, and whether the window is full screen (the title bar's room for the traffic lights).
+  isMac: process.platform === 'darwin',
+  onFullScreen: (cb) => ipcRenderer.on('window:fullscreen', (_e, on) => cb(on)),
 });
 
 contextBridge.exposeInMainWorld('notes', {
