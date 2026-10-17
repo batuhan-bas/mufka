@@ -14,6 +14,7 @@ import { duePlans } from '../lib/notify.mjs';
 import { renderMarkdown, toggleTaskLine } from '../lib/markdown.mjs';
 import {
   buildTree, TREE_SORTS, flattenNotes, resolveLink, folderOf, joinRel, canMoveInto,
+  leafOf, placeInOrder, remapOrder, forgetOrder,
 } from '../lib/notestree.mjs';
 import { buildBacklinkIndex, backlinksFor } from '../lib/backlinks.mjs';
 import { resolveAttachment, attachInsertText } from '../lib/attach.mjs';
@@ -27,14 +28,19 @@ import { attachHoverPreview, hidePreview } from './hover-preview.js';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
 import { applyTemplate } from '../lib/template.mjs';
+import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs';
 import { countText } from '../lib/wordcount.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
 import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
 import { buildTagIndex, scanTags } from '../lib/tags.mjs';
 import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
+import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
 
 const plansApi = window.planner;
+// macOS: Mufka draws its own title bar (styles.css, "Title bar").
+if (plansApi.isMac) document.documentElement.classList.add('mac');
+if (plansApi.onFullScreen) plansApi.onFullScreen((on) => document.documentElement.classList.toggle('fullscreen', on));
 const notesApi = window.notes;
 const wisprApi = window.wispr;
 const calApi = window.calendars;
@@ -53,6 +59,8 @@ const state = {
   notesFlat: [],          // [{ rel, title, folder, mtime }]
   expanded: new Set(),    // expanded folder rels (persisted)
   selectedFolder: null,   // rel of the selected folder, or null
+  treeStyles: {},         // colours and icons in the tree, per notes folder (lib/treestyle.mjs)
+  treeOrder: {},          // the custom order made by dragging (lib/notestree.mjs)
   treeEdit: null,         // inline edit: { kind, parentRel?, rel? }
   folderDeleteConfirm: null, // folder rel awaiting confirmation
   recent: [],             // recently opened note rels, newest first (persisted)
@@ -347,7 +355,7 @@ function iconAction(name, aria, fn, title) {
   return b;
 }
 // Order of the notes tree: A–Z, Z–A, last edited, oldest edited (persisted).
-const SORT_LABELS = { name: 'Name (A–Z)', 'name-desc': 'Name (Z–A)', modified: 'Last edited first', 'modified-old': 'Oldest edited first' };
+const SORT_LABELS = { name: 'Name (A–Z)', 'name-desc': 'Name (Z–A)', modified: 'Last edited first', 'modified-old': 'Oldest edited first', custom: 'Custom order (drag to arrange)' };
 function sortButton() {
   const b = iconAction('sort', 'Sort notes', (e) => {
     e.stopPropagation();
@@ -437,11 +445,12 @@ function renderPlaces() {
 function renderNotesSection() {
   const body = sidebarSection('notes', 'Notes', [
     iconAction('newNote', 'New note', () => newNote(), 'New note in the selected folder (⌘N)'),
+    iconAction('template', 'New note from template', () => newFromTemplate(), 'New note from a template: daily, meeting, project, budget, trip…'),
     iconAction('newFolder', 'New folder', () => newFolder(), 'New folder in the selected folder'),
     sortButton(),
   ], 'notes');
   if (!sectionOpen('notes')) return;
-  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort });
+  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder });
   if (tree.folders.length === 0 && tree.notes.length === 0 && !state.treeEdit) {
     const empty = elem('div', 'side-empty');
     empty.append(document.createTextNode('No notes yet. '), smallButton('Create one', null, () => newNote(), '⌘N'));
@@ -580,7 +589,7 @@ function openNotesMode() {
   const known = new Set(state.notesFlat.map((n) => n.rel));
   const last = [state.openNote, ...state.recent].find((r) => r && known.has(r));
   if (last) { openNote(last, 'oku', { keepTab: true }); return; }
-  const first = firstNote(buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort }));
+  const first = firstNote(buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder }));
   if (first) openNote(first, 'oku', { keepTab: true });
   else selectDay(new Date());
 }
@@ -839,8 +848,11 @@ function renderPaneTitle() {
 let vaultInfo = null;
 async function loadVaultInfo() {
   vaultInfo = notesApi.vaultInfo ? await notesApi.vaultInfo().catch(() => null) : null;
+  await loadTreeStyles();
+  refreshSidebar();
   const el = document.getElementById('vault-name');
-  el.textContent = vaultInfo && !vaultInfo.error ? `${vaultInfo.name}${vaultInfo.custom ? '' : ' (Mufka)'}` : '';
+  // The default folder reads as Documents/Mufka; a chosen one by its own name.
+  el.textContent = vaultInfo && !vaultInfo.error ? (vaultInfo.custom ? vaultInfo.name : `Documents/${vaultInfo.name}`) : '';
   document.getElementById('vault-btn').title = vaultInfo && vaultInfo.path
     ? `Notes are .md files in ${vaultInfo.path}. Click to open another folder (e.g. an Obsidian vault) or show this one in Finder.`
     : 'The folder your notes are stored in.';
@@ -1078,26 +1090,69 @@ function insertIntoNote(text) {
   render();
 }
 
+// Mufka's own templates (lib/builtin-templates.mjs) and the vault's Templates
+// folder; one there with the same name takes the built-in one's place.
+function allTemplates() { return templateChoices(templateNotes()); }
+async function templateText(choice) {
+  if (choice.kind === 'builtin') return BUILTIN_TEMPLATES.find((b) => b.id === choice.id)?.text ?? '';
+  const res = await notesApi.read(choice.rel).catch(() => null);
+  return res && !res.error ? res.content : '';
+}
+function templateRows(q, run) {
+  return fuzzyFilter(q, allTemplates(), (c) => c.name).map(({ item, indices }) => ({
+    label: item.name, indices,
+    detail: item.kind === 'builtin' ? 'Built-in' : (state.layout.templates || ''),
+    run: () => run(item),
+  }));
+}
 function openTemplatePicker() {
-  const list = templateNotes();
-  if (!state.layout.templates || !list.length) {
-    showToast(state.layout.templates ? `No templates in ${state.layout.templates}` : 'Create a "Templates" folder for templates');
-    return;
-  }
   openPalette({
     id: 'templates',
     placeholder: 'Insert a template…',
     keepEditor: true,
     footer: '↑↓ navigate · ↵ insert · esc close',
-    items: (q) => fuzzyFilter(q, list, (n) => n.title).map(({ item, indices }) => ({
-      label: item.title, indices,
-      run: async () => {
-        const res = await notesApi.read(item.rel);
-        if (!res || res.error) return;
-        insertIntoNote(fillTemplate(res.content, state.openNote ? noteTitleOf(state.openNote) : ''));
-      },
-    })),
+    items: (q) => templateRows(q, async (item) => {
+      insertIntoNote(fillTemplate(await templateText(item), state.openNote ? noteTitleOf(state.openNote) : ''));
+    }),
   });
+}
+// A new note from a template: choose one, then name the note (a name is
+// suggested), and it opens filled in.
+function newFromTemplate(parentRel = targetFolder()) {
+  openPalette({
+    id: 'new-from-template',
+    placeholder: 'New note from a template…',
+    footer: '↑↓ navigate · ↵ choose · esc close',
+    items: (q) => templateRows(q, (item) => {
+      const b = item.kind === 'builtin' ? BUILTIN_TEMPLATES.find((x) => x.id === item.id) : null;
+      const name = b ? fillTemplate(b.title, '') : item.name;
+      state.araQuery = ''; setSectionOpen('notes', true); if (state.sidebarCollapsed) setSidebar(false);
+      if (parentRel) ensureExpanded(parentRel);
+      startTreeEdit({ kind: 'new-note', parentRel, template: item, name });
+    }),
+  });
+}
+// Copy the built-in templates into the Templates folder (made if missing), so
+// they can be changed; ones already there are left alone.
+async function copyBuiltinTemplates() {
+  const dir = state.layout.templates || 'Templates';
+  if (!state.treeFolders.includes(dir)) {
+    const made = await notesApi.createFolder(folderOf(dir), dir.slice(dir.lastIndexOf('/') + 1));
+    if (!made || made.error) { showToast('Could not make the Templates folder'); return; }
+  }
+  const have = new Set(state.notesFlat.filter((n) => n.rel.startsWith(`${dir}/`)).map((n) => n.title.toLowerCase()));
+  let added = 0;
+  for (const b of BUILTIN_TEMPLATES) {
+    if (have.has(b.name.toLowerCase())) continue;
+    const res = await notesApi.create(dir, b.name);
+    if (res && res.rel) { await notesApi.write(res.rel, b.text); added += 1; }
+  }
+  const lay = await notesApi.layout().catch(() => null);
+  if (lay && !lay.error) state.layout = { ...state.layout, ...lay };
+  await refreshTree();
+  ensureExpanded(dir);
+  render();
+  showToast(added ? `${added} templates copied to ${dir}; change them there` : `The templates are already in ${dir}`);
 }
 
 // --- quick switcher (Cmd+O) and command palette (Cmd+P) ---
@@ -1188,6 +1243,8 @@ function commandList() {
     { label: 'Refresh calendars', when: () => calConnected, run: refreshCalendars },
     { label: 'Connect Wispr Flow', run: openSettings },
     { label: 'Insert template', hint: '⇧⌘T', when: noteOpen, run: openTemplatePicker },
+    { label: 'New note from template', run: () => newFromTemplate() },
+    { label: 'Copy built-in templates to the Templates folder', run: copyBuiltinTemplates },
     { label: 'Export note as PDF', when: noteOpen, run: () => runExport('pdf', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Export note as Markdown', when: noteOpen, run: () => runExport('md', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Show unused attachments', run: showUnusedAttachments },
@@ -1525,7 +1582,7 @@ function renderMenu() {
   menuLayer.append(backdrop);
 
   const menu = elem('div', 'row-menu'); menu.setAttribute('role', 'menu');
-  const items = state.menu.buildItems().map((it) => menuItem(it.label, it.fn));
+  const items = state.menu.buildItems().map((it) => it.el || menuItem(it.label, it.fn));
   menu.addEventListener('keydown', (e) => {
     const list = [...menu.querySelectorAll('.menu-item')];
     const i = list.indexOf(document.activeElement);
@@ -1541,7 +1598,7 @@ function renderMenu() {
   let top = r.bottom + 4; if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
   let left = r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
   menu.style.top = `${top}px`; menu.style.left = `${left}px`;
-  items[0].focus();
+  (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice') || menu.querySelector('button, input'))?.focus();
 }
 
 let outsideHandler = null;
@@ -1888,7 +1945,7 @@ function startTreeEdit(edit) {
 function treeEditDefault() {
   const e = state.treeEdit;
   if (!e) return '';
-  if (e.kind === 'new-note') return 'Untitled';
+  if (e.kind === 'new-note') return e.name || 'Untitled';
   if (e.kind === 'new-folder') return 'New folder';
   if (e.kind === 'rename-note') return state.notesFlat.find((n) => n.rel === e.rel)?.title || '';
   if (e.kind === 'rename-folder') return e.rel.slice(e.rel.lastIndexOf('/') + 1);
@@ -1903,6 +1960,12 @@ async function commitTreeEdit(value) {
   if (!name) { render(); return; }
   if (e.kind === 'new-note') {
     const res = await notesApi.create(e.parentRel, name);
+    if (res && res.rel && e.template) {
+      await notesApi.write(res.rel, fillTemplate(await templateText(e.template), noteTitleOf(res.rel)));
+      await refreshTree();
+      await openNote(res.rel, 'oku', { keepTab: true });
+      return;
+    }
     await refreshTree();
     if (res && res.rel) { await openNote(res.rel, 'duzenle', { keepTab: true }); return; }
   } else if (e.kind === 'new-folder') {
@@ -1931,6 +1994,9 @@ function remapRel(oldRel, newRel) {
   const next = new Set();
   for (const r of state.expanded) next.add(fix(r));
   state.expanded = next; saveExpanded();
+  state.treeStyles = remapStyles(state.treeStyles, oldRel, newRel);
+  state.treeOrder = remapOrder(state.treeOrder, oldRel, newRel);
+  saveTreeStyles();
 }
 
 function toggleFolder(rel) {
@@ -1943,6 +2009,7 @@ function toggleFolder(rel) {
 
 async function deleteNoteRel(rel) {
   await notesApi.remove(rel);
+  forgetTreeStyles(rel);
   if (state.openNote === rel) { state.openNote = null; state.noteContent = ''; state.contentView = 'day'; }
   state.noteCache.delete(rel);
   await refreshTree();
@@ -1951,6 +2018,7 @@ async function deleteNoteRel(rel) {
 
 async function deleteFolderRel(rel) {
   await notesApi.removeFolder(rel);
+  forgetTreeStyles(rel);
   if (state.openNote && (state.openNote === rel || state.openNote.startsWith(`${rel}/`))) {
     state.openNote = null; state.noteContent = ''; state.contentView = 'day';
   }
@@ -1963,7 +2031,7 @@ async function doMove(srcKey, destFolderRel) {
   if (!srcKey) return;
   const isFolder = srcKey[0] === 'f';
   const rel = srcKey.slice(2);
-  if (isGunluk(rel)) return;
+  if (isGunluk(rel)) { showToast('The daily notes folder stays in its place; drag it beside another item to reorder'); return; }
   if (!canMoveInto(rel, isFolder, destFolderRel)) return;
   const res = await notesApi.move(rel, destFolderRel);
   if (res && res.rel) remapRel(rel, res.rel);
@@ -1990,6 +2058,7 @@ function drawGuides(container) {
     const bottom = last.offsetTop + last.offsetHeight;
     const depth = rel.split('/').length - 1;
     const g = elem('div', `tree-guide depth-${depth % 5}` + (onPath.has(rel) ? ' on-path' : ''));
+    g.style.background = folderColor(rel, state.treeStyles);
     g.setAttribute('aria-hidden', 'true');
     g.style.left = `${8 + depth * 16 + 7}px`;
     g.style.top = `${top}px`;
@@ -2028,10 +2097,180 @@ function makeDraggable(row, key) {
   row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', key); e.dataTransfer.effectAllowed = 'move'; row.classList.add('dragging'); });
   row.addEventListener('dragend', () => row.classList.remove('dragging'));
 }
+// Dropping on a row: its top or bottom edge puts the item before or after it
+// (the custom order); the middle of a folder moves the item into the folder.
+function dropZone(row, e, isFolder) {
+  const r = row.getBoundingClientRect();
+  const y = (e.clientY - r.top) / (r.height || 1);
+  if (isFolder) return y < 0.25 ? 'before' : (y > 0.75 ? 'after' : 'into');
+  return y < 0.5 ? 'before' : 'after';
+}
+function clearDrop(row) { row.classList.remove('drag-over', 'drop-before', 'drop-after'); }
+function setupRowDrop(row, rel, isFolder) {
+  row.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    const zone = dropZone(row, e, isFolder);
+    clearDrop(row);
+    row.classList.add(zone === 'into' ? 'drag-over' : `drop-${zone}`);
+  });
+  row.addEventListener('dragleave', () => clearDrop(row));
+  row.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const zone = dropZone(row, e, isFolder);
+    clearDrop(row);
+    const key = e.dataTransfer.getData('text/plain');
+    if (zone === 'into') doMove(key, rel); else dropBeside(key, rel, zone);
+  });
+}
+function findTreeNode(node, rel) {
+  if (node.rel === rel) return node;
+  const f = node.folders.find((x) => rel === x.rel || rel.startsWith(`${x.rel}/`));
+  return f ? findTreeNode(f, rel) : null;
+}
+// The item goes to the target's folder if it is elsewhere, then takes its
+// place beside the target. The tree switches to the custom order and keeps it
+// (in .mufka/tree.json, with the icons and colours).
+async function dropBeside(srcKey, targetRel, where) {
+  if (!srcKey) return;
+  const isFolder = srcKey[0] === 'f';
+  let rel = srcKey.slice(2);
+  if (!rel || rel === targetRel) return;
+  const dest = folderOf(targetRel);
+  if (folderOf(rel) !== dest) {
+    if (isGunluk(rel)) { showToast('The daily notes folder stays in its place; drag it beside another item to reorder'); return; }
+    if (!canMoveInto(rel, isFolder, dest)) return;
+    const res = await notesApi.move(rel, dest);
+    if (!res || !res.rel) { reportLinks(res); return; }
+    remapRel(rel, res.rel);
+    rel = res.rel;
+    await refreshTree();
+    reportLinks(res);
+  }
+  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder });
+  const node = findTreeNode(tree, dest);
+  if (!node) { render(); return; }
+  const siblings = [...node.folders.map((f) => f.name), ...node.notes.map((n) => leafOf(n.rel))];
+  const others = siblings.filter((n) => n !== leafOf(rel));
+  const i = others.indexOf(leafOf(targetRel));
+  const before = where === 'before' ? leafOf(targetRel) : (i >= 0 && i + 1 < others.length ? others[i + 1] : null);
+  state.treeOrder = placeInOrder(state.treeOrder, dest, siblings, leafOf(rel), before);
+  if (state.noteSort !== 'custom') {
+    state.noteSort = 'custom';
+    try { localStorage.setItem('mufka-note-sort', 'custom'); } catch { /* ignore */ }
+  }
+  saveTreeStyles();
+  render();
+}
 function setupDrop(el, destFolderRel) {
   el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag-over'); });
   el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
   el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('drag-over'); doMove(e.dataTransfer.getData('text/plain'), destFolderRel); });
+}
+
+// --- colours and icons in the tree (lib/treestyle.mjs) ---
+// Kept in the vault as .mufka/tree.json (main.js), so they travel with the
+// notes. Folders and their guide line share a colour (their level's unless
+// one is chosen); a note takes its folder's colour when selected.
+async function loadTreeStyles() {
+  const res = await notesApi.treeStyles().catch(() => null);
+  if (!res || res.error) { state.treeStyles = {}; state.treeOrder = {}; return; }
+  state.treeStyles = res.items || {};
+  state.treeOrder = res.order || {};
+  // Before 1.4 the styles lived in this window's storage: move them over once.
+  const key = `mufka-tree-style:${(vaultInfo && vaultInfo.path) || ''}`;
+  try {
+    const old = JSON.parse(localStorage.getItem(key) || 'null');
+    if (old && !res.exists && Object.keys(old).length) { state.treeStyles = old; saveTreeStyles(); }
+    if (old) localStorage.removeItem(key);
+  } catch { /* ignore */ }
+}
+function saveTreeStyles() {
+  notesApi.saveTreeStyles({ items: state.treeStyles, order: state.treeOrder })
+    .then((r) => { if (r && r.error) showToast('Could not save the icons and colours'); })
+    .catch(() => showToast('Could not save the icons and colours'));
+}
+function setTreeStyle(rel, field, value) {
+  state.treeStyles = setStyle(state.treeStyles, rel, field, value);
+  saveTreeStyles();
+  refreshSidebar();
+}
+function forgetTreeStyles(rel) {
+  const keep = Object.keys(state.treeStyles).filter((r) => r !== rel && !r.startsWith(`${rel}/`));
+  state.treeStyles = pruneStyles(state.treeStyles, keep);
+  state.treeOrder = forgetOrder(state.treeOrder, rel);
+  saveTreeStyles();
+}
+function treeIcon(rel, fallback) {
+  const wrap = elem('span', 'tree-icon');
+  const v = state.treeStyles[rel] && state.treeStyles[rel].icon;
+  if (v && !isIconId(v)) wrap.append(elem('span', 'tree-emoji', v));
+  else wrap.append(icon(v || fallback, { size: 15 }));
+  return wrap;
+}
+
+function pickerBox(title) {
+  const box = elem('div', 'style-picker');
+  box.append(elem('div', 'style-picker-title', title));
+  return box;
+}
+function openColorPicker(key, rel, type) {
+  openMenu(key, () => {
+    const box = pickerBox('Colour');
+    const current = (state.treeStyles[rel] && state.treeStyles[rel].color) || '';
+    const grid = elem('div', 'swatches');
+    for (const p of PALETTE) {
+      const b = elem('button', 'swatch' + (current === p.id ? ' on' : ''));
+      b.type = 'button'; b.title = p.name;
+      b.setAttribute('aria-label', p.name); b.setAttribute('aria-pressed', String(current === p.id));
+      b.style.setProperty('--sw', p.hex);
+      b.addEventListener('click', () => { closeMenu(); setTreeStyle(rel, 'color', p.id); });
+      grid.append(b);
+    }
+    box.append(grid);
+    const reset = elem('button', 'btn quiet style-reset', type === 'folder' ? 'Default (by level)' : 'Default');
+    reset.type = 'button';
+    reset.addEventListener('click', () => { closeMenu(); setTreeStyle(rel, 'color', ''); });
+    box.append(reset);
+    return [{ el: box }];
+  });
+}
+function openIconPicker(key, rel) {
+  openMenu(key, () => {
+    const box = pickerBox('Icon');
+    const current = (state.treeStyles[rel] && state.treeStyles[rel].icon) || '';
+    const grid = elem('div', 'icon-choices');
+    for (const id of TREE_ICONS) {
+      const b = elem('button', 'icon-choice' + (current === id ? ' on' : ''));
+      b.type = 'button';
+      const label = id.slice(2).replace(/([a-z])([A-Z0-9])/g, '$1 $2');
+      b.title = label; b.setAttribute('aria-label', label); b.setAttribute('aria-pressed', String(current === id));
+      b.append(icon(id, { size: 16 }));
+      b.addEventListener('click', () => { closeMenu(); setTreeStyle(rel, 'icon', id); });
+      grid.append(b);
+    }
+    box.append(grid);
+    const row = elem('div', 'emoji-row');
+    const input = document.createElement('input');
+    input.className = 'emoji-input'; input.placeholder = 'Or type an emoji'; input.maxLength = 16;
+    input.setAttribute('aria-label', 'Emoji');
+    if (current && !isIconId(current)) input.value = current;
+    const use = elem('button', 'btn quiet', 'Use');
+    use.type = 'button';
+    const apply = () => {
+      const e = cleanEmoji(input.value);
+      if (!e) { input.select(); showToast('Type one emoji, for example 🍲'); return; }
+      closeMenu(); setTreeStyle(rel, 'icon', e);
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+    use.addEventListener('click', apply);
+    row.append(input, use);
+    box.append(row);
+    const reset = elem('button', 'btn quiet style-reset', 'Default icon');
+    reset.type = 'button';
+    reset.addEventListener('click', () => { closeMenu(); setTreeStyle(rel, 'icon', ''); });
+    box.append(reset);
+    return [{ el: box }];
+  });
 }
 
 function folderRow(f, depth) {
@@ -2039,12 +2278,15 @@ function folderRow(f, depth) {
   row.style.paddingLeft = `${8 + depth * 16}px`;
   row.tabIndex = 0; row.dataset.rel = f.rel; row.dataset.type = 'folder';
   row.append(elem('span', 'tri', state.expanded.has(f.rel) ? '▾' : '▸'));
+  row.style.setProperty('--row-c', rowColor(f.rel, 'folder', state.treeStyles));
+  row.append(treeIcon(f.rel, state.expanded.has(f.rel) ? 'folderOpen' : 'folder'));
   row.append(elem('span', 'tree-name', f.name));
   row.append(elem('span', 'tree-count', String(f.count)));
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; toggleFolder(f.rel); });
   addMenuBtn(row, `f:${f.rel}`, () => folderMenuItems(f));
-  if (!isGunluk(f.rel)) makeDraggable(row, `f:${f.rel}`);
-  setupDrop(row, f.rel);
+  // The daily notes folder can change places but not move into another folder.
+  makeDraggable(row, `f:${f.rel}`);
+  setupRowDrop(row, f.rel, true);
   return row;
 }
 
@@ -2052,17 +2294,25 @@ function noteRow(n, depth) {
   const row = elem('div', 'tree-row note-row' + (state.openNote === n.rel ? ' selected' : ''));
   row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
   row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'note';
+  const color = rowColor(n.rel, 'note', state.treeStyles);
+  if (color) row.style.setProperty('--row-c', color);
+  if (state.treeStyles[n.rel] && state.treeStyles[n.rel].color) row.classList.add('colored');
+  row.append(treeIcon(n.rel, 'tiFileText'));
   row.append(elem('span', 'tree-name', n.title));
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openNote(n.rel, 'oku', { keepTab: true }); });
   addMenuBtn(row, `n:${n.rel}`, () => noteMenuItems(n));
   makeDraggable(row, `n:${n.rel}`);
+  setupRowDrop(row, n.rel, false);
   return row;
 }
 
 function folderMenuItems(f) {
   const items = [
     { label: 'New note', fn: () => { closeMenu(); newNoteIn(f.rel); } },
+    { label: 'New note from template…', fn: () => { closeMenu(); newFromTemplate(f.rel); } },
     { label: 'New folder', fn: () => { closeMenu(); newFolderIn(f.rel); } },
+    { label: 'Icon…', fn: () => openIconPicker(`f:${f.rel}`, f.rel) },
+    { label: 'Colour…', fn: () => openColorPicker(`f:${f.rel}`, f.rel, 'folder') },
   ];
   if (!isGunluk(f.rel)) {
     items.push({ label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-folder', rel: f.rel }); } });
@@ -2073,6 +2323,8 @@ function folderMenuItems(f) {
 function noteMenuItems(n) {
   return [
     { label: isBookmarked(n.rel) ? 'Remove bookmark' : 'Bookmark', fn: () => { closeMenu(); toggleBookmark(n.rel); } },
+    { label: 'Icon…', fn: () => openIconPicker(`n:${n.rel}`, n.rel) },
+    { label: 'Colour…', fn: () => openColorPicker(`n:${n.rel}`, n.rel, 'note') },
     { label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-note', rel: n.rel }); } },
     { label: 'Delete', fn: () => { closeMenu(); deleteNoteRel(n.rel); } },
   ];

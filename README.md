@@ -137,7 +137,7 @@ your notes or plans anywhere. Sign-ins are kept encrypted in your Keychain;
 
 | What | Where |
 |---|---|
-| Notes | `~/Library/Application Support/Mufka/Notes` — or any folder you open with **Notes folder** at the bottom of the sidebar (for example your Obsidian vault). Plain `.md` files. |
+| Notes | `~/Documents/Mufka` — or any folder you open with **Notes folder** at the bottom of the sidebar (for example your Obsidian vault). Plain `.md` files. |
 | Plans | `~/Library/Application Support/Mufka/planlar.json` |
 | Backups | **File → Export Plans…** writes a JSON copy; notes are ordinary files, so any backup tool (Time Machine, iCloud Drive, git) works. |
 

@@ -15,7 +15,8 @@ import * as np from './lib/notespath.mjs';
 import * as lk from './lib/links.mjs';
 import * as at from './lib/attach.mjs';
 import * as bm from './lib/bookmarks.mjs';
-import { resolveVaultRoot, vaultChoiceError } from './lib/vault.mjs';
+import * as ts from './lib/treestyle.mjs';
+import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
 import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
@@ -115,12 +116,34 @@ function writeSettings(patch) {
 // ignored. Daily notes live in Günlük/YYYY-MM-DD.md; the Günlük folder itself
 // cannot be renamed/moved/trashed.
 
-// userData/Notes, or userData/Notlar where an older Mufka already keeps notes.
-function defaultNotesRoot() {
-  const legacy = path.join(app.getPath('userData'), 'Notlar');
-  return isDir(legacy) ? legacy : path.join(app.getPath('userData'), 'Notes');
-}
+// Documents/Mufka, where people can see their notes in Finder and iCloud's
+// Documents sync carries them. Older Mufkas kept them in userData (Notlar,
+// then Notes); those are moved over once, on start (lib/vault.mjs).
 function isDir(p) { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
+function hasFiles(p) { try { return fs.readdirSync(p).some((n) => !n.startsWith('.')); } catch { return false; } }
+function notesPlace() {
+  return defaultNotesPlace({
+    userData: app.getPath('userData'), documents: app.getPath('documents'),
+    settings: readSettings(), isDir, hasFiles,
+  });
+}
+function defaultNotesRoot() { return notesPlace().root; }
+// Once: notes still in the old app-data folder go to Documents/Mufka. Not when
+// the user chose a folder of their own. If it fails (say macOS refuses access
+// to Documents), the notes keep being read where they are and it is tried on
+// the next start.
+function moveNotesToDocuments() {
+  if (typeof readSettings().vaultPath === 'string') return;
+  const place = notesPlace();
+  if (!place.move) return;
+  try {
+    const res = moveNotesFolder(place.legacy, place.docs, fs);
+    writeSettings({ notesInDocuments: true });
+    console.log(`Notes moved to ${place.docs}${res.copied ? ' (copied; the old folder was kept)' : ''}`);
+  } catch (err) {
+    console.error(`Could not move the notes to ${place.docs}: ${err.message}`);
+  }
+}
 // Set at startup and when the user switches vaults.
 let vault = { root: null, custom: false, missing: null };
 function loadVault() { vault = resolveVaultRoot(readSettings(), defaultNotesRoot(), isDir); }
@@ -139,6 +162,30 @@ function obsidianSettings() {
     templates: readJson(path.join(dir, 'templates.json')) || undefined,
   };
 }
+// --- tree colours and icons: .mufka/tree.json in the vault ---
+// Like Obsidian's .obsidian folder, so they travel with the notes (iCloud,
+// Git, another Mac). The folder is made only when someone first picks an
+// icon or a colour. Read and written through the same vault checks as notes.
+function treeStyleDir() { return path.join(notesRoot(), '.mufka'); }
+function treeStyleRead() {
+  const file = path.join(treeStyleDir(), 'tree.json');
+  if (!fs.existsSync(file)) return { exists: false, items: {}, order: {} };
+  const json = readJson(file) || {};
+  return { exists: true, items: ts.sanitizeStyles(json), order: ts.sanitizeOrder(json.order) };
+}
+// { items, order } from the renderer (see lib/treestyle.mjs).
+function treeStyleWrite(data) {
+  const clean = ts.sanitizeStyles(data && data.items);
+  const order = ts.sanitizeOrder(data && data.order);
+  const dir = treeStyleDir();
+  const file = path.join(dir, 'tree.json');
+  if (!Object.keys(clean).length && !Object.keys(order).length && !fs.existsSync(file)) return { ok: true };
+  if (!fs.existsSync(dir)) fs.mkdirSync(checkedVaultPath(dir));
+  else if (!fs.lstatSync(dir).isDirectory()) throw new Error('invalid path');
+  writeFileAtomic(checkedVaultPath(file), ts.stylesFile(clean, order));
+  return { ok: true };
+}
+
 // --- bookmarks ---
 // Obsidian's .obsidian/bookmarks.json when the vault has an .obsidian folder
 // (so both apps share them); otherwise kept in settings.json per vault folder,
@@ -1334,6 +1381,10 @@ function createWindow() {
     minWidth: 640,
     minHeight: 480,
     title: 'Mufka',
+    // Like Obsidian: no system title bar; the traffic lights sit in Mufka's own
+    // top bar, which drags the window (src/styles.css, "Title bar").
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 15 } } : {}),
+    backgroundColor: '#1e2025',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -1348,6 +1399,9 @@ function createWindow() {
   // Re-read notes when the window regains focus, so edits made in another app
   // (or Finder) show up.
   win.on('focus', () => win.webContents.send('notes:changed'));
+  // Full screen hides the traffic lights, so the bar no longer leaves room for them.
+  win.on('enter-full-screen', () => win.webContents.send('window:fullscreen', true));
+  win.on('leave-full-screen', () => win.webContents.send('window:fullscreen', false));
   return win;
 }
 
@@ -1475,6 +1529,8 @@ ipcMain.handle('attach:pick', wrap((noteDir) => attachPick(noteDir)));
 ipcMain.handle('attach:addFiles', wrap((paths, noteDir) => attachAddFiles(paths, noteDir)));
 ipcMain.handle('notes:layout', wrap(() => layout()));
 ipcMain.handle('bookmarks:list', wrap(() => bm.bookmarkedPaths(bookmarksRead())));
+ipcMain.handle('treestyle:read', wrap(() => treeStyleRead()));
+ipcMain.handle('treestyle:write', wrap((data) => treeStyleWrite(data)));
 ipcMain.handle('bookmarks:toggle', wrap((rel) => bookmarksToggle(rel)));
 ipcMain.handle('attach:open', wrap((rel) => attachOpen(rel)));
 ipcMain.handle('attach:unused', wrap(() => attachUnused()));
@@ -1526,6 +1582,7 @@ app.whenReady().then(() => {
     const icon = path.join(app.getAppPath(), 'build/icon.png');
     if (fs.existsSync(icon)) app.dock.setIcon(icon);
   }
+  moveNotesToDocuments();
   loadVault();
   ensureNotesDirs();
   watchVault();

@@ -77,3 +77,31 @@ test('tree sort orders: name, name-desc, modified, modified-old', async () => {
   assert.deepEqual(names(buildTree(folders, notes, { sort: 'modified' })), ['BA', 'acb'], 'folders by their newest note');
   assert.deepEqual(names(buildTree(folders, notes, { sort: 'modified-old' })), ['AB', 'bca']);
 });
+
+test('custom order: the order made by dragging, folders above notes, new items after by name', async () => {
+  const { placeInOrder, remapOrder, forgetOrder } = await import('../lib/notestree.mjs');
+  const fs2 = ['Projeler', 'Meetings', 'Günlük', 'Tarifler'];
+  const ns = [{ rel: 'Fikirler.md' }, { rel: 'Okuma listesi.md' }, { rel: 'Alfa.md' }];
+  const order = { '': ['Meetings', 'Tarifler', 'Projeler', 'Okuma listesi.md', 'Fikirler.md'] };
+  const t = buildTree(fs2, ns, { sort: 'custom', order });
+  assert.deepEqual(t.folders.map((f) => f.name), ['Meetings', 'Tarifler', 'Projeler', 'Günlük']);
+  assert.deepEqual(t.notes.map((n) => n.title), ['Okuma listesi', 'Fikirler', 'Alfa']);
+  // Without 'custom' the order is ignored.
+  assert.deepEqual(buildTree(fs2, ns, { sort: 'name', order }).folders.map((f) => f.name), ['Günlük', 'Meetings', 'Projeler', 'Tarifler']);
+
+  const shown = ['Günlük', 'Meetings', 'Projeler', 'Tarifler'];
+  assert.deepEqual(placeInOrder({}, '', shown, 'Tarifler', 'Meetings')[''], ['Günlük', 'Tarifler', 'Meetings', 'Projeler']);
+  assert.deepEqual(placeInOrder({}, '', shown, 'Günlük', null)[''], ['Meetings', 'Projeler', 'Tarifler', 'Günlük']);
+
+  const o = { '': ['B', 'A.md'], A: ['x.md', 'y.md'], 'A/Sub': ['z.md'], B: ['q.md'] };
+  // rename in place keeps the spot
+  assert.deepEqual(remapOrder(o, 'A.md', 'C.md')[''], ['B', 'C.md']);
+  // a folder rename re-keys its lists and keeps its spot
+  const r = remapOrder({ '': ['A', 'B'], A: ['x.md'], 'A/Sub': ['z.md'] }, 'A', 'D');
+  assert.deepEqual(r, { '': ['D', 'B'], D: ['x.md'], 'D/Sub': ['z.md'] });
+  // a move leaves the old list
+  assert.deepEqual(remapOrder(o, 'A/x.md', 'B/x.md').A, ['y.md']);
+  // a delete forgets the item and lists under it
+  assert.deepEqual(forgetOrder(o, 'A'), { '': ['B', 'A.md'], B: ['q.md'] });
+  assert.deepEqual(forgetOrder(o, 'A/x.md').A, ['y.md']);
+});

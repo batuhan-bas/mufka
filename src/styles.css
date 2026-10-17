@@ -81,6 +81,18 @@ input, textarea, select { font: inherit; color: inherit; }
   overflow: hidden;
 }
 .side { flex: 1; overflow: auto; padding: 16px 14px; }
+
+/* --- Title bar (macOS) ---
+   There is no system title bar: the traffic lights sit at the top left, over
+   the sidebar's first strip, and the pane bar is the window's title bar. Both
+   drag the window (double-click zooms); controls in them stay clickable. With
+   the sidebar closed the bar makes room for the lights; full screen has none. */
+.titlebar-room { display: none; }
+.mac .titlebar-room { display: block; flex: 0 0 44px; height: 44px; -webkit-app-region: drag; }
+.mac .pane-bar { -webkit-app-region: drag; }
+.mac .pane-bar button, .mac .pane-bar a, .mac .pane-bar input, .mac .pane-bar [role="group"], .mac .pane-bar .pane-actions > * { -webkit-app-region: no-drag; }
+.mac:not(.fullscreen) #app.sidebar-collapsed .pane-bar { padding-left: 84px; }
+.mac.fullscreen .titlebar-room { flex-basis: 12px; height: 12px; }
 .tabs { display: flex; border-top: 1px solid var(--line); }
 .tab {
   flex: 1;
@@ -313,11 +325,40 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .tree-row:hover { background: var(--line); }
 .tree-row:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
-.tree-row.selected { background: var(--sel); }
+.tree-row.selected { background: color-mix(in srgb, var(--row-c, var(--accent)) 20%, transparent); }
+.tree-row.selected:hover { background: color-mix(in srgb, var(--row-c, var(--accent)) 26%, transparent); }
 .tree-row.dragging { opacity: 0.4; }
 .tree-row.drag-over { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
+/* Rows that can be dragged show a hand; holding the button closes it. */
+.tree-row[draggable="true"] { cursor: grab; }
+.tree-row[draggable="true"]:active { cursor: grabbing; }
+.tree-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.tree-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .tri { width: 14px; color: var(--muted); font-size: 10px; flex: 0 0 auto; text-align: center; }
 .tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Icons before names: folders always in their colour (the guide's), notes
+   muted until selected or given a colour of their own. */
+.tree-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; color: var(--row-c, var(--muted)); }
+.note-row .tree-icon { color: var(--muted); }
+.note-row.colored .tree-icon, .note-row.selected .tree-icon { color: var(--row-c, var(--accent)); }
+.tree-emoji { font-size: 14px; line-height: 1; }
+
+/* Colour and icon pickers, shown in the row menu. */
+.style-picker { padding: 6px 6px 4px; width: 252px; }
+.style-picker-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 2px 8px; }
+.swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.swatch { width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; background: var(--sw); cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
+.swatch:hover { transform: scale(1.08); }
+.swatch.on, .swatch:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.icon-choices { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.icon-choice { display: grid; place-items: center; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; padding: 0; }
+.icon-choice:hover { background: var(--sel); }
+.icon-choice.on { background: var(--accent-soft); color: var(--chip-text); }
+.icon-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.emoji-row { display: flex; gap: 6px; margin-top: 10px; }
+.emoji-input { flex: 1; min-width: 0; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+.emoji-input:focus { outline: none; border-color: var(--accent); }
+.style-reset { display: block; width: 100%; margin-top: 8px; text-align: left; font-size: 13px; }
 .tree-count { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
 .tree-edit-input { flex: 1; border: 1px solid var(--accent); border-radius: 6px; padding: 3px 6px; font: inherit; }
 .tree-root-drop { min-height: 36px; border-radius: 6px; margin-top: 4px; }

@@ -23,6 +23,9 @@ function makePng(w, h) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-e2e-'));
 app.setPath('userData', tmp);
+// Documents too: the default notes folder is Documents/Mufka, and a test must
+// never touch the real one.
+app.setPath('documents', path.join(tmp, 'Documents'));
 // A repeating plan, as older data has them (no UI creates them now).
 fs.writeFileSync(path.join(tmp, 'planlar.json'), JSON.stringify({ version: 3, items: [
   { id: 'rep1', scope: 'day', key: '2026-01-05', title: 'Vitamin', time: '', endTime: '', done: false, created: 1, recur: { type: 'daily' }, doneDates: {}, exceptions: {} },
@@ -55,7 +58,7 @@ dialog.showMessageBox = async (...args) => { lastMessage = (args.length > 1 ? ar
 
 require('../out/main/index.js'); // the build: npm test runs `npm run build` first
 
-const notesDir = path.join(tmp, 'Notes');
+const notesDir = path.join(tmp, 'Documents', 'Mufka');
 // A fresh vault: Mufka's default folders (lib/layout.mjs)
 const dailyDir = path.join(notesDir, 'Daily');
 const now = new Date();
@@ -354,8 +357,10 @@ app.whenReady().then(() => setTimeout(async () => {
         const dest = ${treeRow('Alt')};
         const dt = new DataTransfer();
         row.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
-        dest.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
-        dest.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+        // the middle of the folder row: into the folder (its edges arrange)
+        const b = dest.getBoundingClientRect(); const at = { clientX: b.x + b.width / 2, clientY: b.y + b.height / 2 };
+        dest.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, ...at }));
+        dest.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, ...at }));
         return true;
       })()`);
       await sleep(300);
@@ -559,8 +564,10 @@ app.whenReady().then(() => setTimeout(async () => {
         const dest = document.querySelector('.tree-root-drop');
         const dt = new DataTransfer();
         row.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
-        dest.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
-        dest.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+        // the middle of the folder row: into the folder (its edges arrange)
+        const b = dest.getBoundingClientRect(); const at = { clientX: b.x + b.width / 2, clientY: b.y + b.height / 2 };
+        dest.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, ...at }));
+        dest.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, ...at }));
         return true;
       })()`);
       await sleep(400);
@@ -1166,7 +1173,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('#foot-commands');
       assert(await waitFor('!!document.querySelector(".palette-commands")', 2000), 'footer Commands did not open the palette');
       await press('Escape');
-      assert(await waitFor('document.getElementById("vault-name")?.textContent === "Notes (Mufka)"', 2000), `notes folder name: ${await js('document.getElementById("vault-name")?.textContent')}`);
+      assert(await waitFor('document.getElementById("vault-name")?.textContent === "Documents/Mufka"', 2000), `notes folder name: ${await js('document.getElementById("vault-name")?.textContent')}`);
       await clickSel('#vault-btn');
       assert(await waitFor('[...document.querySelectorAll(".row-menu .menu-item")].map(b => b.textContent).join("|") === "Open another notes folder…|Show this folder in Finder"', 2000), 'notes folder menu wrong');
       await press('Escape');
@@ -1325,7 +1332,7 @@ app.whenReady().then(() => setTimeout(async () => {
     await step(54, 'notes sort, Notes button target, coloured guides', async () => {
       const rootNotes = () => js(`[...document.querySelectorAll('.side-notes .note-row')].filter(r => !r.dataset.rel.includes('/')).map(r => r.querySelector('.tree-name').textContent)`);
       await clickSel('.side-notes .side-btn[aria-label="Sort notes"]');
-      assert(await waitFor('[...document.querySelectorAll(".row-menu .menu-item")].length === 4', 2000), 'sort menu missing');
+      assert(await waitFor('[...document.querySelectorAll(".row-menu .menu-item")].length === 5', 2000), 'sort menu missing');
       await clickMenuItem('\u2003Name (Z–A)');
       const za = await rootNotes();
       assert(za.length > 2 && JSON.stringify(za) === JSON.stringify([...za].sort((a, b) => b.localeCompare(a, 'en'))), `not Z–A: ${za}`);
@@ -1409,6 +1416,169 @@ app.whenReady().then(() => setTimeout(async () => {
       } finally {
         shell.openExternal = realOpen;
       }
+    });
+
+    // 57. Colours and icons in the tree: rows show an icon, a folder's colour
+    //     is its guide's, the row menu changes colour and icon (a picker icon
+    //     or an emoji), they are saved in the vault's .mufka/tree.json, a rename
+    //     keeps them, and they survive a reload.
+    await step(57, 'tree: icons, colours from the row menu, kept on rename and reload', async () => {
+      await clickSel('#mode-notes');
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      fs.mkdirSync(path.join(vault, 'Tarifler'), { recursive: true });
+      fs.writeFileSync(path.join(vault, 'Tarifler', 'Corba.md'), '# Corba\n');
+      const row = (name) => `[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === ${JSON.stringify(name)})`;
+      assert(await waitFor(`!!(${row('Tarifler')})`, 4000), 'new folder not in the tree');
+      assert(await js(`!!${row('Tarifler')}.querySelector('.tree-icon svg.icon-folder')`), 'no folder icon');
+      await clickEval(row('Tarifler'), 'Tarifler');
+      assert(await waitFor(`!!(${row('Corba')})`, 2000), 'folder did not open');
+      assert(await js(`!!${row('Corba')}.querySelector('.tree-icon svg.icon-tiFileText')`), 'no note icon');
+      // Colour from the menu: the row and its guide take it.
+      const openMenuOf = async (name, item) => {
+        await hoverClickEval(`${row(name)}.querySelector('.menu-btn')`, `${name} menu`);
+        await clickEval(`[...document.querySelectorAll('.menu-item')].find(b => b.textContent === ${JSON.stringify(item)})`, item);
+      };
+      await openMenuOf('Tarifler', 'Colour…');
+      assert(await waitFor('document.querySelectorAll(".swatch").length === 8', 2000), 'no colour swatches');
+      await clickSel('.swatch[aria-label="Pink"]');
+      assert(await waitFor(`${row('Tarifler')}.style.getPropertyValue('--row-c') === '#e07bb5'`, 2000), 'folder did not turn pink');
+      assert(await js(`[...document.querySelectorAll('.tree-guide')].some(g => /224, 123, 181|e07bb5/i.test(g.style.background))`), 'guide is not pink');
+      // Kept in the vault like Obsidian's own settings, and not shown as a folder.
+      const styleFile = path.join(vault, '.mufka', 'tree.json');
+      const saved = () => { try { return JSON.parse(fs.readFileSync(styleFile, 'utf8')).items; } catch { return null; } };
+      assert(await waitFor2(() => saved()?.Tarifler?.color === 'pink', 2000), `not saved in the vault: ${JSON.stringify(saved())}`);
+      assert(!(await js(`!!(${row('.mufka')})`)), '.mufka shows in the tree');
+      // Icon from the picker, emoji for the note.
+      await openMenuOf('Tarifler', 'Icon…');
+      await clickSel('.icon-choice[aria-label="Utensils"]');
+      assert(await waitFor(`!!${row('Tarifler')}.querySelector('.tree-icon svg.icon-tiUtensils')`, 2000), 'picker icon not shown');
+      await openMenuOf('Corba', 'Icon…');
+      await clickSel('.emoji-input');
+      await js(`(() => { const i = document.querySelector('.emoji-input'); i.value = '🍲'; return true; })()`);
+      await press('Return');
+      assert(await waitFor(`${row('Corba')}?.querySelector('.tree-emoji')?.textContent === '🍲'`, 2000), 'emoji icon not shown');
+      // The selected note takes its folder's colour.
+      await clickEval(row('Corba'), 'Corba');
+      assert(await waitFor(`${row('Corba')}.classList.contains('selected') && getComputedStyle(${row('Corba')}).backgroundColor !== 'rgba(0, 0, 0, 0)'`, 2000), 'selected note not tinted');
+      assert(await js(`${row('Corba')}.style.getPropertyValue('--row-c') === '#e07bb5'`), 'note does not take the folder colour');
+      // Rename keeps the style; a reload keeps it too.
+      await openMenuOf('Tarifler', 'Rename');
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no rename field');
+      await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Yemekler'; return true; })()`);
+      await press('Return');
+      assert(await waitFor(`!!(${row('Yemekler')}) && ${row('Yemekler')}.style.getPropertyValue('--row-c') === '#e07bb5'`, 3000), 'rename lost the colour');
+      assert(await waitFor2(() => saved()?.Yemekler?.color === 'pink' && !saved()?.Tarifler && saved()?.['Yemekler/Corba.md']?.icon === '🍲', 2000), `rename not saved: ${JSON.stringify(saved())}`);
+      wc.reload(); await sleep(1800);
+      await clickSel('#mode-notes');
+      assert(await waitFor(`!!(${row('Yemekler')}) && !!${row('Yemekler')}.querySelector('svg.icon-tiUtensils')`, 4000), 'styles not kept after reload');
+      // Default puts the level colour back.
+      await openMenuOf('Yemekler', 'Colour…');
+      await clickEval('document.querySelector(".style-reset")', 'Default');
+      assert(await waitFor(`${row('Yemekler')}.style.getPropertyValue('--row-c') === '#6f7cf0'`, 2000), 'default colour not restored');
+    });
+
+    // 58. Arrange the tree by dragging (a real Chrome drag via CDP): the top
+    //     edge of a row puts the item before it, the bottom edge after it; from
+    //     another folder the note moves there and takes that place. The order
+    //     is kept in .mufka/tree.json and survives a reload.
+    await step(58, 'tree: drag to arrange, across folders, kept after reload', async () => {
+      await clickSel('#mode-notes');
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      for (const [rel, text] of [['Sira/A1.md', '# A1\n'], ['Sira/B2.md', '# B2\n'], ['Sira/C3.md', '# C3\n'], ['Diger/D4.md', '# D4\n']]) {
+        fs.mkdirSync(path.dirname(path.join(vault, rel)), { recursive: true });
+        fs.writeFileSync(path.join(vault, rel), text);
+      }
+      const row = (name) => `[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === ${JSON.stringify(name)})`;
+      const names = () => js(`[...document.querySelectorAll('.tree-row.note-row')].filter(r => r.dataset.rel.startsWith('Sira/')).map(r => r.querySelector('.tree-name').textContent).join(',')`);
+      const namesAre = async (want, ms) => { const t = Date.now(); while (Date.now() - t < ms) { if ((await names()) === want) return true; await sleep(80); } return false; };
+      for (const f of ['Sira', 'Diger']) {
+        assert(await waitFor(`!!(${row(f)})`, 4000), `${f} not in the tree`);
+        if ((await js(`${row(f)}.querySelector('.tri').textContent`)) !== '▾') await clickEval(row(f), f);
+      }
+      assert(await waitFor(`!!(${row('C3')}) && !!(${row('D4')})`, 2000), 'notes not shown');
+      // A real drag: press, move until Chrome starts it, then drop at a point.
+      const drag = async (fromName, toName, edge) => {
+        try { wc.debugger.attach('1.3'); } catch { /* attached */ }
+        await wc.debugger.sendCommand('Input.setInterceptDrags', { enabled: true });
+        await js(`${row(fromName)}.scrollIntoView({ block: 'center' }); true`); await sleep(80);
+        const from = await rectEval(`${row(fromName)}.querySelector('.tree-name')`);
+        const got = new Promise((res) => { const h = (_e, m, d) => { if (m === 'Input.dragIntercepted') { wc.debugger.removeListener('message', h); res(d.data); } }; wc.debugger.on('message', h); });
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', clickCount: 1 });
+        for (let i = 1; i <= 5; i++) await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x + i * 4, y: from.y + i * 3, button: 'left', buttons: 1 });
+        const data = await Promise.race([got, sleep(3000).then(() => null)]);
+        assert(data, 'the drag did not start');
+        const to = await js(`(() => { ${row(toName)}.scrollIntoView({ block: 'nearest' }); const b = ${row(toName)}.getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.top + b.height * ${edge === 'before' ? 0.15 : edge === 'into' ? 0.5 : 0.85}) }; })()`);
+        for (const type of ['dragEnter', 'dragOver', 'drop']) await wc.debugger.sendCommand('Input.dispatchDragEvent', { type, x: to.x, y: to.y, data });
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', clickCount: 1 });
+        await wc.debugger.sendCommand('Input.setInterceptDrags', { enabled: false });
+        wc.debugger.detach();
+      };
+      await drag('C3', 'A1', 'before');
+      assert(await namesAre('C3,A1,B2', 3000), `before: ${await names()}`);
+      await drag('D4', 'A1', 'after');
+      assert(await namesAre('C3,A1,D4,B2', 3000), `across folders: ${await names()}`);
+      assert(fs.existsSync(path.join(vault, 'Sira', 'D4.md')) && !fs.existsSync(path.join(vault, 'Diger', 'D4.md')), 'D4 was not moved');
+      const order = () => { try { return JSON.parse(fs.readFileSync(path.join(vault, '.mufka', 'tree.json'), 'utf8')).order; } catch { return null; } };
+      assert(await waitFor2(() => JSON.stringify(order()?.Sira) === JSON.stringify(['C3.md', 'A1.md', 'D4.md', 'B2.md']), 2000), `order not saved: ${JSON.stringify(order())}`);
+      wc.reload(); await sleep(1800);
+      await clickSel('#mode-notes');
+      if ((await js(`${row('Sira')}?.querySelector('.tri')?.textContent`)) !== '▾') await clickEval(row('Sira'), 'Sira');
+      assert(await namesAre('C3,A1,D4,B2', 4000), `after reload: ${await names()}`);
+      // The daily notes folder changes places like the rest but never moves into a folder.
+      const daily = await js('window.notes.layout().then(l => l.daily)');
+      assert(await js(`${row(daily)}?.getAttribute('draggable') === 'true' && getComputedStyle(${row(daily)}).cursor === 'grab'`), 'daily folder is not draggable or shows no hand');
+      const top = () => js(`[...document.querySelectorAll('.tree-row.folder-row')].filter(r => !r.dataset.rel.includes('/')).map(r => r.dataset.rel)`);
+      const before = await top();
+      const last = before[before.length - 1];
+      await drag(daily, last, 'after');
+      await sleep(400);
+      assert((await top()).at(-1) === daily, `daily folder did not move to the end: ${JSON.stringify(await top())}`);
+      await drag(daily, 'Sira', 'into');
+      await sleep(400);
+      assert(fs.existsSync(path.join(vault, daily)) && !fs.existsSync(path.join(vault, 'Sira', daily)), 'daily folder moved into another folder');
+      assert(await waitFor('(document.getElementById("toast")?.textContent || "").includes("daily notes folder")', 2000), 'no note about the daily folder');
+    });
+
+    // 59. Templates that come with Mufka: the sidebar button lists them; a
+    //     budget note is named for the month, filled, and shows its tables and
+    //     checklists. Copied into the Templates folder they become editable,
+    //     and a changed one takes the built-in one's place.
+    await step(59, 'built-in templates: new note from one, copy and override', async () => {
+      await clickSel('#mode-notes');
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      const shown = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-label')].map(e => e.textContent)`);
+      for (const n of ['Daily note', 'Meeting notes', 'Weekly review', 'Project', 'Book notes', 'Recipe', 'Habit tracker', 'Budget', 'Travel plan']) assert(shown.includes(n), `${n} missing from ${JSON.stringify(shown)}`);
+      await typeText('Budget'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      const d = new Date();
+      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      assert(await js('document.getElementById("tree-edit").value') === `Budget ${month}`, `suggested name: ${await js('document.getElementById("tree-edit").value')}`);
+      await enter();
+      // New notes go to the selected folder; find it wherever that is.
+      const findNote = (name) => { const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (e.name.startsWith('.')) continue; const p = path.join(dir, e.name); if (e.isDirectory()) { const r = walk(p); if (r) return r; } else if (e.name === name) return p; } return null; }; return walk(vault); };
+      let file = null;
+      assert(await waitFor2(() => (file = findNote(`Budget ${month}.md`)) && fs.readFileSync(file, 'utf8').includes('## Expenses'), 3000), 'budget note not made from the template');
+      assert(!fs.readFileSync(file, 'utf8').includes('{{'), 'template variables left in the note');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${month}"`, 3000), 'budget note did not open');
+      assert(await waitFor('document.querySelectorAll(".note-body table").length >= 4 && document.querySelectorAll(".note-body input[type=checkbox]").length >= 4 && !!document.querySelector(".note-body .callout")', 3000), 'tables, checklists or callout not shown');
+      // Copy them into the Templates folder, change one: it wins over the built-in.
+      await press('P', ['meta']); await typeText('Copy built-in templates'); await enter();
+      const tdir = path.join(vault, 'Templates');
+      assert(await waitFor2(() => ['Daily note', 'Budget', 'Travel plan', 'Recipe'].every((n) => fs.existsSync(path.join(tdir, `${n}.md`))), 3000), `templates not copied: ${fs.existsSync(tdir) ? fs.readdirSync(tdir) : 'no folder'}`);
+      assert(fs.readFileSync(path.join(tdir, 'Budget.md'), 'utf8').includes('{{date:YYYY-MM}}'), 'copied template is filled, should stay a template');
+      fs.writeFileSync(path.join(tdir, 'Recipe.md'), '# {{title}}\n\nMine');
+      await sleep(900);
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open again');
+      const recipes = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-item')].filter(e => e.querySelector('.palette-label')?.textContent === 'Recipe').map(e => e.textContent)`);
+      assert(recipes.length === 1 && !recipes[0].includes('Built-in'), `Recipe should come from the vault once: ${JSON.stringify(recipes)}`);
+      await typeText('Recipe'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field for the recipe');
+      await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Pilav'; return true; })()`);
+      await enter();
+      assert(await waitFor2(() => { const f = findNote('Pilav.md'); return f && fs.readFileSync(f, 'utf8') === '# Pilav\n\nMine'; }, 3000), 'the changed template was not used');
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
