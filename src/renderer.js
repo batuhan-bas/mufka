@@ -841,7 +841,7 @@ function renderPaneTitle() {
 let vaultInfo = null;
 async function loadVaultInfo() {
   vaultInfo = notesApi.vaultInfo ? await notesApi.vaultInfo().catch(() => null) : null;
-  loadTreeStyles();
+  await loadTreeStyles();
   refreshSidebar();
   const el = document.getElementById('vault-name');
   el.textContent = vaultInfo && !vaultInfo.error ? `${vaultInfo.name}${vaultInfo.custom ? '' : ' (Mufka)'}` : '';
@@ -2043,14 +2043,26 @@ function setupDrop(el, destFolderRel) {
 }
 
 // --- colours and icons in the tree (lib/treestyle.mjs) ---
-// Kept per notes folder in Mufka's own storage; nothing is written into the
-// vault. Folders and their guide line share a colour (their level's unless one
-// is chosen); a note takes its folder's colour when selected.
-function treeStyleKey() { return `mufka-tree-style:${(vaultInfo && vaultInfo.path) || ''}`; }
-function loadTreeStyles() {
-  try { state.treeStyles = JSON.parse(localStorage.getItem(treeStyleKey()) || '{}') || {}; } catch { state.treeStyles = {}; }
+// Kept in the vault as .mufka/tree.json (main.js), so they travel with the
+// notes. Folders and their guide line share a colour (their level's unless
+// one is chosen); a note takes its folder's colour when selected.
+async function loadTreeStyles() {
+  const res = await notesApi.treeStyles().catch(() => null);
+  if (!res || res.error) { state.treeStyles = {}; return; }
+  state.treeStyles = res.items || {};
+  // Before 1.4 the styles lived in this window's storage: move them over once.
+  const key = `mufka-tree-style:${(vaultInfo && vaultInfo.path) || ''}`;
+  try {
+    const old = JSON.parse(localStorage.getItem(key) || 'null');
+    if (old && !res.exists && Object.keys(old).length) { state.treeStyles = old; saveTreeStyles(); }
+    if (old) localStorage.removeItem(key);
+  } catch { /* ignore */ }
 }
-function saveTreeStyles() { try { localStorage.setItem(treeStyleKey(), JSON.stringify(state.treeStyles)); } catch { /* ignore */ } }
+function saveTreeStyles() {
+  notesApi.saveTreeStyles(state.treeStyles)
+    .then((r) => { if (r && r.error) showToast('Could not save the icons and colours'); })
+    .catch(() => showToast('Could not save the icons and colours'));
+}
 function setTreeStyle(rel, field, value) {
   state.treeStyles = setStyle(state.treeStyles, rel, field, value);
   saveTreeStyles();

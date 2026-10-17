@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PALETTE, TREE_ICONS, paletteHex, folderColor, rowColor, isIconId, cleanEmoji,
-  setStyle, remapStyles, pruneStyles,
+  setStyle, remapStyles, pruneStyles, sanitizeStyles, stylesFile,
 } from '../lib/treestyle.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -54,4 +54,25 @@ test('renames and moves carry styles along; missing items are pruned', () => {
   const r = remapStyles(s, 'İş', 'Arşiv/İş');
   assert.deepEqual(r, { 'Arşiv/İş': { color: 'pink' }, 'Arşiv/İş/Q1.md': { icon: 'tiStar' }, 'İşler/x.md': { icon: '🍲' }, Diğer: { color: 'teal' } });
   assert.deepEqual(pruneStyles(r, ['Diğer', 'Arşiv/İş']), { 'Arşiv/İş': { color: 'pink' }, Diğer: { color: 'teal' } });
+});
+
+test('the vault file is checked: paths, colours, icons', () => {
+  const dirty = {
+    version: 1,
+    items: {
+      Tarifler: { color: 'pink', icon: 'tiUtensils' },
+      'Tarifler/Çorba.md': { icon: '🍲', extra: 1 },
+      '../etc/passwd': { color: 'pink' },
+      '/abs': { color: 'pink' },
+      '.obsidian/x': { color: 'pink' },
+      'a//b': { color: 'pink' },
+      Bad: { color: '#fff', icon: '<script>' },
+      Text: { icon: 'abc' },
+    },
+  };
+  assert.deepEqual(sanitizeStyles(dirty), { Tarifler: { color: 'pink', icon: 'tiUtensils' }, 'Tarifler/Çorba.md': { icon: '🍲' } });
+  assert.deepEqual(sanitizeStyles({ A: { color: 'teal' } }), { A: { color: 'teal' } }); // a bare map works too
+  assert.deepEqual(sanitizeStyles(null), {});
+  assert.deepEqual(sanitizeStyles([1, 2]), {});
+  assert.deepEqual(JSON.parse(stylesFile({ A: { color: 'teal' } })), { version: 1, items: { A: { color: 'teal' } } });
 });

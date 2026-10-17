@@ -1413,7 +1413,8 @@ app.whenReady().then(() => setTimeout(async () => {
 
     // 57. Colours and icons in the tree: rows show an icon, a folder's colour
     //     is its guide's, the row menu changes colour and icon (a picker icon
-    //     or an emoji), a rename keeps them, and they survive a reload.
+    //     or an emoji), they are saved in the vault's .mufka/tree.json, a rename
+    //     keeps them, and they survive a reload.
     await step(57, 'tree: icons, colours from the row menu, kept on rename and reload', async () => {
       await clickSel('#mode-notes');
       const vault = await js('window.notes.vaultInfo().then(v => v.path)');
@@ -1435,6 +1436,11 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('.swatch[aria-label="Pink"]');
       assert(await waitFor(`${row('Tarifler')}.style.getPropertyValue('--row-c') === '#e07bb5'`, 2000), 'folder did not turn pink');
       assert(await js(`[...document.querySelectorAll('.tree-guide')].some(g => /224, 123, 181|e07bb5/i.test(g.style.background))`), 'guide is not pink');
+      // Kept in the vault like Obsidian's own settings, and not shown as a folder.
+      const styleFile = path.join(vault, '.mufka', 'tree.json');
+      const saved = () => { try { return JSON.parse(fs.readFileSync(styleFile, 'utf8')).items; } catch { return null; } };
+      assert(await waitFor2(() => saved()?.Tarifler?.color === 'pink', 2000), `not saved in the vault: ${JSON.stringify(saved())}`);
+      assert(!(await js(`!!(${row('.mufka')})`)), '.mufka shows in the tree');
       // Icon from the picker, emoji for the note.
       await openMenuOf('Tarifler', 'Icon…');
       await clickSel('.icon-choice[aria-label="Utensils"]');
@@ -1454,6 +1460,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Yemekler'; return true; })()`);
       await press('Return');
       assert(await waitFor(`!!(${row('Yemekler')}) && ${row('Yemekler')}.style.getPropertyValue('--row-c') === '#e07bb5'`, 3000), 'rename lost the colour');
+      assert(await waitFor2(() => saved()?.Yemekler?.color === 'pink' && !saved()?.Tarifler && saved()?.['Yemekler/Corba.md']?.icon === '🍲', 2000), `rename not saved: ${JSON.stringify(saved())}`);
       wc.reload(); await sleep(1800);
       await clickSel('#mode-notes');
       assert(await waitFor(`!!(${row('Yemekler')}) && !!${row('Yemekler')}.querySelector('svg.icon-tiUtensils')`, 4000), 'styles not kept after reload');

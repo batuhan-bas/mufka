@@ -15,6 +15,7 @@ import * as np from './lib/notespath.mjs';
 import * as lk from './lib/links.mjs';
 import * as at from './lib/attach.mjs';
 import * as bm from './lib/bookmarks.mjs';
+import * as ts from './lib/treestyle.mjs';
 import { resolveVaultRoot, vaultChoiceError } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
 import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
@@ -139,6 +140,27 @@ function obsidianSettings() {
     templates: readJson(path.join(dir, 'templates.json')) || undefined,
   };
 }
+// --- tree colours and icons: .mufka/tree.json in the vault ---
+// Like Obsidian's .obsidian folder, so they travel with the notes (iCloud,
+// Git, another Mac). The folder is made only when someone first picks an
+// icon or a colour. Read and written through the same vault checks as notes.
+function treeStyleDir() { return path.join(notesRoot(), '.mufka'); }
+function treeStyleRead() {
+  const file = path.join(treeStyleDir(), 'tree.json');
+  if (!fs.existsSync(file)) return { exists: false, items: {} };
+  return { exists: true, items: ts.sanitizeStyles(readJson(file)) };
+}
+function treeStyleWrite(items) {
+  const clean = ts.sanitizeStyles(items);
+  const dir = treeStyleDir();
+  const file = path.join(dir, 'tree.json');
+  if (!Object.keys(clean).length && !fs.existsSync(file)) return { ok: true };
+  if (!fs.existsSync(dir)) fs.mkdirSync(checkedVaultPath(dir));
+  else if (!fs.lstatSync(dir).isDirectory()) throw new Error('invalid path');
+  writeFileAtomic(checkedVaultPath(file), ts.stylesFile(clean));
+  return { ok: true };
+}
+
 // --- bookmarks ---
 // Obsidian's .obsidian/bookmarks.json when the vault has an .obsidian folder
 // (so both apps share them); otherwise kept in settings.json per vault folder,
@@ -1475,6 +1497,8 @@ ipcMain.handle('attach:pick', wrap((noteDir) => attachPick(noteDir)));
 ipcMain.handle('attach:addFiles', wrap((paths, noteDir) => attachAddFiles(paths, noteDir)));
 ipcMain.handle('notes:layout', wrap(() => layout()));
 ipcMain.handle('bookmarks:list', wrap(() => bm.bookmarkedPaths(bookmarksRead())));
+ipcMain.handle('treestyle:read', wrap(() => treeStyleRead()));
+ipcMain.handle('treestyle:write', wrap((items) => treeStyleWrite(items)));
 ipcMain.handle('bookmarks:toggle', wrap((rel) => bookmarksToggle(rel)));
 ipcMain.handle('attach:open', wrap((rel) => attachOpen(rel)));
 ipcMain.handle('attach:unused', wrap(() => attachUnused()));
