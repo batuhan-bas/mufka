@@ -65,16 +65,27 @@ yet? Home offers to open the Planner.
 
 ### Notes — an Obsidian-like vault
 
-- **Plain Markdown files** in folders — use Mufka's own folder or open any
-  folder, such as an existing **Obsidian vault** (nothing is copied or added).
+- **Plain Markdown files** in folders — by default in **`~/Documents/Mufka`**,
+  where Finder and iCloud see them, or open any folder, such as an existing
+  **Obsidian vault** (nothing is copied).
+- **Your sidebar, your way:** every folder and note has an icon; give one a
+  **colour** or another **icon** (or any emoji) from its ⋯ menu. A folder's
+  colour is its guide line's, and the selected row takes it. **Drag** items
+  to put them in your own order, or into another folder. Icons, colours and
+  order are kept in the vault's `.mufka/tree.json`, so they travel with your
+  notes.
 - **Write in place**: notes always look formatted; click a paragraph to edit it.
   Tables, task lists, callouts, footnotes, frontmatter, `==highlights==`.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
-- **Templates** (Obsidian-compatible), **bookmarks**, drag-and-drop **images**
-  and files, export to **PDF** or Markdown, sorting by name or last edit.
+- **Templates:** start a note from one of nine — daily note, meeting notes,
+  weekly review, project, book notes, recipe, habit tracker, budget and travel
+  plan — or from your own `Templates` folder (Obsidian-compatible). Copy the
+  built-in ones there to make them yours.
+- **Bookmarks**, drag-and-drop **images** and files, export to **PDF** or
+  Markdown, sorting by name, last edit or your own order.
 - **Meeting notes from [Wispr Flow](https://wisprflow.ai)**: connect your
   Wispr account in **Settings** (⌘,) and every meeting its Notetaker records —
   Zoom, Google Meet, Teams, Slack huddles or in person — arrives in a
@@ -82,7 +93,9 @@ yet? Home offers to open the Planner.
   Read-only; it checks every 15 minutes. Wispr Flow's dictation also types
   straight into any note.
 
-<p align="center"><img src="docs/screenshots/note.png" width="85%" alt="A note with the Details panel showing its links"></p>
+<p align="center"><img src="docs/screenshots/note.png" width="85%" alt="A note with the Details panel; the sidebar with coloured folders and icons"></p>
+
+<p align="center"><img src="docs/screenshots/templates.png" width="85%" alt="New note from a template: daily note, meeting notes, weekly review, project, book notes, recipe, habit tracker, budget, travel plan"></p>
 
 ### Graph, search and commands
 
@@ -120,9 +133,9 @@ replace the app in Applications; your notes and plans stay.
 
 ### Uninstall
 
-Drag Mufka from Applications to the Trash. Your notes and plans stay in
-`~/Library/Application Support/Mufka` (or in the notes folder you chose) until
-you delete them.
+Drag Mufka from Applications to the Trash. Your notes stay in
+`~/Documents/Mufka` (or the notes folder you chose) and your plans in
+`~/Library/Application Support/Mufka` until you delete them.
 
 ## Your notes and your data
 
@@ -140,6 +153,8 @@ your notes or plans anywhere. Sign-ins are kept encrypted in your Keychain;
 | Notes | `~/Documents/Mufka` — or any folder you open with **Notes folder** at the bottom of the sidebar (for example your Obsidian vault). Plain `.md` files. |
 | Plans | `~/Library/Application Support/Mufka/planlar.json` |
 | Backups | **File → Export Plans…** writes a JSON copy; notes are ordinary files, so any backup tool (Time Machine, iCloud Drive, git) works. |
+
+Notes kept by Mufka before 1.4 (in `~/Library/Application Support/Mufka/Notes`) move to `~/Documents/Mufka` by themselves the first time 1.4 starts; a folder you chose yourself stays where it is.
 
 ## Keyboard shortcuts
 
