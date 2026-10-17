@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveVaultRoot, vaultChoiceError } from '../lib/vault.mjs';
+import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from '../lib/vault.mjs';
 
 const DEFAULT = '/Users/a/Library/Application Support/Mufka/Notlar';
 const dirs = new Set(['/Users/a/Obsidian', '/Users/a/Notes']);
@@ -37,4 +37,53 @@ test('vaultChoiceError refuses the disk root, home itself and folders holding ap
   assert.match(vaultChoiceError('/Users/a/Library/Application Support/Mufka', env), /own data/);
   assert.match(vaultChoiceError('', env), /Not a valid/);
   assert.match(vaultChoiceError('relative/path', env), /Not a valid/);
+});
+
+test('default notes folder: Documents/Mufka, moving an old app-data folder once', () => {
+  const userData = '/Users/a/Library/Application Support/Mufka';
+  const documents = '/Users/a/Documents';
+  const docs = '/Users/a/Documents/Mufka';
+  const place = (folders, settings, full = folders) => defaultNotesPlace({
+    userData, documents, settings, isDir: (p) => folders.includes(p), hasFiles: (p) => full.includes(p),
+  });
+  // A new install: Documents/Mufka, nothing to move.
+  assert.deepEqual(place([], {}), { root: docs, docs, legacy: null, move: false });
+  // Notes in the old folder: move them to Documents.
+  assert.deepEqual(place([`${userData}/Notes`], {}), { root: `${userData}/Notes`, docs, legacy: `${userData}/Notes`, move: true });
+  assert.equal(place([`${userData}/Notlar`, `${userData}/Notes`], {}).legacy, `${userData}/Notlar`);
+  // An empty old folder is not worth moving.
+  assert.deepEqual(place([`${userData}/Notes`], {}, []), { root: docs, docs, legacy: null, move: false });
+  // Already moved (a copy across disks leaves the old one): use Documents.
+  assert.deepEqual(place([`${userData}/Notes`, docs], { notesInDocuments: true }), { root: docs, docs, legacy: `${userData}/Notes`, move: false });
+  // Documents/Mufka already holds other things: never mix, keep the old folder.
+  assert.deepEqual(place([`${userData}/Notes`, docs], {}), { root: `${userData}/Notes`, docs, legacy: `${userData}/Notes`, move: false });
+});
+
+test('moveNotesFolder renames, refuses to overwrite, copies across disks', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const p = await import('node:path');
+  const tmp = fs.mkdtempSync(p.join(os.tmpdir(), 'mufka-vault-'));
+  try {
+    const from = p.join(tmp, 'Support', 'Notes');
+    const to = p.join(tmp, 'Documents', 'Mufka');
+    fs.mkdirSync(p.join(from, 'Projeler'), { recursive: true });
+    fs.writeFileSync(p.join(from, 'Projeler', 'Yol.md'), '# Yol\n');
+    fs.mkdirSync(to, { recursive: true }); fs.writeFileSync(p.join(to, '.DS_Store'), ''); // empty but for a dotfile
+    assert.deepEqual(moveNotesFolder(from, to, fs), { copied: false });
+    assert.equal(fs.readFileSync(p.join(to, 'Projeler', 'Yol.md'), 'utf8'), '# Yol\n');
+    assert.ok(!fs.existsSync(from));
+    // Never overwrites a folder with something in it.
+    fs.mkdirSync(from, { recursive: true }); fs.writeFileSync(p.join(from, 'x.md'), 'x');
+    assert.throws(() => moveNotesFolder(from, to, fs), /not empty/);
+    assert.ok(fs.existsSync(p.join(from, 'x.md')));
+    // Across disks: copy and keep the original.
+    const other = p.join(tmp, 'Other', 'Mufka');
+    const exdev = { ...fs, renameSync: () => { const e = new Error('cross-device'); e.code = 'EXDEV'; throw e; } };
+    assert.deepEqual(moveNotesFolder(from, other, exdev), { copied: true });
+    assert.equal(fs.readFileSync(p.join(other, 'x.md'), 'utf8'), 'x');
+    assert.ok(fs.existsSync(p.join(from, 'x.md')));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

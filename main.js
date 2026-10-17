@@ -16,7 +16,7 @@ import * as lk from './lib/links.mjs';
 import * as at from './lib/attach.mjs';
 import * as bm from './lib/bookmarks.mjs';
 import * as ts from './lib/treestyle.mjs';
-import { resolveVaultRoot, vaultChoiceError } from './lib/vault.mjs';
+import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
 import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
@@ -116,12 +116,34 @@ function writeSettings(patch) {
 // ignored. Daily notes live in Günlük/YYYY-MM-DD.md; the Günlük folder itself
 // cannot be renamed/moved/trashed.
 
-// userData/Notes, or userData/Notlar where an older Mufka already keeps notes.
-function defaultNotesRoot() {
-  const legacy = path.join(app.getPath('userData'), 'Notlar');
-  return isDir(legacy) ? legacy : path.join(app.getPath('userData'), 'Notes');
-}
+// Documents/Mufka, where people can see their notes in Finder and iCloud's
+// Documents sync carries them. Older Mufkas kept them in userData (Notlar,
+// then Notes); those are moved over once, on start (lib/vault.mjs).
 function isDir(p) { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
+function hasFiles(p) { try { return fs.readdirSync(p).some((n) => !n.startsWith('.')); } catch { return false; } }
+function notesPlace() {
+  return defaultNotesPlace({
+    userData: app.getPath('userData'), documents: app.getPath('documents'),
+    settings: readSettings(), isDir, hasFiles,
+  });
+}
+function defaultNotesRoot() { return notesPlace().root; }
+// Once: notes still in the old app-data folder go to Documents/Mufka. Not when
+// the user chose a folder of their own. If it fails (say macOS refuses access
+// to Documents), the notes keep being read where they are and it is tried on
+// the next start.
+function moveNotesToDocuments() {
+  if (typeof readSettings().vaultPath === 'string') return;
+  const place = notesPlace();
+  if (!place.move) return;
+  try {
+    const res = moveNotesFolder(place.legacy, place.docs, fs);
+    writeSettings({ notesInDocuments: true });
+    console.log(`Notes moved to ${place.docs}${res.copied ? ' (copied; the old folder was kept)' : ''}`);
+  } catch (err) {
+    console.error(`Could not move the notes to ${place.docs}: ${err.message}`);
+  }
+}
 // Set at startup and when the user switches vaults.
 let vault = { root: null, custom: false, missing: null };
 function loadVault() { vault = resolveVaultRoot(readSettings(), defaultNotesRoot(), isDir); }
@@ -1550,6 +1572,7 @@ app.whenReady().then(() => {
     const icon = path.join(app.getAppPath(), 'build/icon.png');
     if (fs.existsSync(icon)) app.dock.setIcon(icon);
   }
+  moveNotesToDocuments();
   loadVault();
   ensureNotesDirs();
   watchVault();

@@ -33,7 +33,10 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
-      "identity": null
+      "identity": null,
+      "extendInfo": {
+        "NSDocumentsFolderUsageDescription": "Mufka keeps your notes as Markdown files in Documents/Mufka."
+      }
     },
     "dmg": {
       "title": "Mufka"

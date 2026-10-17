@@ -23,6 +23,9 @@ function makePng(w, h) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-e2e-'));
 app.setPath('userData', tmp);
+// Documents too: the default notes folder is Documents/Mufka, and a test must
+// never touch the real one.
+app.setPath('documents', path.join(tmp, 'Documents'));
 // A repeating plan, as older data has them (no UI creates them now).
 fs.writeFileSync(path.join(tmp, 'planlar.json'), JSON.stringify({ version: 3, items: [
   { id: 'rep1', scope: 'day', key: '2026-01-05', title: 'Vitamin', time: '', endTime: '', done: false, created: 1, recur: { type: 'daily' }, doneDates: {}, exceptions: {} },
@@ -55,7 +58,7 @@ dialog.showMessageBox = async (...args) => { lastMessage = (args.length > 1 ? ar
 
 require('../out/main/index.js'); // the build: npm test runs `npm run build` first
 
-const notesDir = path.join(tmp, 'Notes');
+const notesDir = path.join(tmp, 'Documents', 'Mufka');
 // A fresh vault: Mufka's default folders (lib/layout.mjs)
 const dailyDir = path.join(notesDir, 'Daily');
 const now = new Date();
@@ -1166,7 +1169,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('#foot-commands');
       assert(await waitFor('!!document.querySelector(".palette-commands")', 2000), 'footer Commands did not open the palette');
       await press('Escape');
-      assert(await waitFor('document.getElementById("vault-name")?.textContent === "Notes (Mufka)"', 2000), `notes folder name: ${await js('document.getElementById("vault-name")?.textContent')}`);
+      assert(await waitFor('document.getElementById("vault-name")?.textContent === "Documents/Mufka"', 2000), `notes folder name: ${await js('document.getElementById("vault-name")?.textContent')}`);
       await clickSel('#vault-btn');
       assert(await waitFor('[...document.querySelectorAll(".row-menu .menu-item")].map(b => b.textContent).join("|") === "Open another notes folder…|Show this folder in Finder"', 2000), 'notes folder menu wrong');
       await press('Escape');

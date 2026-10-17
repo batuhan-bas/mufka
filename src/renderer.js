@@ -844,7 +844,8 @@ async function loadVaultInfo() {
   await loadTreeStyles();
   refreshSidebar();
   const el = document.getElementById('vault-name');
-  el.textContent = vaultInfo && !vaultInfo.error ? `${vaultInfo.name}${vaultInfo.custom ? '' : ' (Mufka)'}` : '';
+  // The default folder reads as Documents/Mufka; a chosen one by its own name.
+  el.textContent = vaultInfo && !vaultInfo.error ? (vaultInfo.custom ? vaultInfo.name : `Documents/${vaultInfo.name}`) : '';
   document.getElementById('vault-btn').title = vaultInfo && vaultInfo.path
     ? `Notes are .md files in ${vaultInfo.path}. Click to open another folder (e.g. an Obsidian vault) or show this one in Finder.`
     : 'The folder your notes are stored in.';
