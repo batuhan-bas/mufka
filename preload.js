@@ -55,7 +55,7 @@ contextBridge.exposeInMainWorld('notes', {
   layout: () => ipcRenderer.invoke('notes:layout'),
   bookmarks: () => ipcRenderer.invoke('bookmarks:list'),
   treeStyles: () => ipcRenderer.invoke('treestyle:read'),
-  saveTreeStyles: (items) => ipcRenderer.invoke('treestyle:write', items),
+  saveTreeStyles: (data) => ipcRenderer.invoke('treestyle:write', data),
   toggleBookmark: (rel) => ipcRenderer.invoke('bookmarks:toggle', rel),
   attachOpen: (rel) => ipcRenderer.invoke('attach:open', rel),
   attachUnused: () => ipcRenderer.invoke('attach:unused'),

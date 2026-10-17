@@ -14,6 +14,7 @@ import { duePlans } from '../lib/notify.mjs';
 import { renderMarkdown, toggleTaskLine } from '../lib/markdown.mjs';
 import {
   buildTree, TREE_SORTS, flattenNotes, resolveLink, folderOf, joinRel, canMoveInto,
+  leafOf, placeInOrder, remapOrder, forgetOrder,
 } from '../lib/notestree.mjs';
 import { buildBacklinkIndex, backlinksFor } from '../lib/backlinks.mjs';
 import { resolveAttachment, attachInsertText } from '../lib/attach.mjs';
@@ -55,6 +56,7 @@ const state = {
   expanded: new Set(),    // expanded folder rels (persisted)
   selectedFolder: null,   // rel of the selected folder, or null
   treeStyles: {},         // colours and icons in the tree, per notes folder (lib/treestyle.mjs)
+  treeOrder: {},          // the custom order made by dragging (lib/notestree.mjs)
   treeEdit: null,         // inline edit: { kind, parentRel?, rel? }
   folderDeleteConfirm: null, // folder rel awaiting confirmation
   recent: [],             // recently opened note rels, newest first (persisted)
@@ -349,7 +351,7 @@ function iconAction(name, aria, fn, title) {
   return b;
 }
 // Order of the notes tree: A–Z, Z–A, last edited, oldest edited (persisted).
-const SORT_LABELS = { name: 'Name (A–Z)', 'name-desc': 'Name (Z–A)', modified: 'Last edited first', 'modified-old': 'Oldest edited first' };
+const SORT_LABELS = { name: 'Name (A–Z)', 'name-desc': 'Name (Z–A)', modified: 'Last edited first', 'modified-old': 'Oldest edited first', custom: 'Custom order (drag to arrange)' };
 function sortButton() {
   const b = iconAction('sort', 'Sort notes', (e) => {
     e.stopPropagation();
@@ -443,7 +445,7 @@ function renderNotesSection() {
     sortButton(),
   ], 'notes');
   if (!sectionOpen('notes')) return;
-  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort });
+  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder });
   if (tree.folders.length === 0 && tree.notes.length === 0 && !state.treeEdit) {
     const empty = elem('div', 'side-empty');
     empty.append(document.createTextNode('No notes yet. '), smallButton('Create one', null, () => newNote(), '⌘N'));
@@ -582,7 +584,7 @@ function openNotesMode() {
   const known = new Set(state.notesFlat.map((n) => n.rel));
   const last = [state.openNote, ...state.recent].find((r) => r && known.has(r));
   if (last) { openNote(last, 'oku', { keepTab: true }); return; }
-  const first = firstNote(buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort }));
+  const first = firstNote(buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder }));
   if (first) openNote(first, 'oku', { keepTab: true });
   else selectDay(new Date());
 }
@@ -1936,7 +1938,9 @@ function remapRel(oldRel, newRel) {
   const next = new Set();
   for (const r of state.expanded) next.add(fix(r));
   state.expanded = next; saveExpanded();
-  state.treeStyles = remapStyles(state.treeStyles, oldRel, newRel); saveTreeStyles();
+  state.treeStyles = remapStyles(state.treeStyles, oldRel, newRel);
+  state.treeOrder = remapOrder(state.treeOrder, oldRel, newRel);
+  saveTreeStyles();
 }
 
 function toggleFolder(rel) {
@@ -2037,6 +2041,69 @@ function makeDraggable(row, key) {
   row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', key); e.dataTransfer.effectAllowed = 'move'; row.classList.add('dragging'); });
   row.addEventListener('dragend', () => row.classList.remove('dragging'));
 }
+// Dropping on a row: its top or bottom edge puts the item before or after it
+// (the custom order); the middle of a folder moves the item into the folder.
+function dropZone(row, e, isFolder) {
+  const r = row.getBoundingClientRect();
+  const y = (e.clientY - r.top) / (r.height || 1);
+  if (isFolder) return y < 0.25 ? 'before' : (y > 0.75 ? 'after' : 'into');
+  return y < 0.5 ? 'before' : 'after';
+}
+function clearDrop(row) { row.classList.remove('drag-over', 'drop-before', 'drop-after'); }
+function setupRowDrop(row, rel, isFolder) {
+  row.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    const zone = dropZone(row, e, isFolder);
+    clearDrop(row);
+    row.classList.add(zone === 'into' ? 'drag-over' : `drop-${zone}`);
+  });
+  row.addEventListener('dragleave', () => clearDrop(row));
+  row.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const zone = dropZone(row, e, isFolder);
+    clearDrop(row);
+    const key = e.dataTransfer.getData('text/plain');
+    if (zone === 'into') doMove(key, rel); else dropBeside(key, rel, zone);
+  });
+}
+function findTreeNode(node, rel) {
+  if (node.rel === rel) return node;
+  const f = node.folders.find((x) => rel === x.rel || rel.startsWith(`${x.rel}/`));
+  return f ? findTreeNode(f, rel) : null;
+}
+// The item goes to the target's folder if it is elsewhere, then takes its
+// place beside the target. The tree switches to the custom order and keeps it
+// (in .mufka/tree.json, with the icons and colours).
+async function dropBeside(srcKey, targetRel, where) {
+  if (!srcKey) return;
+  const isFolder = srcKey[0] === 'f';
+  let rel = srcKey.slice(2);
+  if (!rel || rel === targetRel) return;
+  const dest = folderOf(targetRel);
+  if (folderOf(rel) !== dest) {
+    if (isGunluk(rel) || !canMoveInto(rel, isFolder, dest)) return;
+    const res = await notesApi.move(rel, dest);
+    if (!res || !res.rel) { reportLinks(res); return; }
+    remapRel(rel, res.rel);
+    rel = res.rel;
+    await refreshTree();
+    reportLinks(res);
+  }
+  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder });
+  const node = findTreeNode(tree, dest);
+  if (!node) { render(); return; }
+  const siblings = [...node.folders.map((f) => f.name), ...node.notes.map((n) => leafOf(n.rel))];
+  const others = siblings.filter((n) => n !== leafOf(rel));
+  const i = others.indexOf(leafOf(targetRel));
+  const before = where === 'before' ? leafOf(targetRel) : (i >= 0 && i + 1 < others.length ? others[i + 1] : null);
+  state.treeOrder = placeInOrder(state.treeOrder, dest, siblings, leafOf(rel), before);
+  if (state.noteSort !== 'custom') {
+    state.noteSort = 'custom';
+    try { localStorage.setItem('mufka-note-sort', 'custom'); } catch { /* ignore */ }
+  }
+  saveTreeStyles();
+  render();
+}
 function setupDrop(el, destFolderRel) {
   el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag-over'); });
   el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
@@ -2049,8 +2116,9 @@ function setupDrop(el, destFolderRel) {
 // one is chosen); a note takes its folder's colour when selected.
 async function loadTreeStyles() {
   const res = await notesApi.treeStyles().catch(() => null);
-  if (!res || res.error) { state.treeStyles = {}; return; }
+  if (!res || res.error) { state.treeStyles = {}; state.treeOrder = {}; return; }
   state.treeStyles = res.items || {};
+  state.treeOrder = res.order || {};
   // Before 1.4 the styles lived in this window's storage: move them over once.
   const key = `mufka-tree-style:${(vaultInfo && vaultInfo.path) || ''}`;
   try {
@@ -2060,7 +2128,7 @@ async function loadTreeStyles() {
   } catch { /* ignore */ }
 }
 function saveTreeStyles() {
-  notesApi.saveTreeStyles(state.treeStyles)
+  notesApi.saveTreeStyles({ items: state.treeStyles, order: state.treeOrder })
     .then((r) => { if (r && r.error) showToast('Could not save the icons and colours'); })
     .catch(() => showToast('Could not save the icons and colours'));
 }
@@ -2072,6 +2140,7 @@ function setTreeStyle(rel, field, value) {
 function forgetTreeStyles(rel) {
   const keep = Object.keys(state.treeStyles).filter((r) => r !== rel && !r.startsWith(`${rel}/`));
   state.treeStyles = pruneStyles(state.treeStyles, keep);
+  state.treeOrder = forgetOrder(state.treeOrder, rel);
   saveTreeStyles();
 }
 function treeIcon(rel, fallback) {
@@ -2159,7 +2228,7 @@ function folderRow(f, depth) {
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; toggleFolder(f.rel); });
   addMenuBtn(row, `f:${f.rel}`, () => folderMenuItems(f));
   if (!isGunluk(f.rel)) makeDraggable(row, `f:${f.rel}`);
-  setupDrop(row, f.rel);
+  setupRowDrop(row, f.rel, true);
   return row;
 }
 
@@ -2175,6 +2244,7 @@ function noteRow(n, depth) {
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openNote(n.rel, 'oku', { keepTab: true }); });
   addMenuBtn(row, `n:${n.rel}`, () => noteMenuItems(n));
   makeDraggable(row, `n:${n.rel}`);
+  setupRowDrop(row, n.rel, false);
   return row;
 }
 

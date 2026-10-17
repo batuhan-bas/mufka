@@ -169,17 +169,20 @@ function obsidianSettings() {
 function treeStyleDir() { return path.join(notesRoot(), '.mufka'); }
 function treeStyleRead() {
   const file = path.join(treeStyleDir(), 'tree.json');
-  if (!fs.existsSync(file)) return { exists: false, items: {} };
-  return { exists: true, items: ts.sanitizeStyles(readJson(file)) };
+  if (!fs.existsSync(file)) return { exists: false, items: {}, order: {} };
+  const json = readJson(file) || {};
+  return { exists: true, items: ts.sanitizeStyles(json), order: ts.sanitizeOrder(json.order) };
 }
-function treeStyleWrite(items) {
-  const clean = ts.sanitizeStyles(items);
+// { items, order } from the renderer (see lib/treestyle.mjs).
+function treeStyleWrite(data) {
+  const clean = ts.sanitizeStyles(data && data.items);
+  const order = ts.sanitizeOrder(data && data.order);
   const dir = treeStyleDir();
   const file = path.join(dir, 'tree.json');
-  if (!Object.keys(clean).length && !fs.existsSync(file)) return { ok: true };
+  if (!Object.keys(clean).length && !Object.keys(order).length && !fs.existsSync(file)) return { ok: true };
   if (!fs.existsSync(dir)) fs.mkdirSync(checkedVaultPath(dir));
   else if (!fs.lstatSync(dir).isDirectory()) throw new Error('invalid path');
-  writeFileAtomic(checkedVaultPath(file), ts.stylesFile(clean));
+  writeFileAtomic(checkedVaultPath(file), ts.stylesFile(clean, order));
   return { ok: true };
 }
 
@@ -1520,7 +1523,7 @@ ipcMain.handle('attach:addFiles', wrap((paths, noteDir) => attachAddFiles(paths,
 ipcMain.handle('notes:layout', wrap(() => layout()));
 ipcMain.handle('bookmarks:list', wrap(() => bm.bookmarkedPaths(bookmarksRead())));
 ipcMain.handle('treestyle:read', wrap(() => treeStyleRead()));
-ipcMain.handle('treestyle:write', wrap((items) => treeStyleWrite(items)));
+ipcMain.handle('treestyle:write', wrap((data) => treeStyleWrite(data)));
 ipcMain.handle('bookmarks:toggle', wrap((rel) => bookmarksToggle(rel)));
 ipcMain.handle('attach:open', wrap((rel) => attachOpen(rel)));
 ipcMain.handle('attach:unused', wrap(() => attachUnused()));

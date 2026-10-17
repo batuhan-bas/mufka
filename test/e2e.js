@@ -357,8 +357,10 @@ app.whenReady().then(() => setTimeout(async () => {
         const dest = ${treeRow('Alt')};
         const dt = new DataTransfer();
         row.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
-        dest.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
-        dest.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+        // the middle of the folder row: into the folder (its edges arrange)
+        const b = dest.getBoundingClientRect(); const at = { clientX: b.x + b.width / 2, clientY: b.y + b.height / 2 };
+        dest.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, ...at }));
+        dest.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, ...at }));
         return true;
       })()`);
       await sleep(300);
@@ -562,8 +564,10 @@ app.whenReady().then(() => setTimeout(async () => {
         const dest = document.querySelector('.tree-root-drop');
         const dt = new DataTransfer();
         row.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
-        dest.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
-        dest.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+        // the middle of the folder row: into the folder (its edges arrange)
+        const b = dest.getBoundingClientRect(); const at = { clientX: b.x + b.width / 2, clientY: b.y + b.height / 2 };
+        dest.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, ...at }));
+        dest.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, ...at }));
         return true;
       })()`);
       await sleep(400);
@@ -1328,7 +1332,7 @@ app.whenReady().then(() => setTimeout(async () => {
     await step(54, 'notes sort, Notes button target, coloured guides', async () => {
       const rootNotes = () => js(`[...document.querySelectorAll('.side-notes .note-row')].filter(r => !r.dataset.rel.includes('/')).map(r => r.querySelector('.tree-name').textContent)`);
       await clickSel('.side-notes .side-btn[aria-label="Sort notes"]');
-      assert(await waitFor('[...document.querySelectorAll(".row-menu .menu-item")].length === 4', 2000), 'sort menu missing');
+      assert(await waitFor('[...document.querySelectorAll(".row-menu .menu-item")].length === 5', 2000), 'sort menu missing');
       await clickMenuItem('\u2003Name (Z–A)');
       const za = await rootNotes();
       assert(za.length > 2 && JSON.stringify(za) === JSON.stringify([...za].sort((a, b) => b.localeCompare(a, 'en'))), `not Z–A: ${za}`);
@@ -1471,6 +1475,55 @@ app.whenReady().then(() => setTimeout(async () => {
       await openMenuOf('Yemekler', 'Colour…');
       await clickEval('document.querySelector(".style-reset")', 'Default');
       assert(await waitFor(`${row('Yemekler')}.style.getPropertyValue('--row-c') === '#6f7cf0'`, 2000), 'default colour not restored');
+    });
+
+    // 58. Arrange the tree by dragging (a real Chrome drag via CDP): the top
+    //     edge of a row puts the item before it, the bottom edge after it; from
+    //     another folder the note moves there and takes that place. The order
+    //     is kept in .mufka/tree.json and survives a reload.
+    await step(58, 'tree: drag to arrange, across folders, kept after reload', async () => {
+      await clickSel('#mode-notes');
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      for (const [rel, text] of [['Sira/A1.md', '# A1\n'], ['Sira/B2.md', '# B2\n'], ['Sira/C3.md', '# C3\n'], ['Diger/D4.md', '# D4\n']]) {
+        fs.mkdirSync(path.dirname(path.join(vault, rel)), { recursive: true });
+        fs.writeFileSync(path.join(vault, rel), text);
+      }
+      const row = (name) => `[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === ${JSON.stringify(name)})`;
+      const names = () => js(`[...document.querySelectorAll('.tree-row.note-row')].filter(r => r.dataset.rel.startsWith('Sira/')).map(r => r.querySelector('.tree-name').textContent).join(',')`);
+      const namesAre = async (want, ms) => { const t = Date.now(); while (Date.now() - t < ms) { if ((await names()) === want) return true; await sleep(80); } return false; };
+      for (const f of ['Sira', 'Diger']) {
+        assert(await waitFor(`!!(${row(f)})`, 4000), `${f} not in the tree`);
+        if ((await js(`${row(f)}.querySelector('.tri').textContent`)) !== '▾') await clickEval(row(f), f);
+      }
+      assert(await waitFor(`!!(${row('C3')}) && !!(${row('D4')})`, 2000), 'notes not shown');
+      // A real drag: press, move until Chrome starts it, then drop at a point.
+      const drag = async (fromName, toName, edge) => {
+        try { wc.debugger.attach('1.3'); } catch { /* attached */ }
+        await wc.debugger.sendCommand('Input.setInterceptDrags', { enabled: true });
+        await js(`${row(fromName)}.scrollIntoView({ block: 'center' }); true`); await sleep(80);
+        const from = await rectEval(`${row(fromName)}.querySelector('.tree-name')`);
+        const got = new Promise((res) => { const h = (_e, m, d) => { if (m === 'Input.dragIntercepted') { wc.debugger.removeListener('message', h); res(d.data); } }; wc.debugger.on('message', h); });
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', clickCount: 1 });
+        for (let i = 1; i <= 5; i++) await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x + i * 4, y: from.y + i * 3, button: 'left', buttons: 1 });
+        const data = await Promise.race([got, sleep(3000).then(() => null)]);
+        assert(data, 'the drag did not start');
+        const to = await js(`(() => { ${row(toName)}.scrollIntoView({ block: 'nearest' }); const b = ${row(toName)}.getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.top + b.height * ${edge === 'before' ? 0.15 : 0.85}) }; })()`);
+        for (const type of ['dragEnter', 'dragOver', 'drop']) await wc.debugger.sendCommand('Input.dispatchDragEvent', { type, x: to.x, y: to.y, data });
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', clickCount: 1 });
+        await wc.debugger.sendCommand('Input.setInterceptDrags', { enabled: false });
+        wc.debugger.detach();
+      };
+      await drag('C3', 'A1', 'before');
+      assert(await namesAre('C3,A1,B2', 3000), `before: ${await names()}`);
+      await drag('D4', 'A1', 'after');
+      assert(await namesAre('C3,A1,D4,B2', 3000), `across folders: ${await names()}`);
+      assert(fs.existsSync(path.join(vault, 'Sira', 'D4.md')) && !fs.existsSync(path.join(vault, 'Diger', 'D4.md')), 'D4 was not moved');
+      const order = () => { try { return JSON.parse(fs.readFileSync(path.join(vault, '.mufka', 'tree.json'), 'utf8')).order; } catch { return null; } };
+      assert(await waitFor2(() => JSON.stringify(order()?.Sira) === JSON.stringify(['C3.md', 'A1.md', 'D4.md', 'B2.md']), 2000), `order not saved: ${JSON.stringify(order())}`);
+      wc.reload(); await sleep(1800);
+      await clickSel('#mode-notes');
+      if ((await js(`${row('Sira')}?.querySelector('.tri')?.textContent`)) !== '▾') await clickEval(row('Sira'), 'Sira');
+      assert(await namesAre('C3,A1,D4,B2', 4000), `after reload: ${await names()}`);
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);

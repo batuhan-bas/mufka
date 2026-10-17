@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PALETTE, TREE_ICONS, paletteHex, folderColor, rowColor, isIconId, cleanEmoji,
-  setStyle, remapStyles, pruneStyles, sanitizeStyles, stylesFile,
+  setStyle, remapStyles, pruneStyles, sanitizeStyles, sanitizeOrder, stylesFile,
 } from '../lib/treestyle.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -74,5 +74,8 @@ test('the vault file is checked: paths, colours, icons', () => {
   assert.deepEqual(sanitizeStyles({ A: { color: 'teal' } }), { A: { color: 'teal' } }); // a bare map works too
   assert.deepEqual(sanitizeStyles(null), {});
   assert.deepEqual(sanitizeStyles([1, 2]), {});
-  assert.deepEqual(JSON.parse(stylesFile({ A: { color: 'teal' } })), { version: 1, items: { A: { color: 'teal' } } });
+  assert.deepEqual(JSON.parse(stylesFile({ A: { color: 'teal' } })), { version: 1, items: { A: { color: 'teal' } }, order: {} });
+  assert.deepEqual(sanitizeOrder({ '': ['B', 'A.md', 'A.md', '../x', 'a/b', '.hidden', 7], Projeler: ['Yol.md'], '../etc': ['x'], Bad: 'x' }),
+    { '': ['B', 'A.md'], Projeler: ['Yol.md'] });
+  assert.deepEqual(JSON.parse(stylesFile({}, { '': ['B'] })).order, { '': ['B'] });
 });

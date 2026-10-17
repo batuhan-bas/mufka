@@ -317,6 +317,8 @@ input, textarea, select { font: inherit; color: inherit; }
 .tree-row.selected:hover { background: color-mix(in srgb, var(--row-c, var(--accent)) 26%, transparent); }
 .tree-row.dragging { opacity: 0.4; }
 .tree-row.drag-over { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
+.tree-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.tree-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .tri { width: 14px; color: var(--muted); font-size: 10px; flex: 0 0 auto; text-align: center; }
 .tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Icons before names: folders always in their colour (the guide's), notes
