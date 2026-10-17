@@ -1410,6 +1410,58 @@ app.whenReady().then(() => setTimeout(async () => {
         shell.openExternal = realOpen;
       }
     });
+
+    // 57. Colours and icons in the tree: rows show an icon, a folder's colour
+    //     is its guide's, the row menu changes colour and icon (a picker icon
+    //     or an emoji), a rename keeps them, and they survive a reload.
+    await step(57, 'tree: icons, colours from the row menu, kept on rename and reload', async () => {
+      await clickSel('#mode-notes');
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      fs.mkdirSync(path.join(vault, 'Tarifler'), { recursive: true });
+      fs.writeFileSync(path.join(vault, 'Tarifler', 'Corba.md'), '# Corba\n');
+      const row = (name) => `[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === ${JSON.stringify(name)})`;
+      assert(await waitFor(`!!(${row('Tarifler')})`, 4000), 'new folder not in the tree');
+      assert(await js(`!!${row('Tarifler')}.querySelector('.tree-icon svg.icon-folder')`), 'no folder icon');
+      await clickEval(row('Tarifler'), 'Tarifler');
+      assert(await waitFor(`!!(${row('Corba')})`, 2000), 'folder did not open');
+      assert(await js(`!!${row('Corba')}.querySelector('.tree-icon svg.icon-tiFileText')`), 'no note icon');
+      // Colour from the menu: the row and its guide take it.
+      const openMenuOf = async (name, item) => {
+        await hoverClickEval(`${row(name)}.querySelector('.menu-btn')`, `${name} menu`);
+        await clickEval(`[...document.querySelectorAll('.menu-item')].find(b => b.textContent === ${JSON.stringify(item)})`, item);
+      };
+      await openMenuOf('Tarifler', 'Colour…');
+      assert(await waitFor('document.querySelectorAll(".swatch").length === 8', 2000), 'no colour swatches');
+      await clickSel('.swatch[aria-label="Pink"]');
+      assert(await waitFor(`${row('Tarifler')}.style.getPropertyValue('--row-c') === '#e07bb5'`, 2000), 'folder did not turn pink');
+      assert(await js(`[...document.querySelectorAll('.tree-guide')].some(g => /224, 123, 181|e07bb5/i.test(g.style.background))`), 'guide is not pink');
+      // Icon from the picker, emoji for the note.
+      await openMenuOf('Tarifler', 'Icon…');
+      await clickSel('.icon-choice[aria-label="Utensils"]');
+      assert(await waitFor(`!!${row('Tarifler')}.querySelector('.tree-icon svg.icon-tiUtensils')`, 2000), 'picker icon not shown');
+      await openMenuOf('Corba', 'Icon…');
+      await clickSel('.emoji-input');
+      await js(`(() => { const i = document.querySelector('.emoji-input'); i.value = '🍲'; return true; })()`);
+      await press('Return');
+      assert(await waitFor(`${row('Corba')}?.querySelector('.tree-emoji')?.textContent === '🍲'`, 2000), 'emoji icon not shown');
+      // The selected note takes its folder's colour.
+      await clickEval(row('Corba'), 'Corba');
+      assert(await waitFor(`${row('Corba')}.classList.contains('selected') && getComputedStyle(${row('Corba')}).backgroundColor !== 'rgba(0, 0, 0, 0)'`, 2000), 'selected note not tinted');
+      assert(await js(`${row('Corba')}.style.getPropertyValue('--row-c') === '#e07bb5'`), 'note does not take the folder colour');
+      // Rename keeps the style; a reload keeps it too.
+      await openMenuOf('Tarifler', 'Rename');
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no rename field');
+      await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Yemekler'; return true; })()`);
+      await press('Return');
+      assert(await waitFor(`!!(${row('Yemekler')}) && ${row('Yemekler')}.style.getPropertyValue('--row-c') === '#e07bb5'`, 3000), 'rename lost the colour');
+      wc.reload(); await sleep(1800);
+      await clickSel('#mode-notes');
+      assert(await waitFor(`!!(${row('Yemekler')}) && !!${row('Yemekler')}.querySelector('svg.icon-tiUtensils')`, 4000), 'styles not kept after reload');
+      // Default puts the level colour back.
+      await openMenuOf('Yemekler', 'Colour…');
+      await clickEval('document.querySelector(".style-reset")', 'Default');
+      assert(await waitFor(`${row('Yemekler')}.style.getPropertyValue('--row-c') === '#6f7cf0'`, 2000), 'default colour not restored');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

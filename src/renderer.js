@@ -33,6 +33,7 @@ import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
 import { buildTagIndex, scanTags } from '../lib/tags.mjs';
 import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
+import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
 
 const plansApi = window.planner;
 const notesApi = window.notes;
@@ -53,6 +54,7 @@ const state = {
   notesFlat: [],          // [{ rel, title, folder, mtime }]
   expanded: new Set(),    // expanded folder rels (persisted)
   selectedFolder: null,   // rel of the selected folder, or null
+  treeStyles: {},         // colours and icons in the tree, per notes folder (lib/treestyle.mjs)
   treeEdit: null,         // inline edit: { kind, parentRel?, rel? }
   folderDeleteConfirm: null, // folder rel awaiting confirmation
   recent: [],             // recently opened note rels, newest first (persisted)
@@ -839,6 +841,8 @@ function renderPaneTitle() {
 let vaultInfo = null;
 async function loadVaultInfo() {
   vaultInfo = notesApi.vaultInfo ? await notesApi.vaultInfo().catch(() => null) : null;
+  loadTreeStyles();
+  refreshSidebar();
   const el = document.getElementById('vault-name');
   el.textContent = vaultInfo && !vaultInfo.error ? `${vaultInfo.name}${vaultInfo.custom ? '' : ' (Mufka)'}` : '';
   document.getElementById('vault-btn').title = vaultInfo && vaultInfo.path
@@ -1525,7 +1529,7 @@ function renderMenu() {
   menuLayer.append(backdrop);
 
   const menu = elem('div', 'row-menu'); menu.setAttribute('role', 'menu');
-  const items = state.menu.buildItems().map((it) => menuItem(it.label, it.fn));
+  const items = state.menu.buildItems().map((it) => it.el || menuItem(it.label, it.fn));
   menu.addEventListener('keydown', (e) => {
     const list = [...menu.querySelectorAll('.menu-item')];
     const i = list.indexOf(document.activeElement);
@@ -1541,7 +1545,7 @@ function renderMenu() {
   let top = r.bottom + 4; if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
   let left = r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
   menu.style.top = `${top}px`; menu.style.left = `${left}px`;
-  items[0].focus();
+  (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice') || menu.querySelector('button, input'))?.focus();
 }
 
 let outsideHandler = null;
@@ -1931,6 +1935,7 @@ function remapRel(oldRel, newRel) {
   const next = new Set();
   for (const r of state.expanded) next.add(fix(r));
   state.expanded = next; saveExpanded();
+  state.treeStyles = remapStyles(state.treeStyles, oldRel, newRel); saveTreeStyles();
 }
 
 function toggleFolder(rel) {
@@ -1943,6 +1948,7 @@ function toggleFolder(rel) {
 
 async function deleteNoteRel(rel) {
   await notesApi.remove(rel);
+  forgetTreeStyles(rel);
   if (state.openNote === rel) { state.openNote = null; state.noteContent = ''; state.contentView = 'day'; }
   state.noteCache.delete(rel);
   await refreshTree();
@@ -1951,6 +1957,7 @@ async function deleteNoteRel(rel) {
 
 async function deleteFolderRel(rel) {
   await notesApi.removeFolder(rel);
+  forgetTreeStyles(rel);
   if (state.openNote && (state.openNote === rel || state.openNote.startsWith(`${rel}/`))) {
     state.openNote = null; state.noteContent = ''; state.contentView = 'day';
   }
@@ -1990,6 +1997,7 @@ function drawGuides(container) {
     const bottom = last.offsetTop + last.offsetHeight;
     const depth = rel.split('/').length - 1;
     const g = elem('div', `tree-guide depth-${depth % 5}` + (onPath.has(rel) ? ' on-path' : ''));
+    g.style.background = folderColor(rel, state.treeStyles);
     g.setAttribute('aria-hidden', 'true');
     g.style.left = `${8 + depth * 16 + 7}px`;
     g.style.top = `${top}px`;
@@ -2034,11 +2042,105 @@ function setupDrop(el, destFolderRel) {
   el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('drag-over'); doMove(e.dataTransfer.getData('text/plain'), destFolderRel); });
 }
 
+// --- colours and icons in the tree (lib/treestyle.mjs) ---
+// Kept per notes folder in Mufka's own storage; nothing is written into the
+// vault. Folders and their guide line share a colour (their level's unless one
+// is chosen); a note takes its folder's colour when selected.
+function treeStyleKey() { return `mufka-tree-style:${(vaultInfo && vaultInfo.path) || ''}`; }
+function loadTreeStyles() {
+  try { state.treeStyles = JSON.parse(localStorage.getItem(treeStyleKey()) || '{}') || {}; } catch { state.treeStyles = {}; }
+}
+function saveTreeStyles() { try { localStorage.setItem(treeStyleKey(), JSON.stringify(state.treeStyles)); } catch { /* ignore */ } }
+function setTreeStyle(rel, field, value) {
+  state.treeStyles = setStyle(state.treeStyles, rel, field, value);
+  saveTreeStyles();
+  refreshSidebar();
+}
+function forgetTreeStyles(rel) {
+  const keep = Object.keys(state.treeStyles).filter((r) => r !== rel && !r.startsWith(`${rel}/`));
+  state.treeStyles = pruneStyles(state.treeStyles, keep);
+  saveTreeStyles();
+}
+function treeIcon(rel, fallback) {
+  const wrap = elem('span', 'tree-icon');
+  const v = state.treeStyles[rel] && state.treeStyles[rel].icon;
+  if (v && !isIconId(v)) wrap.append(elem('span', 'tree-emoji', v));
+  else wrap.append(icon(v || fallback, { size: 15 }));
+  return wrap;
+}
+
+function pickerBox(title) {
+  const box = elem('div', 'style-picker');
+  box.append(elem('div', 'style-picker-title', title));
+  return box;
+}
+function openColorPicker(key, rel, type) {
+  openMenu(key, () => {
+    const box = pickerBox('Colour');
+    const current = (state.treeStyles[rel] && state.treeStyles[rel].color) || '';
+    const grid = elem('div', 'swatches');
+    for (const p of PALETTE) {
+      const b = elem('button', 'swatch' + (current === p.id ? ' on' : ''));
+      b.type = 'button'; b.title = p.name;
+      b.setAttribute('aria-label', p.name); b.setAttribute('aria-pressed', String(current === p.id));
+      b.style.setProperty('--sw', p.hex);
+      b.addEventListener('click', () => { closeMenu(); setTreeStyle(rel, 'color', p.id); });
+      grid.append(b);
+    }
+    box.append(grid);
+    const reset = elem('button', 'btn quiet style-reset', type === 'folder' ? 'Default (by level)' : 'Default');
+    reset.type = 'button';
+    reset.addEventListener('click', () => { closeMenu(); setTreeStyle(rel, 'color', ''); });
+    box.append(reset);
+    return [{ el: box }];
+  });
+}
+function openIconPicker(key, rel) {
+  openMenu(key, () => {
+    const box = pickerBox('Icon');
+    const current = (state.treeStyles[rel] && state.treeStyles[rel].icon) || '';
+    const grid = elem('div', 'icon-choices');
+    for (const id of TREE_ICONS) {
+      const b = elem('button', 'icon-choice' + (current === id ? ' on' : ''));
+      b.type = 'button';
+      const label = id.slice(2).replace(/([a-z])([A-Z0-9])/g, '$1 $2');
+      b.title = label; b.setAttribute('aria-label', label); b.setAttribute('aria-pressed', String(current === id));
+      b.append(icon(id, { size: 16 }));
+      b.addEventListener('click', () => { closeMenu(); setTreeStyle(rel, 'icon', id); });
+      grid.append(b);
+    }
+    box.append(grid);
+    const row = elem('div', 'emoji-row');
+    const input = document.createElement('input');
+    input.className = 'emoji-input'; input.placeholder = 'Or type an emoji'; input.maxLength = 16;
+    input.setAttribute('aria-label', 'Emoji');
+    if (current && !isIconId(current)) input.value = current;
+    const use = elem('button', 'btn quiet', 'Use');
+    use.type = 'button';
+    const apply = () => {
+      const e = cleanEmoji(input.value);
+      if (!e) { input.select(); showToast('Type one emoji, for example 🍲'); return; }
+      closeMenu(); setTreeStyle(rel, 'icon', e);
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+    use.addEventListener('click', apply);
+    row.append(input, use);
+    box.append(row);
+    const reset = elem('button', 'btn quiet style-reset', 'Default icon');
+    reset.type = 'button';
+    reset.addEventListener('click', () => { closeMenu(); setTreeStyle(rel, 'icon', ''); });
+    box.append(reset);
+    return [{ el: box }];
+  });
+}
+
 function folderRow(f, depth) {
   const row = elem('div', 'tree-row folder-row' + (state.selectedFolder === f.rel ? ' selected' : ''));
   row.style.paddingLeft = `${8 + depth * 16}px`;
   row.tabIndex = 0; row.dataset.rel = f.rel; row.dataset.type = 'folder';
   row.append(elem('span', 'tri', state.expanded.has(f.rel) ? '▾' : '▸'));
+  row.style.setProperty('--row-c', rowColor(f.rel, 'folder', state.treeStyles));
+  row.append(treeIcon(f.rel, state.expanded.has(f.rel) ? 'folderOpen' : 'folder'));
   row.append(elem('span', 'tree-name', f.name));
   row.append(elem('span', 'tree-count', String(f.count)));
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; toggleFolder(f.rel); });
@@ -2052,6 +2154,10 @@ function noteRow(n, depth) {
   const row = elem('div', 'tree-row note-row' + (state.openNote === n.rel ? ' selected' : ''));
   row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
   row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'note';
+  const color = rowColor(n.rel, 'note', state.treeStyles);
+  if (color) row.style.setProperty('--row-c', color);
+  if (state.treeStyles[n.rel] && state.treeStyles[n.rel].color) row.classList.add('colored');
+  row.append(treeIcon(n.rel, 'tiFileText'));
   row.append(elem('span', 'tree-name', n.title));
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openNote(n.rel, 'oku', { keepTab: true }); });
   addMenuBtn(row, `n:${n.rel}`, () => noteMenuItems(n));
@@ -2063,6 +2169,8 @@ function folderMenuItems(f) {
   const items = [
     { label: 'New note', fn: () => { closeMenu(); newNoteIn(f.rel); } },
     { label: 'New folder', fn: () => { closeMenu(); newFolderIn(f.rel); } },
+    { label: 'Icon…', fn: () => openIconPicker(`f:${f.rel}`, f.rel) },
+    { label: 'Colour…', fn: () => openColorPicker(`f:${f.rel}`, f.rel, 'folder') },
   ];
   if (!isGunluk(f.rel)) {
     items.push({ label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-folder', rel: f.rel }); } });
@@ -2073,6 +2181,8 @@ function folderMenuItems(f) {
 function noteMenuItems(n) {
   return [
     { label: isBookmarked(n.rel) ? 'Remove bookmark' : 'Bookmark', fn: () => { closeMenu(); toggleBookmark(n.rel); } },
+    { label: 'Icon…', fn: () => openIconPicker(`n:${n.rel}`, n.rel) },
+    { label: 'Colour…', fn: () => openColorPicker(`n:${n.rel}`, n.rel, 'note') },
     { label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-note', rel: n.rel }); } },
     { label: 'Delete', fn: () => { closeMenu(); deleteNoteRel(n.rel); } },
   ];
