@@ -72,6 +72,7 @@ test('normalizeRel resolves dots and refuses escaping the root', () => {
 
 test('isExecutableName flags files that would run code', () => {
   for (const n of ['x.command', 'Kurulum.pkg', 'a.app', 'run.sh', 'Script.scpt', 'site.webloc']) assert.ok(isExecutableName(n), n);
+  for (const n of ['Setup.exe', 'install.MSI', 'Mufka.lnk', 'screen.scr', 'page.hta', 'keys.reg', 'run.bat', 'go.ps1', 'link.url', 'old.com']) assert.ok(isExecutableName(n), n);
   for (const n of ['a.png', 'b.pdf', 'c.md', 'd.txt', 'e.zip']) assert.ok(!isExecutableName(n), n);
 });
 

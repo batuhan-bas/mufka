@@ -28,7 +28,11 @@ fs.writeFileSync(path.join(tmp, 'planlar.json'), JSON.stringify({ version: 3, it
   plan(5, day(4), 'Clean the desk'),
 ] }));
 
-require(path.join(__dirname, '..', 'out', 'main', 'index.js'));
+const main = path.join(__dirname, '..', 'out', 'main', 'index.js');
+if (!fs.existsSync(main)) { console.error('Build first: npm run build'); app.exit(1); }
+else require(main);
+// Never hang a CI job: give up after two minutes.
+setTimeout(() => { console.error('screens: timed out'); app.exit(1); }, 120000).unref();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
   try {
@@ -59,7 +63,7 @@ app.whenReady().then(async () => {
     console.error(err);
     process.exitCode = 1;
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* Windows: still in use */ }
     app.exit(process.exitCode || 0);
   }
 });

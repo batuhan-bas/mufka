@@ -23,9 +23,8 @@ function makePng(w, h) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-e2e-'));
 app.setPath('userData', tmp);
-// A 24-hour clock in time fields whatever the machine's language (CI runners
-// are en-US, whose fields take AM/PM): the test types times like 1000.
-app.commandLine.appendSwitch('lang', 'en-GB');
+// Never hang a CI job: a run that is still going after 12 minutes has failed.
+setTimeout(() => { console.log('[E2E] FAIL: timed out after 12 minutes'); app.exit(1); }, 12 * 60 * 1000).unref();
 // Documents too: the default notes folder is Documents/Mufka, and a test must
 // never touch the real one.
 app.setPath('documents', path.join(tmp, 'Documents'));
@@ -109,7 +108,11 @@ async function setTime(sel, digits) {
     const r = await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({block:'center'}); const b = e.getBoundingClientRect(); return { x: Math.round(b.left + 9), y: Math.round(b.top + b.height / 2) }; })()`);
     assert(r, `time input not found: ${sel}`);
     await clickAt(r.x, r.y); await sleep(80);
-    for (const ch of digits) { wc.sendInputEvent({ type: 'keyDown', keyCode: ch }); wc.sendInputEvent({ type: 'char', keyCode: ch }); wc.sendInputEvent({ type: 'keyUp', keyCode: ch }); await sleep(90); }
+    // A field with AM/PM (the system's region decides) takes 10:00 as 1000A,
+    // 14:30 as 0230P; odd attempts try that form.
+    const h = Number(digits.slice(0, 2));
+    const keys = attempt % 2 === 0 ? digits : `${String(h % 12 || 12).padStart(2, '0')}${digits.slice(2)}${h < 12 ? 'A' : 'P'}`;
+    for (const ch of keys) { wc.sendInputEvent({ type: 'keyDown', keyCode: ch }); wc.sendInputEvent({ type: 'char', keyCode: ch }); wc.sendInputEvent({ type: 'keyUp', keyCode: ch }); await sleep(90); }
     await sleep(140);
     if ((await js(`document.querySelector(${JSON.stringify(sel)})?.value`)) === want) return;
   }
@@ -532,7 +535,9 @@ app.whenReady().then(() => setTimeout(async () => {
             return { gap: pane.right - btn.right, inside: btn.right <= pane.right + 1, onRow };
           })()`);
           const label = `${width}px ${collapsed ? 'collapsed' : 'open'}`;
-          assert(m.inside && m.gap >= 0 && m.gap <= 16, `${label}: ⋯ not within 16px of pane edge (gap ${m.gap})`);
+          // Windows draws its window buttons over the bar's top right: 150px kept free.
+          const room = process.platform === 'win32' ? 150 : 0;
+          assert(m.inside && m.gap >= room && m.gap <= room + 16, `${label}: ⋯ not within 16px of the free edge (gap ${m.gap}, room ${room})`);
           assert(m.onRow === 0, `${label}: ${m.onRow} button(s) share the title row`);
         }
       }
@@ -1594,7 +1599,10 @@ app.whenReady().then(() => setTimeout(async () => {
   }
 
   for (const line of results) console.log(line);
-  fs.rmSync(tmp, { recursive: true, force: true });
-  if (failedStep) { console.log(`[E2E] FAIL: ${failedStep}`); app.exit(1); }
-  else { console.log(`[E2E] OK (${results.length} steps)`); app.exit(0); }
+  if (failedStep) console.log(`[E2E] FAIL: ${failedStep}`);
+  else console.log(`[E2E] OK (${results.length} steps)`);
+  // Windows keeps the app's files locked while it runs: a temp folder that
+  // cannot go yet is left for the system to clear, never a reason to hang.
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* still in use */ }
+  app.exit(failedStep ? 1 : 0);
 }, 300));
