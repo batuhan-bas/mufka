@@ -2,7 +2,7 @@
   "name": "mufka",
   "productName": "Mufka",
   "version": "1.4.0",
-  "description": "Personal planner and Markdown notes for macOS: a week planner, an Obsidian-like vault and a graph of your notes.",
+  "description": "Personal planner and Markdown notes for macOS and Windows: a week planner, an Obsidian-like vault and a graph of your notes.",
   "author": "Batuhan Baş",
   "license": "MIT",
   "private": true,
@@ -17,6 +17,7 @@
     "smoke:packaged": "npm run build && electron scripts/packaged-hook-smoke.js",
     "dist": "electron-vite build && electron-builder",
     "dist:public": "electron-vite build && MUFKA_SIGN_IDENTITY=- electron-builder",
+    "dist:win": "electron-vite build && electron-builder --win --x64 --publish never",
     "sign:dev": "node scripts/sign-mac.mjs node_modules/electron/dist/Electron.app"
   },
   "build": {
@@ -40,6 +41,24 @@
     },
     "dmg": {
       "title": "Mufka"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Mufka",
+      "artifactName": "Mufka-${version}-Setup.${ext}"
     },
     "files": [
       "out/**/*",

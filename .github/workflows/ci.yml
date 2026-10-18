@@ -1,0 +1,72 @@
+name: CI
+
+# Every push to main and every pull request: the unit tests and the end-to-end
+# test (the real app, driven with real input) on macOS and on Windows. Windows
+# also uploads screenshots and an installer to look at.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: node --test "test/*.test.mjs"
+      - run: npm run build
+      # The end-to-end test drives the window with timing; a busy runner can
+      # miss one step, so it gets three tries.
+      - name: End-to-end test
+        run: npm run e2e || npm run e2e || npm run e2e
+      - name: Screenshots
+        if: always()
+        run: npx electron scripts/screens.cjs screens
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens-${{ matrix.os }}
+          path: screens
+          if-no-files-found: ignore
+
+  windows-installer:
+    name: Windows installer
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/*.exe

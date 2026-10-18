@@ -686,7 +686,7 @@ function secretRead(name) {
   } catch { return {}; }
 }
 function secretWrite(name, state) {
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('macOS did not allow Mufka to encrypt the sign-in');
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('The system did not allow Mufka to encrypt the sign-in');
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
   writeFileAtomic(secretPath(name), safeStorage.encryptString(JSON.stringify(state)).toString('base64'));
 }
@@ -1215,8 +1215,11 @@ function sendMenu(action) {
 // Cmd+F reach the renderer (plan-undo and search), not a native menu role.
 function buildMenu() {
   const appName = app.name; // "Mufka"
+  const isMac = process.platform === 'darwin';
+  const filesApp = isMac ? 'Finder' : 'File Explorer';
   const template = [
-    {
+    // The app menu is a Mac thing; on Windows Settings and Exit are in File.
+    ...(isMac ? [{
       label: appName,
       submenu: [
         { role: 'about' },
@@ -1231,7 +1234,7 @@ function buildMenu() {
         { type: 'separator' },
         { role: 'quit' },
       ],
-    },
+    }] : []),
     {
       label: 'File',
       submenu: [
@@ -1245,9 +1248,10 @@ function buildMenu() {
         { type: 'separator' },
         { id: 'vault-choose', label: 'Open Notes Folder…', click: () => chooseVault() },
         { id: 'vault-default', label: 'Use Default Notes Folder', enabled: vault.custom, click: () => setVault(null) },
-        { label: 'Show Notes Folder in Finder', click: () => { ensureNotesDirs(); shell.showItemInFolder(notesRoot()); } },
+        { label: `Show Notes Folder in ${filesApp}`, click: () => { ensureNotesDirs(); shell.showItemInFolder(notesRoot()); } },
         { type: 'separator' },
         { label: 'Show Unused Attachments', click: () => sendMenu('unused-attachments') },
+        ...(isMac ? [] : [{ type: 'separator' }, { label: 'Settings…', accelerator: 'Ctrl+,', click: () => sendMenu('settings') }, { type: 'separator' }, { role: 'quit', label: 'Exit' }]),
       ],
     },
     {
@@ -1285,11 +1289,7 @@ function buildMenu() {
     },
     {
       role: 'windowMenu',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
-        { role: 'close' },
-      ],
+      submenu: isMac ? [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close' }] : [{ role: 'minimize' }, { role: 'close' }],
     },
     {
       role: 'help',
@@ -1383,7 +1383,10 @@ function createWindow() {
     title: 'Mufka',
     // Like Obsidian: no system title bar; the traffic lights sit in Mufka's own
     // top bar, which drags the window (src/styles.css, "Title bar").
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 15 } } : {}),
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 15 } }
+      // Windows: the same bar, with the system's minimise/maximise/close on its right.
+      : { titleBarStyle: 'hidden', titleBarOverlay: { color: '#1e2025', symbolColor: '#e4e6ea', height: 44 } }),
     backgroundColor: '#1e2025',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -1575,6 +1578,8 @@ app.whenReady().then(() => {
   // The UI is dark-only; force the native chrome (title bar, menus) to match
   // regardless of the system appearance.
   nativeTheme.themeSource = 'dark';
+  // Windows shows notifications only for an app with an id (the installer's).
+  if (process.platform === 'win32') app.setAppUserModelId('com.mufka.app');
   // Unpackaged runs use node_modules' Electron.app, whose bundle icon is
   // Electron's; show the Mufka icon in the Dock instead. Packaged builds get it
   // from the bundle (build/icon.icns).

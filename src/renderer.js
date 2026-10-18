@@ -28,6 +28,7 @@ import { attachHoverPreview, hidePreview } from './hover-preview.js';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
 import { applyTemplate } from '../lib/template.mjs';
+import { keyLabel } from '../lib/keys.mjs';
 import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs';
 import { countText } from '../lib/wordcount.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
@@ -40,6 +41,16 @@ import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setSt
 const plansApi = window.planner;
 // macOS: Mufka draws its own title bar (styles.css, "Title bar").
 if (plansApi.isMac) document.documentElement.classList.add('mac');
+else document.documentElement.classList.add('win');
+// Shortcuts read the system's way: ⌘O on a Mac, Ctrl+O elsewhere (lib/keys.mjs).
+const K = (text) => keyLabel(text, plansApi.isMac);
+// The Mac's Finder, Windows' Explorer.
+const FILES_APP = plansApi.isMac ? 'Finder' : 'File Explorer';
+// The static page (index.html) too: tooltips and the sidebar's key hints.
+if (!plansApi.isMac) {
+  for (const el of document.querySelectorAll('[title]')) el.title = K(el.title);
+  for (const el of document.querySelectorAll('kbd')) el.textContent = K(el.textContent);
+}
 if (plansApi.onFullScreen) plansApi.onFullScreen((on) => document.documentElement.classList.toggle('fullscreen', on));
 const notesApi = window.notes;
 const wisprApi = window.wispr;
@@ -408,7 +419,7 @@ function renderSearchField() {
   field.placeholder = 'Search or create a note';
   field.value = state.araQuery;
   field.setAttribute('aria-label', 'Search');
-  field.title = 'Search notes and plans (⌘F). Enter opens the note with this name, or creates it.';
+  field.title = K('Search notes and plans (⌘F). Enter opens the note with this name, or creates it.');
   field.addEventListener('focus', () => ensureNoteCache());
   field.addEventListener('input', () => { state.araQuery = field.value; state.focus = 'ara-input'; refreshSidebar(); });
   field.addEventListener('keydown', (e) => {
@@ -435,8 +446,8 @@ function renderPlaces() {
     nav.append(b);
   };
   const todayOpen = getDayItems(new Date()).filter((p) => !p.done).length;
-  place('Home', todayOpen, state.contentView === 'day' && isToday(state.selectedDate), goToday, 'Home: today, its plans and its note (⌘T)', 'home');
-  place('Graph', 0, state.contentView === 'graph', () => openGraph(), 'Notes and links as a graph (⌘G)', 'graph');
+  place('Home', todayOpen, state.contentView === 'day' && isToday(state.selectedDate), goToday, K('Home: today, its plans and its note (⌘T)'), 'home');
+  place('Graph', 0, state.contentView === 'graph', () => openGraph(), K('Notes and links as a graph (⌘G)'), 'graph');
   nav.lastChild.id = 'graph-btn';
   sideEl.append(nav);
 }
@@ -444,7 +455,7 @@ function renderPlaces() {
 
 function renderNotesSection() {
   const body = sidebarSection('notes', 'Notes', [
-    iconAction('newNote', 'New note', () => newNote(), 'New note in the selected folder (⌘N)'),
+    iconAction('newNote', 'New note', () => newNote(), K('New note in the selected folder (⌘N)')),
     iconAction('template', 'New note from template', () => newFromTemplate(), 'New note from a template: daily, meeting, project, budget, trip…'),
     iconAction('newFolder', 'New folder', () => newFolder(), 'New folder in the selected folder'),
     sortButton(),
@@ -453,7 +464,7 @@ function renderNotesSection() {
   const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder });
   if (tree.folders.length === 0 && tree.notes.length === 0 && !state.treeEdit) {
     const empty = elem('div', 'side-empty');
-    empty.append(document.createTextNode('No notes yet. '), smallButton('Create one', null, () => newNote(), '⌘N'));
+    empty.append(document.createTextNode('No notes yet. '), smallButton('Create one', null, () => newNote(), K('⌘N')));
     body.append(empty);
     return;
   }
@@ -616,7 +627,7 @@ function updatePlan(p, patch, message, keepFocus) {
   if (plan.scope !== 'day') { plan.time = ''; plan.endTime = ''; }
   persistPlans();
   render();
-  if (message) announce(`${message}. ⌘Z undoes.`);
+  if (message) announce(K(`${message}. ⌘Z undoes.`));
   if (keepFocus) plannerFocus(plan.id);
 }
 function plannerMenuItems(p, key) {
@@ -764,7 +775,7 @@ const plannerApi = {
   update: updatePlan,
   remove(p) {
     if (p._occ) deleteOccurrence(p.id, p._date); else deletePlan(p.id);
-    showToast('Deleted · ⌘Z undoes');
+    showToast(K('Deleted · ⌘Z undoes'));
   },
   edit(p) {
     const series = state.store.items.find((x) => x.id === p.id);
@@ -795,7 +806,7 @@ const plannerApi = {
       state.store.items.push(one);
       pushUndo({ type: 'detach', id: series.id, dateKey, newId: one.id });
       persistPlans(); render();
-      announce(`${r.title} changed for ${formatWeekdayLong(d)} only. ⌘Z undoes.`);
+      announce(K(`${r.title} changed for ${formatWeekdayLong(d)} only. ⌘Z undoes.`));
     }, { recur: series.recur, repeat: { label: describeRecur(series.recur), dayLabel: `${formatWeekdayLong(d)} ${d.getDate()}` }, onSkip: () => { deleteOccurrence(series.id, dateKey); announce(`${p.title} skipped on ${formatWeekdayLong(d)}`); } });
   },
   prompt(heading, cb, times = {}) { planDialog(heading, times, (r) => cb(r)); },
@@ -807,7 +818,7 @@ const plannerApi = {
       pushUndo({ type: 'remove-new', id: plan.id });
       persistPlans();
       openPlanner(r.date, { focusId: plan.id });
-      announce(`Added ${r.title}${r.recur ? `, ${describeRecur(r.recur).toLowerCase()}` : ''}. ⌘Z undoes.`);
+      announce(K(`Added ${r.title}${r.recur ? `, ${describeRecur(r.recur).toLowerCase()}` : ''}. ⌘Z undoes.`));
     }, { date, recur: null });
   },
   menu: (anchor, p, key) => openMenu(anchor, () => plannerMenuItems(p, key)),
@@ -854,14 +865,14 @@ async function loadVaultInfo() {
   // The default folder reads as Documents/Mufka; a chosen one by its own name.
   el.textContent = vaultInfo && !vaultInfo.error ? (vaultInfo.custom ? vaultInfo.name : `Documents/${vaultInfo.name}`) : '';
   document.getElementById('vault-btn').title = vaultInfo && vaultInfo.path
-    ? `Notes are .md files in ${vaultInfo.path}. Click to open another folder (e.g. an Obsidian vault) or show this one in Finder.`
+    ? `Notes are .md files in ${vaultInfo.path}. Click to open another folder (e.g. an Obsidian vault) or show this one in ${FILES_APP}.`
     : 'The folder your notes are stored in.';
 }
 document.getElementById('vault-btn').addEventListener('click', (e) => {
   e.stopPropagation();
   openMenu('vault', () => [
     { label: 'Open another notes folder…', fn: () => { closeMenu(); notesApi.chooseVault(); } },
-    { label: 'Show this folder in Finder', fn: () => { closeMenu(); notesApi.reveal(); } },
+    { label: `Show this folder in ${FILES_APP}`, fn: () => { closeMenu(); notesApi.reveal(); } },
     ...(vaultInfo && vaultInfo.custom ? [{ label: "Use Mufka's own notes folder", fn: () => { closeMenu(); notesApi.useDefaultVault(); } }] : []),
   ]);
 });
@@ -1248,7 +1259,7 @@ function commandList() {
     { label: 'Export note as PDF', when: noteOpen, run: () => runExport('pdf', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Export note as Markdown', when: noteOpen, run: () => runExport('md', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Show unused attachments', run: showUnusedAttachments },
-    { label: 'Show notes folder in Finder', run: () => notesApi.reveal() },
+    { label: `Show notes folder in ${FILES_APP}`, run: () => notesApi.reveal() },
   ].filter((c) => !c.when || c.when());
 }
 function openCommandPalette() {
@@ -1317,7 +1328,7 @@ function renderDayPage() {
   head.append(main);
   const nav = elem('div', 'navgroup day-nav');
   const prev = elem('button', null, '‹'); prev.setAttribute('aria-label', 'Previous day'); prev.title = 'Previous day';
-  const today = elem('button', null, 'Today'); today.title = 'Go to today (⌘T)';
+  const today = elem('button', null, 'Today'); today.title = K('Go to today (⌘T)');
   const next = elem('button', null, '›'); next.setAttribute('aria-label', 'Next day'); next.title = 'Next day';
   prev.addEventListener('click', () => selectDay(addDays(date, -1), { keepTab: true }));
   today.addEventListener('click', () => goToday());
@@ -3317,7 +3328,7 @@ function welcomeCard() {
   for (const t of [
     'This is Home: today, what you planned for it and its note. Plans are made in the Planner (Notes | Planner, top left).',
     'Your notes are in the sidebar under Notes: plain .md files in a folder on your Mac. To use another folder (for example your Obsidian vault), click "Notes folder" at the bottom of the sidebar.',
-    'Keyboard: ⌘O open a note · ⌘P every command · ⌘/ all shortcuts (also at the bottom of the sidebar).',
+    K('Keyboard: ⌘O open a note · ⌘P every command · ⌘/ all shortcuts (also at the bottom of the sidebar).'),
     'Details (top right) shows a note\u2019s outline, links and tags. Graph shows how notes connect.',
   ]) list.append(elem('li', null, t));
   card.append(list);

@@ -23,6 +23,9 @@ function makePng(w, h) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-e2e-'));
 app.setPath('userData', tmp);
+// A 24-hour clock in time fields whatever the machine's language (CI runners
+// are en-US, whose fields take AM/PM): the test types times like 1000.
+app.commandLine.appendSwitch('lang', 'en-GB');
 // Documents too: the default notes folder is Documents/Mufka, and a test must
 // never touch the real one.
 app.setPath('documents', path.join(tmp, 'Documents'));
@@ -85,7 +88,12 @@ async function clickSel(sel) { await clickEval(`document.querySelector(${JSON.st
 async function hoverClickEval(expr, label) { const r = await rectEval(expr); assert(r, `element not found: ${label || expr}`); wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y }); await sleep(70); await clickAt(r.x, r.y); }
 
 async function typeText(t) { for (const ch of t) { wc.sendInputEvent({ type: 'char', keyCode: ch }); await sleep(10); } await sleep(50); }
-async function press(keyCode, modifiers = []) { wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers }); wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); await sleep(140); }
+// Shortcuts are written the Mac way ('meta' = ⌘); on Windows the same keys use Ctrl.
+const MOD = process.platform === 'darwin' ? 'meta' : 'control';
+async function press(keyCode, modifiers = []) {
+  modifiers = modifiers.map((m) => (m === 'meta' ? MOD : m));
+  wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers }); wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); await sleep(140);
+}
 const enter = () => press('Return');
 const cmdZ = () => press('Z', ['meta']);
 async function retype(sel, text) {
@@ -1175,7 +1183,8 @@ app.whenReady().then(() => setTimeout(async () => {
       await press('Escape');
       assert(await waitFor('document.getElementById("vault-name")?.textContent === "Documents/Mufka"', 2000), `notes folder name: ${await js('document.getElementById("vault-name")?.textContent')}`);
       await clickSel('#vault-btn');
-      assert(await waitFor('[...document.querySelectorAll(".row-menu .menu-item")].map(b => b.textContent).join("|") === "Open another notes folder…|Show this folder in Finder"', 2000), 'notes folder menu wrong');
+      const filesApp = process.platform === 'darwin' ? 'Finder' : 'File Explorer';
+      assert(await waitFor(`[...document.querySelectorAll(".row-menu .menu-item")].map(b => b.textContent).join("|") === "Open another notes folder…|Show this folder in ${filesApp}"`, 2000), 'notes folder menu wrong');
       await press('Escape');
       await clickEval('document.querySelector(".side-notes .side-head-toggle")', 'Notes header');
       assert(await waitFor('!document.querySelector(".side-notes .tree")', 2000), 'notes did not collapse');
