@@ -16,6 +16,9 @@
 
 let current = null;
 
+import { keyLabel } from '../lib/keys.mjs';
+
+const IS_MAC = Boolean(window.planner && window.planner.isMac);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 // label with the matched characters wrapped in <mark>.
@@ -68,7 +71,7 @@ export function openPalette(opts) {
   list.id = 'palette-list';
   list.setAttribute('role', 'listbox');
   box.append(input, list);
-  if (opts.footer) box.append(el('div', 'palette-footer', opts.footer));
+  if (opts.footer) box.append(el('div', 'palette-footer', keyLabel(opts.footer, IS_MAC)));
   layer.append(box);
   document.body.append(layer);
 
@@ -89,7 +92,7 @@ export function openPalette(opts) {
       li.setAttribute('aria-selected', String(i === sel));
       const main = el('div', 'palette-main');
       main.append(labelNode(r.label, r.indices));
-      if (r.hint) main.append(el('span', 'palette-hint', r.hint));
+      if (r.hint) main.append(el('span', 'palette-hint', keyLabel(r.hint, IS_MAC)));
       li.append(main);
       if (r.detail) li.append(el('div', 'palette-detail', r.detail));
       li.addEventListener('mousemove', () => { if (sel !== i) { sel = i; paint(); } });

@@ -34,9 +34,9 @@
   --c-amber: #e6a23c;      /* callouts: question / warning */
   --c-violet: #b392ff;     /* callouts: example */
 
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", sans-serif;
   --font-note: var(--font);
-  --mono: "SF Mono", Menlo, monospace;
+  --mono: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
   --radius: 6px;
 }
 
@@ -93,6 +93,13 @@ input, textarea, select { font: inherit; color: inherit; }
 .mac .pane-bar button, .mac .pane-bar a, .mac .pane-bar input, .mac .pane-bar [role="group"], .mac .pane-bar .pane-actions > * { -webkit-app-region: no-drag; }
 .mac:not(.fullscreen) #app.sidebar-collapsed .pane-bar { padding-left: 84px; }
 .mac.fullscreen .titlebar-room { flex-basis: 12px; height: 12px; }
+/* Windows: the bar drags the window too; minimise/maximise/close are drawn by
+   the system over its top right, so the bar (or the details panel, when open)
+   leaves room for them. */
+.win .pane-bar { -webkit-app-region: drag; }
+.win .pane-bar button, .win .pane-bar a, .win .pane-bar input, .win .pane-bar [role="group"], .win .pane-bar .pane-actions > * { -webkit-app-region: no-drag; }
+.win #app:has(> .rightbar[hidden]) .pane-bar { padding-right: 150px; }
+.win .rightbar { padding-top: 44px; }
 .tabs { display: flex; border-top: 1px solid var(--line); }
 .tab {
   flex: 1;

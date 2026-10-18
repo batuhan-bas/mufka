@@ -10,10 +10,14 @@
 // day's to-do band), or use its ⋯ menu "Move to…", or the keyboard on a focused
 // plan: ⌥←/⌥→ day, ⌥↑/⌥↓ 15 minutes, Space done, Enter edit, Delete remove.
 
+import { keyLabel } from '../lib/keys.mjs';
 import { weekDates, layoutDay, toMinutes, toTime, snap, span, moveTo, resizeTo, isMissed, firstHour, SNAP } from '../lib/week.mjs';
 import { dayKey, weekKey, addDays, isToday, formatWeekRange } from '../lib/dates.mjs';
 import { describeRecur } from '../lib/recur.mjs';
 import { icon } from './icons.js';
+
+// Shortcuts read the system's way (lib/keys.mjs).
+const K = (text) => keyLabel(text, Boolean(window.planner && window.planner.isMac));
 
 const HOUR = 48;        // px per hour in the grid
 const NARROW = 620;     // below this pane width: list layout (7 columns get too thin)
@@ -40,9 +44,9 @@ export function renderPlanner(container, weekDate, api) {
   const title = el('h1', 'pl-title', isThisWeek(days, now) ? 'This week' : `Week ${wkey.split('-W')[1].replace(/^0/, '')}`);
   const sub = el('span', 'pl-range', formatWeekRange(weekDate));
   const nav = el('div', 'navgroup pl-nav');
-  const prev = el('button', null, '‹'); prev.setAttribute('aria-label', 'Previous week'); prev.title = 'Previous week (⌥⌘←)';
-  const today = el('button', null, 'Today'); today.title = 'This week (⌘T on the day page)';
-  const next = el('button', null, '›'); next.setAttribute('aria-label', 'Next week'); next.title = 'Next week (⌥⌘→)';
+  const prev = el('button', null, '‹'); prev.setAttribute('aria-label', 'Previous week'); prev.title = K('Previous week (⌥⌘←)');
+  const today = el('button', null, 'Today'); today.title = K('This week (⌘T on the day page)');
+  const next = el('button', null, '›'); next.setAttribute('aria-label', 'Next week'); next.title = K('Next week (⌥⌘→)');
   prev.addEventListener('click', () => api.goWeek(addDays(weekDate, -7)));
   next.addEventListener('click', () => api.goWeek(addDays(weekDate, 7)));
   today.addEventListener('click', () => api.goWeek(new Date()));
@@ -51,7 +55,7 @@ export function renderPlanner(container, weekDate, api) {
   // The one obvious way to plan: title, day, time, repeat.
   const add = el('button', 'btn primary pl-new');
   add.type = 'button';
-  add.title = 'New plan: pick the day, a time and whether it repeats (⇧⌘P)';
+  add.title = K('New plan: pick the day, a time and whether it repeats (⇧⌘P)');
   add.append(icon('plus', { size: 15 }), el('span', null, 'New plan'));
   add.addEventListener('click', () => api.newPlan(isThisWeek(days, now) ? now : days[0]));
   head.append(title, sub, add);
