@@ -23,6 +23,8 @@ function makePng(w, h) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-e2e-'));
 app.setPath('userData', tmp);
+// Never hang a CI job: a run that is still going after 12 minutes has failed.
+setTimeout(() => { console.log('[E2E] FAIL: timed out after 12 minutes'); app.exit(1); }, 12 * 60 * 1000).unref();
 // Documents too: the default notes folder is Documents/Mufka, and a test must
 // never touch the real one.
 app.setPath('documents', path.join(tmp, 'Documents'));
@@ -533,7 +535,9 @@ app.whenReady().then(() => setTimeout(async () => {
             return { gap: pane.right - btn.right, inside: btn.right <= pane.right + 1, onRow };
           })()`);
           const label = `${width}px ${collapsed ? 'collapsed' : 'open'}`;
-          assert(m.inside && m.gap >= 0 && m.gap <= 16, `${label}: ⋯ not within 16px of pane edge (gap ${m.gap})`);
+          // Windows draws its window buttons over the bar's top right: 150px kept free.
+          const room = process.platform === 'win32' ? 150 : 0;
+          assert(m.inside && m.gap >= room && m.gap <= room + 16, `${label}: ⋯ not within 16px of the free edge (gap ${m.gap}, room ${room})`);
           assert(m.onRow === 0, `${label}: ${m.onRow} button(s) share the title row`);
         }
       }
@@ -1595,7 +1599,10 @@ app.whenReady().then(() => setTimeout(async () => {
   }
 
   for (const line of results) console.log(line);
-  fs.rmSync(tmp, { recursive: true, force: true });
-  if (failedStep) { console.log(`[E2E] FAIL: ${failedStep}`); app.exit(1); }
-  else { console.log(`[E2E] OK (${results.length} steps)`); app.exit(0); }
+  if (failedStep) console.log(`[E2E] FAIL: ${failedStep}`);
+  else console.log(`[E2E] OK (${results.length} steps)`);
+  // Windows keeps the app's files locked while it runs: a temp folder that
+  // cannot go yet is left for the system to clear, never a reason to hang.
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* still in use */ }
+  app.exit(failedStep ? 1 : 0);
 }, 300));

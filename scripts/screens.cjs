@@ -63,7 +63,7 @@ app.whenReady().then(async () => {
     console.error(err);
     process.exitCode = 1;
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* Windows: still in use */ }
     app.exit(process.exitCode || 0);
   }
 });
