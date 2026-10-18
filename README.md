@@ -4,7 +4,7 @@
 
 # Mufka
 
-**Your week and your notes, in one calm Mac app.**
+**Your week and your notes, in one calm app for Mac and Windows.**
 
 A week planner with times, repeating plans and your Outlook, Teams and Google
 calendars, and an Obsidian‑like Markdown notes vault with links, backlinks and
@@ -22,6 +22,7 @@ a graph — local and private.
 
 - [What Mufka does](#what-mufka-does)
 - [Install it on a Mac](#install-it-on-a-mac)
+- [Install it on Windows](#install-it-on-windows)
 - [Your notes and your data](#your-notes-and-your-data)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [For the developer](#for-the-developer)
@@ -137,13 +138,29 @@ Drag Mufka from Applications to the Trash. Your notes stay in
 `~/Documents/Mufka` (or the notes folder you chose) and your plans in
 `~/Library/Application Support/Mufka` until you delete them.
 
+## Install it on Windows
+
+**Needs:** Windows 10 or 11, 64-bit.
+
+1. Download **`Mufka-<version>-Setup.exe`** from the
+   [Releases](https://github.com/batuhan-bas/mufka/releases) page.
+2. Run it. Mufka is not signed with a paid Microsoft certificate yet, so
+   Windows SmartScreen says *"Windows protected your PC"*: click **More info**
+   → **Run anyway**. Choose where to install and finish.
+3. Open **Mufka** from the Start menu or the desktop shortcut.
+
+Everything works as on a Mac, with **Ctrl** where the Mac uses **⌘** (Ctrl+O,
+Ctrl+P, Ctrl+Shift+P…); the app shows shortcuts the Windows way. Notes are in
+`Documents\Mufka`, plans in `%APPDATA%\Mufka`. Updates: run the new installer;
+your notes and plans stay. **Uninstall** from **Settings → Apps**.
+
 ## Your notes and your data
 
-Everything stays on your Mac; there is no account and no server. The exceptions
+Everything stays on your computer; there is no account and no server. The exceptions
 are the connections you turn on yourself in **Settings**: your **Microsoft**
 and **Google** calendars (Mufka reads your events; it asks only for calendar
 read access) and **Wispr Flow** (Mufka reads your meetings). Mufka never sends
-your notes or plans anywhere. Sign-ins are kept encrypted in your Keychain;
+your notes or plans anywhere. Sign-ins are kept encrypted (in the macOS Keychain, or by Windows for your user account);
 **Disconnect** forgets them. Details: the [privacy policy](https://mufka.app/privacy).
 
 <p align="center"><img src="docs/screenshots/settings.png" width="70%" alt="Settings: the Microsoft and Google calendars and Wispr Flow"></p>
@@ -151,12 +168,14 @@ your notes or plans anywhere. Sign-ins are kept encrypted in your Keychain;
 | What | Where |
 |---|---|
 | Notes | `~/Documents/Mufka` — or any folder you open with **Notes folder** at the bottom of the sidebar (for example your Obsidian vault). Plain `.md` files. |
-| Plans | `~/Library/Application Support/Mufka/planlar.json` |
+| Plans | `~/Library/Application Support/Mufka/planlar.json` (Windows: `%APPDATA%\Mufka\planlar.json`) |
 | Backups | **File → Export Plans…** writes a JSON copy; notes are ordinary files, so any backup tool (Time Machine, iCloud Drive, git) works. |
 
 Notes kept by Mufka before 1.4 (in `~/Library/Application Support/Mufka/Notes`) move to `~/Documents/Mufka` by themselves the first time 1.4 starts; a folder you chose yourself stays where it is.
 
 ## Keyboard shortcuts
+
+On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 
 | Shortcut | Does |
 |---|---|
@@ -191,8 +210,13 @@ npm start                # build, then run the built app
 npm test                 # unit tests, then build + the real end-to-end test
 npm run dist             # build the signed universal .dmg into dist/
 npm run dist:public      # the same, ad-hoc signed: for sharing / Releases
+npm run dist:win         # the Windows installer (.exe), on Windows or a Mac
 npm run sign:dev         # sign the dev Electron so notifications work in npm start
 ```
+
+Every push and pull request runs the unit tests and the end-to-end test on
+macOS and on Windows (GitHub Actions); the Windows run also uploads
+screenshots and an installer.
 
 ### Building the app
 
