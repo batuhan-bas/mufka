@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from '../lib/vault.mjs';
 
 const DEFAULT = '/Users/a/Library/Application Support/Mufka/Notlar';
@@ -13,7 +14,7 @@ test('no setting: the default vault', () => {
 
 test('an existing chosen folder is used', () => {
   assert.deepEqual(resolveVaultRoot({ vaultPath: '/Users/a/Obsidian' }, DEFAULT, isDir),
-    { root: '/Users/a/Obsidian', custom: true, missing: null });
+    { root: path.resolve('/Users/a/Obsidian'), custom: true, missing: null }); // a drive letter on Windows
 });
 
 test('a chosen folder that is gone falls back to the default and is reported', () => {
@@ -40,23 +41,25 @@ test('vaultChoiceError refuses the disk root, home itself and folders holding ap
 });
 
 test('default notes folder: Documents/Mufka, moving an old app-data folder once', () => {
-  const userData = '/Users/a/Library/Application Support/Mufka';
-  const documents = '/Users/a/Documents';
-  const docs = '/Users/a/Documents/Mufka';
+  // Built with path.join, as the app does, so this holds on Windows too.
+  const userData = path.join('/Users/a/Library/Application Support/Mufka');
+  const documents = path.join('/Users/a/Documents');
+  const docs = path.join(documents, 'Mufka');
+  const ud = (name) => path.join(userData, name);
   const place = (folders, settings, full = folders) => defaultNotesPlace({
     userData, documents, settings, isDir: (p) => folders.includes(p), hasFiles: (p) => full.includes(p),
   });
   // A new install: Documents/Mufka, nothing to move.
   assert.deepEqual(place([], {}), { root: docs, docs, legacy: null, move: false });
   // Notes in the old folder: move them to Documents.
-  assert.deepEqual(place([`${userData}/Notes`], {}), { root: `${userData}/Notes`, docs, legacy: `${userData}/Notes`, move: true });
-  assert.equal(place([`${userData}/Notlar`, `${userData}/Notes`], {}).legacy, `${userData}/Notlar`);
+  assert.deepEqual(place([ud('Notes')], {}), { root: ud('Notes'), docs, legacy: ud('Notes'), move: true });
+  assert.equal(place([ud('Notlar'), ud('Notes')], {}).legacy, ud('Notlar'));
   // An empty old folder is not worth moving.
-  assert.deepEqual(place([`${userData}/Notes`], {}, []), { root: docs, docs, legacy: null, move: false });
+  assert.deepEqual(place([ud('Notes')], {}, []), { root: docs, docs, legacy: null, move: false });
   // Already moved (a copy across disks leaves the old one): use Documents.
-  assert.deepEqual(place([`${userData}/Notes`, docs], { notesInDocuments: true }), { root: docs, docs, legacy: `${userData}/Notes`, move: false });
+  assert.deepEqual(place([ud('Notes'), docs], { notesInDocuments: true }), { root: docs, docs, legacy: ud('Notes'), move: false });
   // Documents/Mufka already holds other things: never mix, keep the old folder.
-  assert.deepEqual(place([`${userData}/Notes`, docs], {}), { root: `${userData}/Notes`, docs, legacy: `${userData}/Notes`, move: false });
+  assert.deepEqual(place([ud('Notes'), docs], {}), { root: ud('Notes'), docs, legacy: ud('Notes'), move: false });
 });
 
 test('moveNotesFolder renames, refuses to overwrite, copies across disks', async () => {

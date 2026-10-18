@@ -175,8 +175,10 @@ test('unknown files, executable modes, bundle internals and disguised aliases ar
   fs.writeFileSync(path.join(root, 'unknown'), 'file');
   fs.writeFileSync(path.join(root, 'executable.pdf'), 'file'); fs.chmodSync(path.join(root, 'executable.pdf'), 0o755);
   fs.symlinkSync(bundle, path.join(root, 'alias.pdf'));
-  for (const rel of ['unknown', 'executable.pdf', 'Example.app/inside.pdf', 'alias.pdf']) await ctx.attachOpen(rel);
-  assert.deepEqual(opened, []); assert.equal(revealed.length, 4);
+  // Windows has no "executable" mode bit (programs are known by their name there).
+  const rels = ['unknown', ...(process.platform === 'win32' ? [] : ['executable.pdf']), 'Example.app/inside.pdf', 'alias.pdf'];
+  for (const rel of rels) await ctx.attachOpen(rel);
+  assert.deepEqual(opened, []); assert.equal(revealed.length, rels.length);
 });
 test('ordinary PDF opens and OS open failure reaches the caller', async t => {
   const { root, ctx, opened } = fixture(t);

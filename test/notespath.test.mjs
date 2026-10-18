@@ -40,7 +40,7 @@ test('isInside rejects traversal, accepts children', () => {
 });
 
 test('noteFilePath is always directly inside root', () => {
-  const root = '/data/Notlar';
+  const root = path.resolve('/data/Notlar'); // a drive letter on Windows
   const p = noteFilePath(root, '../../escape');
   assert.equal(path.dirname(p), root);
   assert.ok(p.endsWith('.md'));

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { isExternalChange } from '../lib/watch.mjs';
 
 const root = '/v';
@@ -17,7 +18,7 @@ test('dot folders, dot files and our .tmp files are ignored', () => {
 });
 
 test("Mufka's own recent writes are ignored, older ones are not", () => {
-  const own = new Map([['/v/Not.md', now - 200], ['/v/Eski.md', now - 5000]]);
+  const own = new Map([[path.join(root, 'Not.md'), now - 200], [path.join(root, 'Eski.md'), now - 5000]]);
   assert.equal(isExternalChange(root, 'Not.md', own, now, 1500), false);
   assert.equal(isExternalChange(root, 'Eski.md', own, now, 1500), true);
 });
