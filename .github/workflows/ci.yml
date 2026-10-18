@@ -38,13 +38,16 @@ jobs:
       - run: npm ci
       - name: Unit tests
         run: node --test "test/*.test.mjs"
-      - run: npm run build
+      - name: Build
+        id: build
+        run: npm run build
       # The end-to-end test drives the window with timing; a busy runner can
       # miss one step, so it gets three tries.
       - name: End-to-end test
         run: npm run e2e || npm run e2e || npm run e2e
       - name: Screenshots
-        if: always()
+        if: always() && steps.build.outcome == 'success'
+        timeout-minutes: 5
         run: npx electron scripts/screens.cjs screens
       - uses: actions/upload-artifact@v4
         if: always()

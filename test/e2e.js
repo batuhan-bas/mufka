@@ -23,9 +23,6 @@ function makePng(w, h) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-e2e-'));
 app.setPath('userData', tmp);
-// A 24-hour clock in time fields whatever the machine's language (CI runners
-// are en-US, whose fields take AM/PM): the test types times like 1000.
-app.commandLine.appendSwitch('lang', 'en-GB');
 // Documents too: the default notes folder is Documents/Mufka, and a test must
 // never touch the real one.
 app.setPath('documents', path.join(tmp, 'Documents'));
@@ -109,7 +106,11 @@ async function setTime(sel, digits) {
     const r = await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({block:'center'}); const b = e.getBoundingClientRect(); return { x: Math.round(b.left + 9), y: Math.round(b.top + b.height / 2) }; })()`);
     assert(r, `time input not found: ${sel}`);
     await clickAt(r.x, r.y); await sleep(80);
-    for (const ch of digits) { wc.sendInputEvent({ type: 'keyDown', keyCode: ch }); wc.sendInputEvent({ type: 'char', keyCode: ch }); wc.sendInputEvent({ type: 'keyUp', keyCode: ch }); await sleep(90); }
+    // A field with AM/PM (the system's region decides) takes 10:00 as 1000A,
+    // 14:30 as 0230P; odd attempts try that form.
+    const h = Number(digits.slice(0, 2));
+    const keys = attempt % 2 === 0 ? digits : `${String(h % 12 || 12).padStart(2, '0')}${digits.slice(2)}${h < 12 ? 'A' : 'P'}`;
+    for (const ch of keys) { wc.sendInputEvent({ type: 'keyDown', keyCode: ch }); wc.sendInputEvent({ type: 'char', keyCode: ch }); wc.sendInputEvent({ type: 'keyUp', keyCode: ch }); await sleep(90); }
     await sleep(140);
     if ((await js(`document.querySelector(${JSON.stringify(sel)})?.value`)) === want) return;
   }
