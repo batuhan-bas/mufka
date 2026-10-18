@@ -23,6 +23,9 @@ function makePng(w, h) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-e2e-'));
 app.setPath('userData', tmp);
+// A 24-hour clock in time fields whatever the machine's language (CI runners
+// are en-US, whose fields take AM/PM): the test types times like 1000.
+app.commandLine.appendSwitch('lang', 'en-GB');
 // Documents too: the default notes folder is Documents/Mufka, and a test must
 // never touch the real one.
 app.setPath('documents', path.join(tmp, 'Documents'));
