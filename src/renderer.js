@@ -267,6 +267,22 @@ function renderPaneActions() {
 // the notes filter / Ara field, which re-render the sidebar on every keystroke).
 function refreshSidebar() { renderSidebar(); restoreFocus(); }
 
+// A click is a press and a release on the same element. Work that rebuilds the
+// page in between (an editor saving on blur) would replace that element and
+// the click would be lost; a person holds the button for a moment, so such
+// work waits until the button is up and the click has landed.
+let pointerIsDown = false;
+let afterPointer = [];
+document.addEventListener('pointerdown', () => { pointerIsDown = true; }, true);
+function releasePointer() {
+  pointerIsDown = false;
+  const queued = afterPointer; afterPointer = [];
+  setTimeout(() => queued.forEach((fn) => fn()), 0);
+}
+document.addEventListener('pointerup', releasePointer, true);
+document.addEventListener('pointercancel', releasePointer, true);
+function whenPointerUp(fn) { if (pointerIsDown) afterPointer.push(fn); else setTimeout(fn, 0); }
+
 function restoreFocus() {
   if (!state.focus) return;
   const el = document.getElementById(state.focus);
@@ -276,6 +292,8 @@ function restoreFocus() {
     if (el.id === 'block-editor' && state.blockCaretPos != null) {
       const pos = state.blockCaretPos; state.blockCaretPos = null;
       try { el.setSelectionRange(pos, pos); } catch { /* ignore */ }
+    } else if (el.id === 'tree-edit') {
+      el.select(); // the suggested name ("Untitled", "New folder") is replaced by typing
     } else if (typeof el.value === 'string') { const v = el.value; el.value = ''; el.value = v; }
   }
 }
@@ -2601,14 +2619,17 @@ function blockTextarea(scope, b, edit) {
     // The window lost focus (another app, a file dialog): save, keep editing.
     if (!document.hasFocus()) { flushActiveEditor({ keepEditing: true }); return; }
     flushActiveEditor();
-    setTimeout(() => {
+    whenPointerUp(() => {
       if (state.blockEdit) return; // another editor took over
       const a = document.activeElement;
       if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return; // focus moved into another field
       render();
-    }, 0);
+    });
   });
-  state.focus = 'block-editor';
+  // An empty note is shown being edited, but it only takes the focus when
+  // nothing else has it (a menu, a name field): it never pulls it back.
+  const a = document.activeElement;
+  if (!edit.auto || !a || a === document.body || a.id === 'block-editor') state.focus = 'block-editor';
   state.blockCaretPos = caretOffset(text, edit.caret);
   return ta;
 }
@@ -2676,7 +2697,7 @@ function renderBlockEditor(container, scope) {
   const src = getSrcFor(scope);
   const blocks = parseBlocks(src);
   let edit = (state.blockEdit && state.blockEdit.scope === scope) ? state.blockEdit : null;
-  if (!edit && blocks.length === 0) { state.blockEdit = { scope, newAfter: -1, caret: 0 }; edit = state.blockEdit; }
+  if (!edit && blocks.length === 0) { state.blockEdit = { scope, newAfter: -1, caret: 0, auto: true }; edit = state.blockEdit; }
 
   const wrap = elem('div', 'blocks');
   if (edit && edit.newAfter === -1) wrap.append(blockTextarea(scope, null, edit));
