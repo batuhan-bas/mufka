@@ -144,9 +144,11 @@ Drag Mufka from Applications to the Trash. Your notes stay in
 
 1. Download **`Mufka-<version>-Setup.exe`** from the
    [Releases](https://github.com/batuhan-bas/mufka/releases) page.
-2. Run it. Mufka is not signed with a paid Microsoft certificate yet, so
-   Windows SmartScreen says *"Windows protected your PC"*: click **More info**
-   → **Run anyway**. Choose where to install and finish.
+2. Edge may say the file *"isn't commonly downloaded"*: open the download's
+   **⋯** menu → **Keep**. Mufka is not signed with a paid Microsoft certificate
+   yet, so when you run it Windows SmartScreen says *"Windows protected your
+   PC"*: click **More info** → **Run anyway**. Then install "only for me" and
+   finish.
 3. Open **Mufka** from the Start menu or the desktop shortcut.
 
 Everything works as on a Mac, with **Ctrl** where the Mac uses **⌘** (Ctrl+O,
