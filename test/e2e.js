@@ -82,6 +82,14 @@ async function clickAt(x, y) {
   wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
   await sleep(130);
 }
+// A person holds the button for a moment: a page that rebuilds itself between
+// press and release (an editor saving on blur) would lose the click.
+async function humanClickEval(expr, label) {
+  const r = await rectEval(expr); assert(r, `element not found: ${label || expr}`);
+  wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y }); await sleep(80);
+  wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 }); await sleep(150);
+  wc.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 }); await sleep(200);
+}
 async function clickEval(expr, label) { const r = await rectEval(expr); assert(r, `element not found: ${label || expr}`); await clickAt(r.x, r.y); }
 async function clickSel(sel) { await clickEval(`document.querySelector(${JSON.stringify(sel)})`, sel); }
 async function hoverClickEval(expr, label) { const r = await rectEval(expr); assert(r, `element not found: ${label || expr}`); wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y }); await sleep(70); await clickAt(r.x, r.y); }
@@ -1593,6 +1601,33 @@ app.whenReady().then(() => setTimeout(async () => {
       await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Pilav'; return true; })()`);
       await enter();
       assert(await waitFor2(() => { const f = findNote('Pilav.md'); return f && fs.readFileSync(f, 'utf8') === '# Pilav\n\nMine'; }, 3000), 'the changed template was not used');
+    });
+
+    // 60. Found by hand on Windows: right after making a note (empty, so it
+    //     opens being edited), clicking the sidebar the way a person does
+    //     (holding the button for a moment) must still work — the row's ⋯ menu
+    //     opens and a new folder can be named — and do so again a second time.
+    await step(60, 'sidebar clicks work while a new empty note is being edited', async () => {
+      await clickSel('#mode-notes');
+      const row = (name) => `[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === ${JSON.stringify(name)})`;
+      for (const round of [1, 2]) {
+        await humanClickEval(`document.querySelector('.side-notes .side-btn[aria-label="New note"]')`, 'New note');
+        assert(await waitFor('!!document.getElementById("tree-edit")', 2000), `round ${round}: no name field for the note`);
+        await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Bos ${round}'; return true; })()`);
+        await enter();
+        assert(await waitFor('!!document.getElementById("block-editor")', 3000), `round ${round}: the new note is not being edited`);
+        // the ⋯ of the new note's row
+        await hoverClickEval(`${row(`Bos ${round}`)}`, 'row');
+        await humanClickEval(`${row(`Bos ${round}`)}.querySelector('.menu-btn')`, 'row menu');
+        assert(await waitFor('!!document.querySelector(".row-menu .menu-item")', 2000), `round ${round}: the ⋯ menu did not open while editing`);
+        await press('Escape'); await sleep(200);
+        // a new folder, named and kept
+        await humanClickEval(`document.querySelector('.side-notes .side-btn[aria-label="New folder"]')`, 'New folder');
+        assert(await waitFor('!!document.getElementById("tree-edit")', 2000), `round ${round}: no name field for the folder`);
+        assert(await js('document.activeElement?.id') === 'tree-edit', `round ${round}: the folder name field lost focus to ${await js('document.activeElement?.id || document.activeElement?.className')}`);
+        await typeText(`Klasor ${round}`); await enter();
+        assert(await waitFor(`!!(${row(`Klasor ${round}`)})`, 3000), `round ${round}: folder not made; rows ${await js(`[...document.querySelectorAll('.tree-row')].map(r => r.dataset.rel || r.className).join('|')`)}; edit ${await js('document.getElementById("tree-edit")?.value')}; active ${await js('document.activeElement?.id || document.activeElement?.className')}`);
+      }
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
