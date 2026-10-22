@@ -116,21 +116,19 @@ yet? Home offers to open the Planner.
    [Releases](https://github.com/batuhan-bas/mufka/releases) page (or build it
    yourself, see [For the developer](#for-the-developer)).
 2. Open it and drag **Mufka** onto **Applications**.
-3. Open **Mufka** from Applications. The first time, macOS says it cannot check
-   the app for malicious software — Mufka is not distributed through the App
-   Store. To allow it once:
-   - open **System Settings → Privacy & Security**, scroll down to the message
-     about Mufka and click **Open Anyway**, then confirm; or
-   - on macOS 14 and earlier you can also **right-click Mufka → Open → Open**.
+3. Open **Mufka** from Applications. The first time, macOS asks whether to
+   open an app downloaded from the internet — click **Open**. Mufka is signed
+   by Calexis Labs and notarized by Apple.
 4. When Mufka asks to send notifications, click **Allow** — that is how plan
    reminders reach you. (If you skip it, reminders appear inside the window.)
 
 That's it: Mufka opens on **Home**. Updates are installed the same way —
 replace the app in Applications; your notes and plans stay.
 
-> **If macOS still refuses to open it**, Terminal can clear the "downloaded
-> from the internet" flag:
-> `xattr -dr com.apple.quarantine /Applications/Mufka.app`
+> **Updating from 1.5.1 or older?** Those were not notarized. After the first
+> signed update macOS may ask once more for notifications and for Mufka's
+> keychain item ("Mufka Safe Storage"): allow both (**Always Allow** for the
+> keychain) so your calendar and Wispr sign-ins keep working.
 
 ### Uninstall
 
@@ -229,15 +227,18 @@ npm run dist
 This writes **`dist/Mufka-1.0.0-universal.dmg`** (one app for Apple silicon and
 Intel). The app is signed with the first Developer ID or Apple Development
 identity in your keychain (`MUFKA_SIGN_IDENTITY` overrides it; without one it
-is ad-hoc signed), which is what lets macOS show notifications. It is **not
-notarized**, so the person installing it needs the one-time **Open Anyway**
-step above. Notarizing needs a paid Apple Developer account; with one, add
-`notarize` to the `mac` build settings and the warning goes away.
+is ad-hoc signed), which is what lets macOS show notifications. It is not
+notarized, so whoever opens it needs **System Settings → Privacy & Security →
+Open Anyway** once.
 
-For a copy you share or upload to Releases, use **`npm run dist:public`**: it
-signs ad-hoc, so no certificate (and the name and email in it) ends up inside
-the app. macOS may then ask for notification permission again after each
-update.
+**`npm run dist:public`** is the same, signed ad-hoc: no certificate (and the
+name and email in it) ends up inside the app.
+
+**`npm run dist:release`** builds the copy on Releases: signed with Calexis
+Labs' Developer ID, hardened runtime, and notarized by Apple
+(`electron-builder.release.cjs`). It needs that identity in the keychain and an
+App Store Connect API key in `APPLE_API_KEY` (path to the `.p8`),
+`APPLE_API_KEY_ID` and `APPLE_API_ISSUER`.
 
 **Google Calendar** needs an OAuth client of type *Desktop app* (Google Cloud
 Console → Google Auth Platform → Clients). Its id and secret are not in this
@@ -273,7 +274,7 @@ end-to-end test) before opening a pull request.
 
 ## License
 
-[MIT](LICENSE) © 2026 Batuhan Baş.
+[MIT](LICENSE) © 2026 Calexis Labs.
 
 Mufka includes open-source components under their own licenses (Electron,
 mdast/micromark, Lucide icons); see
