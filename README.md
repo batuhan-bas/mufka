@@ -7,8 +7,10 @@
 **Your week and your notes, in one calm app for Mac and Windows.**
 
 A week planner with times, repeating plans and your Outlook, Teams and Google
-calendars, and an Obsidian‑like Markdown notes vault with links, backlinks and
-a graph — local and private.
+calendars, task boards for your projects, and an Obsidian‑like Markdown notes
+vault with links, backlinks and a graph — local and private.
+
+Made by [Calexis Labs](https://github.com/Calexis-Labs).
 
 **[mufka.app](https://mufka.app)** · [Download](https://github.com/batuhan-bas/mufka/releases/latest) · [Privacy](https://mufka.app/privacy) · [Support](https://mufka.app/support)
 
@@ -30,7 +32,7 @@ a graph — local and private.
 
 ## What Mufka does
 
-Mufka has two modes, switched at the top left (**Notes | Planner**, or ⌃Tab).
+Mufka has three modes, switched at the top left (**Notes | Planner | Tasks**, or ⌃Tab).
 
 ### Planner — the week at a glance
 
@@ -98,6 +100,30 @@ yet? Home offers to open the Planner.
 
 <p align="center"><img src="docs/screenshots/templates.png" width="85%" alt="New note from a template: daily note, meeting notes, weekly review, project, book notes, recipe, habit tracker, budget, travel plan"></p>
 
+### Tasks — a board for each project
+
+- **Columns** To do · In progress · Test · Done on every new board. They keep
+  their names; remove one you do not need and **Add column** puts it back.
+  Columns of your own go before Done and can be renamed (double-click). Drag a
+  heading or use its ⋯ to reorder.
+- **Done** is where tasks are finished: they get a green tick and are struck
+  through (and checked in the file).
+- **Tasks** have a type (**Feature**, **Bug**, **Chore**), a priority
+  (**P1–P3**), a due date (red once it has passed), tags, a link (a GitHub
+  issue or pull request reads as **#12**) and a description in Markdown whose
+  `- [ ]` sub-tasks count up on the task (**2/5**).
+- **New task** at the top, or **Add a task** under a column, asks for all of
+  that in one dialog. Click a task to edit it in a panel.
+- **Move** by dragging, or on a focused task ⌥←/⌥→ (column) and ⌥↑/⌥↓; Delete
+  removes it, ⌘Z undoes. Filter by text, type, priority or tag.
+- **Each board is a Markdown note** in the `Tasks` folder, in the format of
+  Obsidian's **Kanban** plugin: open it in Obsidian and it is the same board;
+  change it there and Mufka follows.
+
+<p align="center"><img src="docs/screenshots/tasks.png" width="85%" alt="A task board: To do, In progress, Test and Done with tasks marked Feature, Bug and Chore, priorities, due dates and sub-task counts"></p>
+
+<p align="center"><img src="docs/screenshots/task-dialog.png" width="70%" alt="New task: title, column, type, priority, due date, tags, link and description in one dialog"></p>
+
 ### Graph, search and commands
 
 - **Graph** shows how notes connect; hover to highlight, click to open, or show
@@ -118,7 +144,7 @@ yet? Home offers to open the Planner.
 2. Open it and drag **Mufka** onto **Applications**.
 3. Open **Mufka** from Applications. The first time, macOS asks whether to
    open an app downloaded from the internet — click **Open**. Mufka is signed
-   by Calexis Labs and notarized by Apple.
+   by [Calexis Labs](https://github.com/Calexis-Labs) and notarized by Apple.
 4. When Mufka asks to send notifications, click **Allow** — that is how plan
    reminders reach you. (If you skip it, reminders appear inside the window.)
 
@@ -180,7 +206,7 @@ On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 | Shortcut | Does |
 |---|---|
 | ⌘T | Home (today) |
-| ⌘1 · ⌃Tab | Planner · switch Notes / Planner |
+| ⌘1 · ⌘3 · ⌃Tab | Planner · Tasks · switch Notes / Planner / Tasks |
 | ⇧⌘P | New plan |
 | ⌥⌘← / ⌥⌘→ | Previous / next week |
 | ⌘N | New note |
@@ -274,7 +300,7 @@ end-to-end test) before opening a pull request.
 
 ## License
 
-[MIT](LICENSE) © 2026 Calexis Labs.
+[MIT](LICENSE) © 2026 [Calexis Labs](https://github.com/Calexis-Labs).
 
 Mufka includes open-source components under their own licenses (Electron,
 mdast/micromark, Lucide icons); see

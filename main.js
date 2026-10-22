@@ -1268,6 +1268,7 @@ function buildMenu() {
       submenu: [
         { label: 'Planner', click: () => sendMenu('tab:takvim') },
         { label: 'Notes', click: () => sendMenu('tab:notlar') },
+        { label: 'Tasks', click: () => sendMenu('tasks') },
         { label: 'Search', click: () => sendMenu('tab:ara') },
         { type: 'separator' },
         { label: 'Toggle Sidebar', click: () => sendMenu('toggle-sidebar') },

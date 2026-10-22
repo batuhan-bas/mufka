@@ -22,6 +22,8 @@ import { attachmentsDirFor } from '../lib/layout.mjs';
 import { parseBlocks, blockText, replaceBlockText, insertBlockAfter, addBlock } from '../lib/blocks.mjs';
 import { createGraphView } from './graph-view.js';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
+import { renderTasks, tasksEditing, tasksAnnounce } from './tasks.js';
+import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs';
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
@@ -87,7 +89,9 @@ const state = {
   araQuery: '',
   editPlanId: null,       // plan being edited inline on the day page
   menu: null,             // open row menu: { anchorKey, buildItems }
-  contentView: 'day',     // what the right pane shows: 'day' | 'note' | 'graph' | 'planner'
+  contentView: 'day',     // what the right pane shows: 'day' | 'note' | 'graph' | 'planner' | 'tasks'
+  board: null,            // the open task board: { rel, content } (src/tasks.js, lib/kanban.mjs)
+  boardUndo: [],          // earlier texts of boards, for ⌘Z: [{ rel, content }]
   weekDate: new Date(),   // any day of the week the Planner shows
   sidebarCollapsed: false,
   undo: [],
@@ -420,6 +424,7 @@ function renderSidebar() {
   else {
     renderPlaces();
     renderBookmarks();
+    renderBoardsSection();
     renderNotesSection();
   }
   sideEl.scrollTop = scroll;
@@ -503,8 +508,10 @@ function renderContent() {
   contentEl.replaceChildren();
   contentEl.classList.toggle('is-graph', state.contentView === 'graph');
   contentEl.classList.toggle('is-planner', state.contentView === 'planner');
+  contentEl.classList.toggle('is-tasks', state.contentView === 'tasks');
   if (state.contentView === 'graph') contentEl.append(graph().el);
   else if (state.contentView === 'planner') renderPlanner(contentEl, state.weekDate, plannerApi);
+  else if (state.contentView === 'tasks') renderTasks(contentEl, tasksApi());
   else if (state.contentView === 'note' && state.openNote) renderNotePane();
   else renderDayPage();
 }
@@ -539,6 +546,7 @@ let navigating = false; // moving through history must not record a new visit
 function currentLocation() {
   if (state.contentView === 'graph') return { view: 'graph' };
   if (state.contentView === 'planner') return { view: 'planner', key: dayKey(startOfWeek(state.weekDate)) };
+  if (state.contentView === 'tasks') return { view: 'tasks', rel: state.board ? state.board.rel : null };
   if (state.contentView === 'note' && state.openNote) return { view: 'note', rel: state.openNote };
   return { view: 'day', key: dayKey(state.selectedDate) };
 }
@@ -552,7 +560,7 @@ function updateNavButtons() {
   document.getElementById('nav-back').disabled = !nav.canBack;
   document.getElementById('nav-forward').disabled = !nav.canForward;
 }
-const navValid = (loc) => loc.view !== 'note' || state.notesFlat.some((n) => n.rel === loc.rel);
+const navValid = (loc) => (loc.view !== 'note' && loc.view !== 'tasks') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel);
 async function goNav(dir) {
   const loc = dir < 0 ? nav.back(currentLocation(), navValid) : nav.forward(currentLocation(), navValid);
   updateNavButtons();
@@ -562,6 +570,7 @@ async function goNav(dir) {
     if (loc.view === 'note') await openNote(loc.rel, 'oku', { keepTab: true });
     else if (loc.view === 'graph') openGraph();
     else if (loc.view === 'planner') openPlanner(parseDayKey(loc.key));
+    else if (loc.view === 'tasks') await openTasks(loc.rel);
     else await selectDay(parseDayKey(loc.key), { keepTab: true });
   } finally { navigating = false; updateNavButtons(); }
 }
@@ -627,9 +636,15 @@ function firstNote(node) {
   for (const f of node.folders) { const r = firstNote(f); if (r) return r; }
   return null;
 }
-function toggleMode() { if (state.contentView === 'planner') openNotesMode(); else openPlanner(new Date()); }
+// ⌃Tab goes round the modes: Notes → Planner → Tasks.
+function toggleMode() {
+  if (state.contentView === 'planner') openTasks();
+  else if (state.contentView === 'tasks') openNotesMode();
+  else openPlanner(new Date());
+}
 document.getElementById('mode-planner').addEventListener('click', () => { if (state.contentView !== 'planner') openPlanner(new Date()); });
-document.getElementById('mode-notes').addEventListener('click', () => { if (state.contentView === 'planner') openNotesMode(); });
+document.getElementById('mode-notes').addEventListener('click', () => { if (state.contentView === 'planner' || state.contentView === 'tasks') openNotesMode(); });
+document.getElementById('mode-tasks').addEventListener('click', () => { if (state.contentView !== 'tasks') openTasks(); });
 
 function isThisWeekShown() { return weekKey(state.weekDate) === weekKey(new Date()); }
 function weekPlans(wk) {
@@ -846,15 +861,207 @@ const plannerApi = {
   refresh: () => render(),
 };
 
+// --- Tasks (src/tasks.js): boards of tasks, each a Markdown note ---------
+// A board is a note in the format of Obsidian's Kanban plugin (lib/kanban.mjs);
+// new ones go to the Tasks folder. Every change writes the whole note.
+
+const BOARD_KEY = 'mufka-board';
+const BOARD_FOLDER = 'Tasks';
+function boardList() {
+  return state.vaultNotes.filter((n) => isBoard(n.content))
+    .map((n) => ({ rel: n.rel, title: noteTitleOf(n.rel), content: n.content }))
+    .sort((a, b) => a.title.localeCompare(b.title));
+}
+async function openTasks(rel) {
+  if (rel === undefined) {
+    const boards = boardList();
+    let last = null;
+    try { last = localStorage.getItem(BOARD_KEY); } catch { /* ignore */ }
+    rel = (boards.find((b) => b.rel === last) || boards[0] || {}).rel || null;
+  }
+  let content = null;
+  if (rel) {
+    const res = await notesApi.read(rel);
+    if (res && !res.error) content = res.content; else rel = null;
+  }
+  navVisit({ view: 'tasks', rel });
+  state.board = rel ? { rel, content } : null;
+  state.contentView = 'tasks';
+  state.menu = null;
+  if (rel) { try { localStorage.setItem(BOARD_KEY, rel); } catch { /* ignore */ } }
+  render();
+}
+// The board changed on disk (Obsidian, a sync): show it, unless it is our own write.
+const ownBoardWrites = new Set();
+async function reloadBoard() {
+  if (!state.board) return;
+  if (!state.notesFlat.some((n) => n.rel === state.board.rel)) { state.board = null; return; }
+  const res = await notesApi.read(state.board.rel);
+  if (!res || res.error || res.content === state.board.content || ownBoardWrites.has(res.content)) return;
+  state.board.content = res.content;
+}
+let boardSaveChain = Promise.resolve();
+function saveBoard(board, message) {
+  if (!state.board) return;
+  const text = serializeBoard(board);
+  const { rel } = state.board;
+  if (text !== state.board.content) {
+    state.boardUndo.push({ rel, content: state.board.content });
+    if (state.boardUndo.length > UNDO_LIMIT) state.boardUndo.shift();
+    state.board.content = text;
+    const vn = state.vaultNotes.find((n) => n.rel === rel);
+    if (vn) vn.content = text;
+    ownBoardWrites.add(text);
+    boardSaveChain = boardSaveChain.then(() => notesApi.write(rel, text))
+      .catch((e) => { console.error('board save failed', e); showToast('Could not save the board'); })
+      .finally(() => setTimeout(() => ownBoardWrites.delete(text), 4000));
+  }
+  render();
+  if (message) tasksAnnounce(message);
+}
+function undoBoard() {
+  const last = state.boardUndo.pop();
+  if (!last) return;
+  if (!state.board || state.board.rel !== last.rel) { openTasks(last.rel).then(() => { state.boardUndo.push(last); undoBoard(); }); return; }
+  state.board.content = last.content;
+  const vn = state.vaultNotes.find((n) => n.rel === last.rel);
+  if (vn) vn.content = last.content;
+  ownBoardWrites.add(last.content);
+  boardSaveChain = boardSaveChain.then(() => notesApi.write(last.rel, last.content)).catch(() => {});
+  render();
+  tasksAnnounce('Undone');
+}
+// A small dialog asking for a name, or a yes/no question (no `value`).
+function askDialog({ heading, text, value, okLabel = 'Save', danger = false }, onOk) {
+  const layer = elem('div', 'palette-layer');
+  const box = elem('div', 'palette plan-dialog');
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', heading);
+  box.append(elem('div', 'plan-dialog-title', heading));
+  if (text) box.append(elem('p', 'ask-text', text));
+  let input = null;
+  if (value !== undefined) {
+    input = document.createElement('input');
+    input.className = 'ask-input'; input.value = value; input.setAttribute('aria-label', heading);
+    box.append(input);
+  }
+  const restore = document.activeElement;
+  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
+  const ok = () => {
+    if (input && !input.value.trim()) { input.focus(); return; }
+    close(); onOk(input ? input.value.trim() : true);
+  };
+  const actions = elem('div', 'plan-dialog-actions');
+  const cancel = elem('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
+  const yes = elem('button', danger ? 'btn danger' : 'btn primary', okLabel); yes.type = 'button'; yes.addEventListener('click', ok);
+  actions.append(cancel, yes);
+  box.append(actions);
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); ok(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  });
+  layer.append(box);
+  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
+  document.body.append(layer);
+  (input || yes).focus();
+  if (input) input.select();
+}
+function newTaskBoard() {
+  askDialog({ heading: 'New board', text: `A board for one project, saved as a note in ${BOARD_FOLDER}/.`, value: '', okLabel: 'Create' }, async (name) => {
+    const res = await notesApi.create(BOARD_FOLDER, name);
+    if (!res || !res.rel) { showToast('Could not create the board'); return; }
+    const text = serializeBoard(newBoard());
+    await notesApi.write(res.rel, text);
+    await refreshTree();
+    await rebuildBacklinks();
+    await openTasks(res.rel);
+  });
+}
+function boardMenuItems() {
+  const b = state.board;
+  return [
+    { label: 'New board…', fn: () => { closeMenu(); newTaskBoard(); } },
+    { label: 'Rename board…', fn: () => {
+      closeMenu();
+      askDialog({ heading: 'Rename board', value: noteTitleOf(b.rel), okLabel: 'Rename' }, async (name) => {
+        const res = await notesApi.rename(b.rel, name);
+        if (!res || res.error) { showToast('Could not rename the board'); return; }
+        await refreshTree(); await rebuildBacklinks();
+        await openTasks(res.rel);
+      });
+    } },
+    { label: 'Open as Markdown', fn: () => { closeMenu(); openNote(b.rel, 'oku', { keepTab: true, asText: true }); } },
+    { label: 'Delete board…', fn: () => {
+      closeMenu();
+      askDialog({ heading: `Delete ${noteTitleOf(b.rel)}?`, text: 'The board and its tasks go to the Trash.', okLabel: 'Delete', danger: true }, async () => {
+        await notesApi.remove(b.rel);
+        try { localStorage.removeItem(BOARD_KEY); } catch { /* ignore */ }
+        state.board = null;
+        await refreshTree(); await rebuildBacklinks();
+        await openTasks();
+      });
+    } },
+  ];
+}
+function tasksApi() {
+  const b = state.board;
+  return {
+    rel: b ? b.rel : null,
+    title: b ? noteTitleOf(b.rel) : '',
+    board: b ? parseBoard(b.content) : null,
+    save: saveBoard,
+    refresh: () => render(),
+    newBoard: newTaskBoard,
+    boardMenu: boardMenuItems,
+    menu: (anchor, build) => openMenu(anchor, build),
+    closeMenu,
+    openExternal: (url) => notesApi.openExternal(url),
+    openWiki: (target) => openWiki(target),
+  };
+}
+// The sidebar's Tasks section: one row per board.
+function renderBoardsSection() {
+  const body = sidebarSection('tasks', 'Tasks', [
+    iconAction('plus', 'New board', () => newTaskBoard(), 'New task board'),
+  ], 'kanban');
+  if (!sectionOpen('tasks')) return;
+  const boards = boardList();
+  if (!boards.length) {
+    const empty = elem('div', 'side-empty');
+    empty.append(document.createTextNode('No boards yet. '), smallButton('New board', null, () => newTaskBoard()));
+    body.append(empty);
+    return;
+  }
+  for (const b of boards) {
+    const on = state.contentView === 'tasks' && state.board && state.board.rel === b.rel;
+    const row = elem('button', `board-row${on ? ' selected' : ''}`);
+    row.type = 'button';
+    row.title = b.rel;
+    row.append(icon('kanban', { size: 15 }), elem('span', 'board-name', b.title));
+    const board = parseBoard(b.content);
+    const open = board.columns.filter((c) => !c.complete).reduce((n, c) => n + c.cards.length, 0);
+    if (open) row.append(elem('span', 'place-count', String(open)));
+    if (on) row.setAttribute('aria-current', 'page');
+    row.addEventListener('click', () => openTasks(b.rel));
+    body.append(row);
+  }
+}
+
 function renderPaneTitle() {
   const planner = state.contentView === 'planner';
+  const tasks = state.contentView === 'tasks';
   document.getElementById('mode-planner').setAttribute('aria-pressed', String(planner));
-  document.getElementById('mode-notes').setAttribute('aria-pressed', String(!planner));
+  document.getElementById('mode-tasks').setAttribute('aria-pressed', String(tasks));
+  document.getElementById('mode-notes').setAttribute('aria-pressed', String(!planner && !tasks));
   const el = document.getElementById('pane-title');
   el.replaceChildren();
   let title = 'Mufka';
   if (state.contentView === 'graph') { title = 'Graph'; el.append(elem('span', 'pt-main', 'Graph')); }
   else if (state.contentView === 'planner') { title = formatWeekRange(state.weekDate); el.append(elem('span', 'pt-main', title)); }
+  else if (tasks) {
+    title = state.board ? noteTitleOf(state.board.rel) : 'Tasks';
+    if (state.board) el.append(elem('span', 'pt-path', 'Tasks / '));
+    el.append(elem('span', 'pt-main', title));
+  }
   else if (state.contentView === 'note' && state.openNote) {
     title = noteTitleOf(state.openNote);
     const folder = folderOf(state.openNote);
@@ -916,7 +1123,7 @@ document.getElementById('foot-keys').addEventListener('click', () => showShortcu
 
 // Keyboard shortcuts cheat sheet (⌘/, Help menu, sidebar footer).
 const SHORTCUTS = [
-  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Search notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌃Tab', 'Switch Notes / Planner'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward']]],
+  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Search notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌃Tab', 'Switch Notes / Planner / Tasks'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward']]],
   ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo']]],
   ['Window', [['⌘\\', 'Show / hide sidebar'], ['⇧⌘\\', 'Show / hide details (outline, links, tags)'], ['⌘/', 'This list'], ['⌘,', 'Settings']]],
 ];
@@ -1251,6 +1458,9 @@ function commandList() {
     { label: 'Create new folder', run: newFolder },
     { label: 'Open the week planner', hint: '⌘1', run: () => openPlanner(new Date()) },
     { label: 'New plan', hint: '⇧⌘P', run: () => plannerApi.newPlan(new Date()) },
+    { label: 'Open tasks', hint: '⌘3', run: () => openTasks() },
+    { label: 'New task board', run: () => newTaskBoard() },
+    ...boardList().map((b) => ({ label: `Open board: ${b.title}`, run: () => openTasks(b.rel) })),
     { label: 'Open graph view', hint: '⌘G', run: () => openGraph() },
     { label: 'Open local graph', hint: '⇧⌘G', when: noteOpen, run: () => openGraph({ local: true }) },
     { label: 'Open random note', run: openRandomNote },
@@ -2424,8 +2634,10 @@ async function openOrCreateFromSearch() {
 }
 
 async function openNote(rel, mode, opts = {}) {
-  navVisit({ view: 'note', rel });
   const res = await notesApi.read(rel);
+  // A task board opens as a board ("Open as Markdown" in its menu shows the text).
+  if (!opts.asText && res && !res.error && isBoard(res.content)) { await openTasks(rel); return; }
+  navVisit({ view: 'note', rel });
   state.openNote = rel;
   state.noteContent = res && !res.error ? res.content : '';
   state.noteCache.set(rel, state.noteContent);
@@ -3395,6 +3607,7 @@ if (plansApi.onMenu) {
     else if (action === 'new-note') newNote();
     else if (action === 'tab:takvim') setTab('takvim');
     else if (action === 'tab:notlar') setTab('notlar');
+    else if (action === 'tasks') openTasks();
     else if (action === 'tab:ara') setTab('ara');
     else if (action === 'toggle-sidebar') toggleSidebar();
     else if (action === 'unused-attachments') showUnusedAttachments();
@@ -3426,6 +3639,7 @@ if (notesApi.onChanged) {
     // since the vault is watched (another app saving, a sync).
     if (isEditing()) return;
     if (state.contentView === 'graph') graph().show({ center: state.openNote });
+    if (state.contentView === 'tasks' && state.board) await reloadBoard();
     // Reload the open note if it changed on disk and nothing is being edited.
     if (state.openNote && state.noteView === 'blocks') {
       const res = await notesApi.read(state.openNote);
@@ -3440,7 +3654,7 @@ if (notesApi.onChanged) {
 // An editor (a block, the source textarea, or a tree/plan inline field) is open.
 function isEditing() {
   return !!(state.blockEdit || document.getElementById('block-editor') || document.getElementById('note-editor')
-    || document.getElementById('tree-edit') || state.editPlanId);
+    || document.getElementById('tree-edit') || state.editPlanId || (state.contentView === 'tasks' && tasksEditing()));
 }
 
 function isTextTarget(t) {
@@ -3463,12 +3677,15 @@ document.addEventListener('keydown', (e) => {
     if (editScope) { e.preventDefault(); if (e.shiftKey) histRedo(editScope); else histUndo(editScope); return; }
     if (e.shiftKey) return;
     if (isTextTarget(e.target)) return; // native text undo
-    e.preventDefault(); undoDelete(); return;
+    e.preventDefault();
+    if (state.contentView === 'tasks') undoBoard(); else undoDelete();
+    return;
   }
   if (e.code === 'Backslash' && e.shiftKey) { e.preventDefault(); toggleRightbar(); return; }
   if (k === '\\') { e.preventDefault(); toggleSidebar(); return; }
   if (k === '1') { e.preventDefault(); setTab('takvim'); return; }
   if (k === '2') { e.preventDefault(); setTab('notlar'); return; }
+  if (k === '3') { e.preventDefault(); openTasks(); return; }
   if (k === 'f') { e.preventDefault(); setTab('ara'); return; }
   if (k === 't' && e.shiftKey) { e.preventDefault(); if (state.contentView === 'note' && state.openNote) openTemplatePicker(); return; }
   if (k === 't') { e.preventDefault(); goToday(); return; }
