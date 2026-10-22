@@ -1272,7 +1272,9 @@ app.whenReady().then(() => setTimeout(async () => {
       for (let dy = 8; dy <= 48; dy += 8) { wc.sendInputEvent({ type: 'mouseMove', x: g.x, y: g.y + dy, button: 'left' }); await sleep(20); }
       wc.sendInputEvent({ type: 'mouseUp', x: g.x, y: g.y + 48, button: 'left', clickCount: 1 });
       assert(await waitFor2(() => byTitle('Eski gorev').endTime === '12:00', 3000), `resize did not save: ${byTitle('Eski gorev').endTime}`);
-      // ⌃Tab back to notes and again to the planner
+      // ⌃Tab goes round: Planner → Tasks → Notes → Planner
+      await press('Tab', ['control']);
+      assert(await waitFor('!!document.querySelector(".tasks") && document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true"', 2000), '⌃Tab did not switch to tasks');
       await press('Tab', ['control']);
       assert(await waitFor('!document.querySelector(".planner") && document.getElementById("mode-notes").getAttribute("aria-pressed") === "true"', 2000), '⌃Tab did not switch to notes');
       await press('Tab', ['control']);
@@ -1628,6 +1630,112 @@ app.whenReady().then(() => setTimeout(async () => {
         await typeText(`Klasor ${round}`); await enter();
         assert(await waitFor(`!!(${row(`Klasor ${round}`)})`, 3000), `round ${round}: folder not made; rows ${await js(`[...document.querySelectorAll('.tree-row')].map(r => r.dataset.rel || r.className).join('|')`)}; edit ${await js('document.getElementById("tree-edit")?.value')}; active ${await js('document.activeElement?.id || document.activeElement?.className')}`);
       }
+    });
+
+    // 61–64. Tasks: boards of cards, each board a note in the format of
+    //     Obsidian's Kanban plugin (lib/kanban.mjs, src/tasks.js).
+    const tvault = await js('window.notes.vaultInfo().then(v => v.path)');
+    const boardFile = path.join(tvault, 'Tasks', 'Sprint.md');
+    const boardText = () => { try { return fs.readFileSync(boardFile, 'utf8'); } catch { return ''; } };
+    const colCards = (i) => `[...document.querySelectorAll('.tk-col')[${i}].querySelectorAll('.tk-card-title')].map(n => n.textContent)`;
+    await step(61, 'a new task board is a Kanban note with To do, In progress, Test and Done', async () => {
+      await clickSel('#mode-tasks');
+      assert(await waitFor('!!document.querySelector(".tasks")', 2000), 'Tasks did not open');
+      await clickSel('.side-tasks .side-btn[aria-label="New board"]');
+      assert(await waitFor('!!document.querySelector(".ask-input")', 2000), 'no name field for the board');
+      await typeText('Sprint'); await enter();
+      assert(await waitFor2(() => boardText().includes('kanban-plugin: board'), 3000), `board file not written: ${fs.existsSync(path.join(tvault, 'Tasks')) ? fs.readdirSync(path.join(tvault, 'Tasks')) : 'no Tasks folder'}`);
+      assert(/## To do[\s\S]*## In progress[\s\S]*## Test[\s\S]*## Done\n\n\*\*Complete\*\*/.test(boardText()), `default columns wrong:\n${boardText()}`);
+      assert(await waitFor('[...document.querySelectorAll(".tk-col-title")].map(n => n.textContent).join("|") === "To do|In progress|Test|Done"', 3000), 'board columns not shown');
+      assert(await waitFor('document.querySelector(".board-row.selected")?.textContent.includes("Sprint")', 2000), 'board not in the sidebar');
+    });
+    await step(62, 'tasks are added with their type, priority and due date', async () => {
+      // "Add a task" under a column: the same dialog, that column chosen.
+      const addIn = async (title, setup = '') => {
+        await clickSel('.tk-col .tk-add');
+        assert(await waitFor('!!document.querySelector(".tk-modal") && document.activeElement?.classList.contains("tk-panel-title")', 2000), 'task dialog did not open with the title focused');
+        assert(await js('document.querySelector(".tk-modal select").value') === '0', 'the column was not chosen');
+        await typeText(title);
+        if (setup) await js(`(() => { const m = document.querySelector('.tk-modal'); ${setup}; return true; })()`);
+        await enter();
+        assert(await waitFor('!document.querySelector(".tk-modal")', 2000), 'dialog did not close');
+      };
+      await addIn('Fix login', "const sel = m.querySelectorAll('select'); sel[1].value = 'bug'; sel[2].value = 'P1'; m.querySelector('input[type=date]').value = '2030-01-15'");
+      assert(await waitFor2(() => boardText().includes('- [ ] Fix login #bug !P1 @{2030-01-15}'), 3000), `task not saved:\n${boardText()}`);
+      await addIn('Write docs');
+      assert(await waitFor2(() => boardText().includes('- [ ] Write docs'), 3000), 'second task not saved');
+      assert(await waitFor(`${colCards(0)}.join("|") === "Fix login|Write docs"`, 2000), `tasks not shown: ${await js(colCards(0))}`);
+      assert(await js('!!document.querySelector(".tk-card .tk-type.bug") && document.querySelector(".tk-card .tk-prio")?.textContent === "P1"'), 'type or priority not shown on the card');
+      // "New task": every field in one dialog.
+      await clickSel('.tk-new');
+      assert(await waitFor('!!document.querySelector(".tk-modal") && document.activeElement?.classList.contains("tk-panel-title")', 2000), 'New task dialog did not open with the title focused');
+      await typeText('Release notes');
+      await js(`(() => { const m = document.querySelector('.tk-modal'); const sel = m.querySelectorAll('select'); sel[0].value = '2'; sel[1].value = 'chore'; sel[2].value = 'P3'; m.querySelector('input[type=date]').value = '2030-02-01'; return true; })()`);
+      await clickEval(`[...document.querySelectorAll('.tk-modal .btn')].find(b => b.textContent === 'Add task')`, 'Add task');
+      assert(await waitFor2(() => /## Test\n\n- \[ \] Release notes #chore !P3 @\{2030-02-01\}/.test(boardText()), 3000), `new task not saved in Test:\n${boardText()}`);
+      assert(await waitFor('!document.querySelector(".tk-modal")', 2000), 'dialog did not close');
+    });
+    await step(63, 'tasks move by keyboard and by dragging; ⌘Z undoes', async () => {
+      await js('document.querySelector(".tk-card").focus(); true');
+      await press('Right', ['alt']);
+      assert(await waitFor(`${colCards(1)}.join("|") === "Fix login"`, 2000), 'card did not move to In progress');
+      assert(await waitFor2(() => /## In progress\n\n- \[ \] Fix login/.test(boardText()), 3000), `move not saved:\n${boardText()}`);
+      await js('document.activeElement.blur(); true');
+      await cmdZ();
+      assert(await waitFor(`${colCards(0)}[0] === "Fix login"`, 2000), 'undo did not bring the card back');
+      assert(await waitFor2(() => /## To do\n\n- \[ \] Fix login/.test(boardText()), 3000), 'undo not saved');
+      // Drag "Write docs" into Done: it becomes checked.
+      await js(`(() => {
+        const card = [...document.querySelectorAll('.tk-card')].find(c => c.textContent.includes('Write docs'));
+        const list = document.querySelectorAll('.tk-cards')[3];
+        const dt = new DataTransfer();
+        card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+        const r = list.getBoundingClientRect();
+        const at = { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + r.width / 2, clientY: r.bottom - 4 };
+        list.dispatchEvent(new DragEvent('dragover', at));
+        list.dispatchEvent(new DragEvent('drop', at));
+        card.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+        return true;
+      })()`);
+      assert(await waitFor(`${colCards(3)}.join("|") === "Write docs"`, 2000), `drag did not move the card: ${await js(colCards(3))}`);
+      assert(await waitFor2(() => /\*\*Complete\*\*\n- \[x\] Write docs/.test(boardText()), 3000), `card in Done not checked:\n${boardText()}`);
+    });
+    await step(64, 'a task is edited in its panel; default columns keep their names; the board follows the file', async () => {
+      await clickEval(`[...document.querySelectorAll('.tk-card')].find(c => c.textContent.includes('Fix login'))`, 'Fix login card');
+      assert(await waitFor('!!document.querySelector(".tk-panel")', 2000), 'card panel did not open');
+      await js(`(() => {
+        const p = document.querySelector('.tk-panel');
+        const sel = p.querySelectorAll('select');
+        sel[1].value = 'feature'; sel[2].value = 'P2';
+        p.querySelector('input[type=url]').value = 'https://github.com/a/b/issues/3';
+        const body = p.querySelector('.tk-panel-body'); body.value = 'Steps\\n- [x] one\\n- [ ] two';
+        return true;
+      })()`);
+      await press('Return', ['meta']);
+      assert(await waitFor2(() => boardText().includes('- [ ] Fix login #feature !P2 @{2030-01-15} https://github.com/a/b/issues/3\n\tSteps\n\t- [x] one\n\t- [ ] two'), 3000), `card edit not saved:\n${boardText()}`);
+      assert(await waitFor('[...document.querySelectorAll(".tk-card")].some(c => c.querySelector(".tk-url")?.textContent === "#3" && c.querySelector(".tk-subs")?.textContent === "1/2")', 2000), 'link or sub-task count not shown');
+      // Default columns keep their names; a column of your own goes before
+      // Done and is named right away.
+      await js(`document.querySelectorAll('.tk-col-title')[2].dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); true`);
+      await sleep(300);
+      assert(!(await js('!!document.querySelector(".tk-col-rename")')), 'a default column could be renamed');
+      await clickSel('.tk-add-col');
+      assert(await waitFor('document.activeElement?.classList.contains("tk-col-rename")', 2000), 'new column name field not focused');
+      await typeText('QA'); await enter();
+      assert(await waitFor2(() => /## Test[\s\S]*## QA\n[\s\S]*## Done/.test(boardText()), 3000), `new column not saved before Done:\n${boardText()}`);
+      // A finished task looks finished: Done's tasks carry a tick.
+      assert(await js(`[...document.querySelectorAll('.tk-col')[4].querySelectorAll('.tk-card')].every(c => c.classList.contains('done') && c.querySelector('.tk-done-mark'))`), 'tasks in Done do not look done');
+      // Another app (Obsidian) changes the file: the board shows it. (Changes
+      // right after Mufka's own write are taken as its own: wait that out.)
+      await sleep(1700);
+      fs.writeFileSync(boardFile, boardText().replace('## QA\n\n', '## QA\n\n- [ ] From Obsidian #chore\n'));
+      assert(await waitFor(`${colCards(3)}.includes("From Obsidian")`, 4000), `outside change not shown: ${await js(colCards(3))}`);
+      // The board note opened from the notes tree opens as the board.
+      await clickSel('#mode-notes');
+      await js(`window.__open = [...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === 'Tasks'); window.__open?.click(); true`);
+      await sleep(300);
+      await clickEval(`[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === 'Sprint')`, 'Sprint row');
+      assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true" && !!document.querySelector(".tk-col")', 3000), 'board note did not open as a board');
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
