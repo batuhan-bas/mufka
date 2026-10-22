@@ -1109,6 +1109,7 @@ function decorateStatic() {
   put('nav-back', 'back');
   put('nav-forward', 'forward');
   put('rightbar-btn', 'details', true);
+  put('settings-btn', 'settings');
   const v = document.getElementById('vault-btn');
   const text = elem('span', 'vault-text');
   text.append(...v.childNodes);
@@ -1118,6 +1119,7 @@ decorateStatic();
 
 // Sidebar footer: the keyboard ways in, always visible.
 document.getElementById('foot-open').addEventListener('click', () => openQuickSwitcher());
+document.getElementById('settings-btn').addEventListener('click', () => openSettings());
 document.getElementById('foot-commands').addEventListener('click', () => openCommandPalette());
 document.getElementById('foot-keys').addEventListener('click', () => showShortcuts());
 

@@ -13,10 +13,13 @@
   <aside class="sidebar" id="sidebar">
     <div class="titlebar-room" aria-hidden="true"></div>
     <div id="side" class="side"></div>
-    <button id="vault-btn" class="vault-btn" type="button" aria-haspopup="menu" data-menu-anchor="vault"
-      title="The folder your notes are stored in. Click to open another folder (e.g. an Obsidian vault).">
-      <span class="vault-label">Notes folder</span><span id="vault-name" class="vault-name">…</span>
-    </button>
+    <div class="vault-row">
+      <button id="vault-btn" class="vault-btn" type="button" aria-haspopup="menu" data-menu-anchor="vault"
+        title="The folder your notes are stored in. Click to open another folder (e.g. an Obsidian vault).">
+        <span class="vault-label">Notes folder</span><span id="vault-name" class="vault-name">…</span>
+      </button>
+      <button id="settings-btn" class="settings-btn" type="button" aria-label="Settings" title="Settings: calendars, Wispr Flow (⌘,)"></button>
+    </div>
     <div class="side-footer" aria-label="Keyboard">
       <button id="foot-open" class="foot-btn" type="button" title="Jump to any note">Open <kbd>⌘O</kbd></button>
       <button id="foot-commands" class="foot-btn" type="button" title="Every command, searchable">Commands <kbd>⌘P</kbd></button>

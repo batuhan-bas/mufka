@@ -768,6 +768,12 @@ input, textarea, select { font: inherit; color: inherit; }
 .pane-btn, .sidebar-toggle, .icon-btn-sq { display: inline-flex; align-items: center; gap: 6px; }
 .nav-btn { padding: 4px 6px; }
 .vault-btn { flex-direction: row; align-items: center; gap: 10px; }
+/* The notes folder with Settings beside it, like Obsidian's vault switcher. */
+.vault-row { display: flex; align-items: stretch; border-top: 1px solid var(--line); }
+.vault-row .vault-btn { flex: 1; min-width: 0; border-top: none; }
+.settings-btn { flex: none; align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin-right: 8px; background: transparent; border: none; border-radius: 6px; color: var(--muted); cursor: pointer; }
+.settings-btn:hover { background: var(--line); color: var(--text); }
+.settings-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .vault-btn .icon { color: var(--muted); }
 .vault-text { display: flex; flex-direction: column; min-width: 0; }
 
