@@ -134,6 +134,8 @@ yet? Home offers to open the Planner.
 
 <p align="center"><img src="docs/screenshots/graph.png" width="85%" alt="The graph of notes and links"></p>
 
+<p align="center"><img src="docs/screenshots/commands.png" width="85%" alt="The command palette: every command, searchable, with its shortcut"></p>
+
 ## Install it on a Mac
 
 **Needs:** macOS 12 Monterey or later, Apple silicon or Intel.
@@ -214,7 +216,7 @@ On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 | ⌘F | Search |
 | ⌘G · ⇧⌘G | Graph · local graph |
 | ⌘E | Edit a note's raw Markdown |
-| ⌘, | Settings (calendar and Wispr Flow connections) |
+| ⌘, | Settings (calendar and Wispr Flow connections), also the gear next to the notes folder |
 | ⇧⌘T | Insert a template |
 | ⌘[ · ⌘] | Back · forward |
 | ⌘\\ · ⇧⌘\\ | Sidebar · Details panel |

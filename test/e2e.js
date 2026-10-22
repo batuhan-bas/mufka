@@ -1378,7 +1378,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 2000), 'no coloured guide');
     });
 
-    await step(55, 'Settings: calendar and Wispr Flow connections shown, offline', async () => {
+    await step(55, 'Settings (⌘, or the gear): calendar and Wispr Flow connections shown, offline', async () => {
       await press(',', ['meta']);
       assert(await waitFor('!!document.querySelector(".settings-dialog")', 2000), 'settings did not open');
       assert(await waitFor('/Not connected/.test(document.querySelector("[data-conn=wispr] .conn-side")?.textContent || "")', 2000), 'no Wispr connection state');
@@ -1390,6 +1390,11 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(!fs.existsSync(path.join(tmp, 'wispr.bin')), 'a sign-in was stored');
       await press('Escape');
       assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
+      // The gear next to the notes folder opens it too.
+      await clickSel('#settings-btn');
+      assert(await waitFor('!!document.querySelector(".settings-dialog")', 2000), 'the Settings button did not open settings');
+      await press('Escape');
+      assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'settings did not close');
     });
 
     await step(56, 'Calendar events: Planner grid, all-day band, details, join, Home', async () => {
