@@ -274,7 +274,7 @@ end-to-end test) before opening a pull request.
 
 ## License
 
-[MIT](LICENSE) © 2026 Batuhan Baş.
+[MIT](LICENSE) © 2026 Calexis Labs.
 
 Mufka includes open-source components under their own licenses (Electron,
 mdast/micromark, Lucide icons); see
