@@ -1,7 +1,7 @@
 {
   "name": "mufka",
   "productName": "Mufka",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Personal planner and Markdown notes for macOS and Windows: a week planner, an Obsidian-like vault and a graph of your notes.",
   "author": "Batuhan Baş",
   "license": "MIT",
@@ -17,6 +17,7 @@
     "smoke:packaged": "npm run build && electron scripts/packaged-hook-smoke.js",
     "dist": "electron-vite build && electron-builder",
     "dist:public": "electron-vite build && MUFKA_SIGN_IDENTITY=- electron-builder",
+    "dist:release": "electron-vite build && electron-builder --mac --config electron-builder.release.cjs",
     "dist:win": "electron-vite build && electron-builder --win --x64 --publish never",
     "sign:dev": "node scripts/sign-mac.mjs node_modules/electron/dist/Electron.app"
   },
@@ -67,7 +68,7 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "afterPack": "scripts/after-pack.cjs",
-    "copyright": "Copyright © 2026 Batuhan Baş"
+    "copyright": "Copyright © 2026 Calexis Labs"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.31.0",
