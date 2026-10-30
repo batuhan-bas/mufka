@@ -2,7 +2,7 @@
 // never touches the filesystem directly; it talks through the preload bridge.
 // Bundled by electron-vite into out/main/index.js.
 
-import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -35,8 +35,13 @@ function loadPage(win, page) {
 // privileged (standard, secure) scheme before the app is ready, so the renderer
 // CSP can allow it for img-src.
 const ATTACH_SCHEME = 'mufka-att';
+// The fonts Draw's editor needs (out/renderer/excalidraw/fonts): fonts loaded
+// from file:// fail CORS, so they come from this scheme, read-only and only
+// from that folder.
+const FONT_SCHEME = 'mufka-font';
 protocol.registerSchemesAsPrivileged([
   { scheme: ATTACH_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+  { scheme: FONT_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
 
 // Ensure the app name (and thus the userData folder and the first menu title)
@@ -501,7 +506,11 @@ function collectNotes() {
   const { notes } = walkVault();
   const out = [];
   for (const n of notes) {
-    try { out.push({ rel: n.rel, content: fs.readFileSync(safeAbs(n.rel), 'utf8') }); } catch { /* skip unreadable */ }
+    try {
+      const abs = safeAbs(n.rel);
+      const st = fs.statSync(abs);
+      out.push({ rel: n.rel, content: fs.readFileSync(abs, 'utf8'), mtime: st.mtimeMs, ctime: st.birthtimeMs || st.ctimeMs, size: st.size });
+    } catch { /* skip unreadable */ }
   }
   return out;
 }
@@ -610,7 +619,7 @@ async function exportMarkdown(title, content) {
   return { ok: true, path: res.filePath };
 }
 
-async function exportPDF(title, src, noteDir = '') {
+async function exportPDF(title, src, noteDir = '', html = null) {
   const res = await dialog.showSaveDialog({
     title: 'Export as PDF',
     defaultPath: dialogPath(np.exportFileName(title, 'pdf')),
@@ -627,7 +636,7 @@ async function exportPDF(title, src, noteDir = '') {
     const files = vaultFiles();
     // Wait for the module to define __renderNote, then render.
     await win.webContents.executeJavaScript(`new Promise((resolve) => {
-      const go = () => { if (window.__renderNote) { window.__renderNote(${JSON.stringify(title)}, ${JSON.stringify(src)}, ${JSON.stringify(files)}, ${JSON.stringify(String(noteDir || ''))}); resolve(true); } else setTimeout(go, 10); };
+      const go = () => { if (window.__renderNote) { window.__renderNote(${JSON.stringify(title)}, ${JSON.stringify(src)}, ${JSON.stringify(files)}, ${JSON.stringify(String(noteDir || ''))}, ${JSON.stringify(typeof html === 'string' ? html : null)}); resolve(true); } else setTimeout(go, 10); };
       go();
     })`);
     const pdf = await win.webContents.printToPDF({
@@ -642,6 +651,98 @@ async function exportPDF(title, src, noteDir = '') {
   }
 }
 
+// --- the sandbox window ---
+// Note scripts (```dataviewjs) and Mermaid diagrams run in a hidden window of
+// their own (src/sandbox.html): sandboxed, no preload, a session that cancels
+// every request except the sandbox page's own files, and no permissions. For a
+// script the renderer sends a snapshot of the vault's pages (only when it
+// changed) and gets back render ops; for a diagram it gets SVG text.
+const DVJS_TIMEOUT_MS = 5000;
+let dvjs = null; // { win, ready }
+
+function dvjsAllowed(url) {
+  const devUrl = process.env.ELECTRON_RENDERER_URL;
+  if (!app.isPackaged && devUrl && url.startsWith(devUrl)) return true;
+  if (!url.startsWith('file:')) return false;
+  try { return np.isInside(path.join(__dirname, '../renderer'), fileURLToPath(url)); } catch { return false; }
+}
+
+function dvjsWindow() {
+  if (dvjs && !dvjs.win.isDestroyed()) return dvjs.ready;
+  const ses = session.fromPartition('mufka-dvjs');
+  ses.webRequest.onBeforeRequest((details, cb) => cb({ cancel: !dvjsAllowed(details.url) }));
+  ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  ses.setPermissionCheckHandler(() => false);
+  const win = new BrowserWindow({
+    show: false, width: 400, height: 300,
+    webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false, images: false, webgl: false, spellcheck: false },
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  const ready = loadPage(win, 'src/sandbox.html').then(() => win.webContents.executeJavaScript(`new Promise((resolve) => {
+    const go = () => (window.__dvjs && window.__mermaid ? resolve(true) : setTimeout(go, 10));
+    go();
+  })`));
+  dvjs = { win, ready };
+  return ready;
+}
+
+function dvjsStop() {
+  if (!dvjs) return;
+  const { win } = dvjs;
+  dvjs = null;
+  if (!win.isDestroyed()) {
+    try { win.webContents.forcefullyCrashRenderer(); } catch { /* already gone */ }
+    win.destroy();
+  }
+}
+
+// One job at a time: a script that hangs is stopped alone, and the ones
+// after it run in a fresh sandbox.
+let dvjsQueue = Promise.resolve();
+function sandboxJob(fn) {
+  const run = dvjsQueue.then(fn);
+  dvjsQueue = run.catch(() => {});
+  return run;
+}
+const runDataviewJs = (payload) => sandboxJob(() => runDataviewJsNow(payload));
+
+const MERMAID_TIMEOUT_MS = 10000;
+const MERMAID_MAX = 50000;
+function renderMermaid(code) {
+  const src = String(code || '');
+  if (src.length > MERMAID_MAX) return Promise.resolve({ error: 'This diagram is too long to draw' });
+  return sandboxJob(async () => {
+    await dvjsWindow();
+    const win = dvjs.win;
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), MERMAID_TIMEOUT_MS); });
+    const res = await Promise.race([win.webContents.executeJavaScript(`window.__mermaid(${JSON.stringify(src)})`), timeout]).finally(() => clearTimeout(timer));
+    if (res === 'timeout') { dvjsStop(); return { error: 'The diagram took too long to draw' }; }
+    return res && typeof res === 'object' ? { svg: typeof res.svg === 'string' ? res.svg : undefined, error: res.error ? String(res.error) : undefined } : { error: 'The diagram could not be drawn' };
+  });
+}
+
+async function runDataviewJsNow(payload) {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const job = {
+    version: String(p.version || ''),
+    snapshot: p.snapshot && typeof p.snapshot === 'object' ? p.snapshot : null,
+    code: String(p.code || ''),
+    thisRel: String(p.thisRel || ''),
+  };
+  await dvjsWindow();
+  const win = dvjs.win;
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), DVJS_TIMEOUT_MS); });
+  const res = await Promise.race([win.webContents.executeJavaScript(`window.__dvjs(${JSON.stringify(job)})`), timeout]).finally(() => clearTimeout(timer));
+  if (res === 'timeout') {
+    dvjsStop();
+    return { ops: [], error: `The script ran for more than ${DVJS_TIMEOUT_MS / 1000} seconds and was stopped` };
+  }
+  return res;
+}
+
 const ATTACH_MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.webp': 'image/webp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
@@ -650,6 +751,24 @@ const ATTACH_MIME = {
 // Serve vault attachments over the custom scheme, resolving ONLY paths that are
 // a direct child of Ekler inside the vault (attachAbs rejects traversal and
 // symlink escape). Anything else 404s.
+function registerFontProtocol() {
+  protocol.handle(FONT_SCHEME, (request) => {
+    try {
+      const root = path.join(__dirname, '../renderer/excalidraw');
+      const rel = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, '');
+      const abs = path.join(root, rel);
+      if (!np.isInside(root, abs) || !/\.(woff2?|ttf|otf)$/i.test(abs)) return new Response('', { status: 404 });
+      return new Response(fs.readFileSync(abs), { headers: {
+        'content-type': /\.woff2$/i.test(abs) ? 'font/woff2' : /\.woff$/i.test(abs) ? 'font/woff' : 'font/ttf',
+        'access-control-allow-origin': '*',
+        'x-content-type-options': 'nosniff',
+      } });
+    } catch {
+      return new Response('', { status: 404 });
+    }
+  });
+}
+
 function registerAttachProtocol() {
   protocol.handle(ATTACH_SCHEME, (request) => {
     try {
@@ -1269,6 +1388,7 @@ function buildMenu() {
         { label: 'Planner', click: () => sendMenu('tab:takvim') },
         { label: 'Notes', click: () => sendMenu('tab:notlar') },
         { label: 'Tasks', click: () => sendMenu('tasks') },
+        { label: 'Draw', click: () => sendMenu('draw') },
         { label: 'Search', click: () => sendMenu('tab:ara') },
         { type: 'separator' },
         { label: 'Toggle Sidebar', click: () => sendMenu('toggle-sidebar') },
@@ -1505,6 +1625,8 @@ function wrap(fn) {
 }
 ipcMain.handle('notes:tree', wrap(() => walkVault()));
 ipcMain.handle('notes:all', wrap(() => collectNotes()));
+ipcMain.handle('dataview:runJs', wrap((payload) => runDataviewJs(payload)));
+ipcMain.handle('mermaid:render', wrap((code) => renderMermaid(code)));
 ipcMain.handle('notes:read', wrap((rel) => readNoteRel(rel)));
 ipcMain.handle('notes:write', wrap((rel, content) => writeNoteRel(rel, content)));
 ipcMain.handle('notes:create', wrap((parentRel, name) => createNote(parentRel, name)));
@@ -1541,7 +1663,7 @@ ipcMain.handle('attach:unused', wrap(() => attachUnused()));
 ipcMain.handle('attach:trash', wrap((names) => attachTrash(names)));
 ipcMain.handle('app:copy', wrap(async (text) => { await clipboard.writeText(String(text ?? '')); return { ok: true }; }));
 ipcMain.handle('notes:exportMarkdown', wrap((title, content) => exportMarkdown(title, content)));
-ipcMain.handle('notes:exportPDF', wrap((title, src, noteDir) => exportPDF(title, src, noteDir)));
+ipcMain.handle('notes:exportPDF', wrap((title, src, noteDir, html) => exportPDF(title, src, noteDir, html)));
 ipcMain.handle('wispr:status', wrap(() => wisprStatus()));
 ipcMain.handle('wispr:connect', wrap(() => wisprConnect()));
 ipcMain.handle('wispr:cancel', wrap(() => { if (wisprSignIn) wisprSignIn.cancel(); return { ok: true }; }));
@@ -1593,6 +1715,7 @@ app.whenReady().then(() => {
   ensureNotesDirs();
   watchVault();
   registerAttachProtocol();
+  registerFontProtocol();
   buildMenu();
   wisprSchedule();
   const win = createWindow();

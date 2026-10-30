@@ -7,8 +7,9 @@
 **Your week and your notes, in one calm app for Mac and Windows.**
 
 A week planner with times, repeating plans and your Outlook, Teams and Google
-calendars, task boards for your projects, and an Obsidian‑like Markdown notes
-vault with links, backlinks and a graph — local and private.
+calendars, task boards for your projects, drawings, and an Obsidian‑like
+Markdown notes vault with links, backlinks, Dataview queries, diagrams and a
+graph — local and private.
 
 Made by [Calexis Labs](https://github.com/Calexis-Labs).
 
@@ -32,7 +33,7 @@ Made by [Calexis Labs](https://github.com/Calexis-Labs).
 
 ## What Mufka does
 
-Mufka has three modes, switched at the top left (**Notes | Planner | Tasks**, or ⌃Tab).
+Mufka has four modes, switched at the top left (**Notes | Planner | Tasks | Draw**, or ⌃Tab).
 
 ### Planner — the week at a glance
 
@@ -87,8 +88,18 @@ yet? Home offers to open the Planner.
   weekly review, project, book notes, recipe, habit tracker, budget and travel
   plan — or from your own `Templates` folder (Obsidian-compatible). Copy the
   built-in ones there to make them yours.
-- **Bookmarks**, drag-and-drop **images** and files, export to **PDF** or
-  Markdown, sorting by name, last edit or your own order.
+- **Dataview**, like Obsidian's plugin: ` ```dataview ` queries (`TABLE`,
+  `LIST`, `TASK`, `CALENDAR` with `FROM`, `WHERE`, `SORT`, `GROUP BY`,
+  `FLATTEN`, `LIMIT` and its functions) over frontmatter, `key:: value` fields,
+  tasks and `file.*`; inline `` `= this.field` ``; ticking a task in a result
+  ticks it in its note. ` ```dataviewjs ` scripts run too — in a sandbox with
+  no files and no network.
+- **Mermaid diagrams** (` ```mermaid `) are drawn in the app's colours, and
+  **HTML** in notes works for formatting (`<kbd>`, `<details>`, `<br>`,
+  `<mark>`, tables…); scripts, frames and styles never run.
+- **Bookmarks**, drag-and-drop **images** and files, export to **PDF** (with
+  Dataview results, diagrams and drawings) or Markdown, sorting by name, last
+  edit or your own order.
 - **Meeting notes from [Wispr Flow](https://wisprflow.ai)**: connect your
   Wispr account in **Settings** (⌘,) and every meeting its Notetaker records —
   Zoom, Google Meet, Teams, Slack huddles or in person — arrives in a
@@ -123,6 +134,17 @@ yet? Home offers to open the Planner.
 <p align="center"><img src="docs/screenshots/tasks.png" width="85%" alt="A task board: To do, In progress, Test and Done with tasks marked Feature, Bug and Chore, priorities, due dates and sub-task counts"></p>
 
 <p align="center"><img src="docs/screenshots/task-dialog.png" width="70%" alt="New task: title, column, type, priority, due date, tags, link and description in one dialog"></p>
+
+### Draw — sketches and diagrams
+
+- **[Excalidraw](https://excalidraw.com)** in the app: shapes, arrows, pen,
+  text, images and its library, in the dark theme.
+- **Each drawing is a note** in the `Excalidraw` folder, in the format of
+  Obsidian's **Excalidraw** plugin, so it opens there too. Changes save as you
+  draw.
+- **In notes:** `![[Sketch.excalidraw]]` shows the drawing; click it to open
+  it in Draw.
+- Nothing is fetched from the internet: the fonts come with the app.
 
 ### Graph, search and commands
 
@@ -208,7 +230,7 @@ On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 | Shortcut | Does |
 |---|---|
 | ⌘T | Home (today) |
-| ⌘1 · ⌘3 · ⌃Tab | Planner · Tasks · switch Notes / Planner / Tasks |
+| ⌘1 · ⌘3 · ⌘4 · ⌃Tab | Planner · Tasks · Draw · switch Notes / Planner / Tasks / Draw |
 | ⇧⌘P | New plan |
 | ⌥⌘← / ⌥⌘→ | Previous / next week |
 | ⌘N | New note |

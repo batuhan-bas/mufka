@@ -1102,3 +1102,55 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .tk-modal .tk-panel-title:focus { border-color: var(--accent); }
 .tk-modal .tk-panel-body { min-height: 120px; }
 .tk-modal .tk-panel-actions { margin-top: 4px; }
+
+/* --- Dataview (lib/dataview, src/dataview-view.js) --- */
+.md .dataview { margin: 0 0 14px; }
+.md .dv-table-wrap table { margin: 0; }
+.md .dv-table th .dv-count,
+.md .dv-task-group .dv-count { margin-left: 6px; color: var(--muted); font-weight: 400; font-size: 0.85em; }
+.md .dv-table td > .dv-value-list,
+.md .dv-list .dv-value-list { margin: 0; padding-left: 18px; }
+.md .dv-null { color: var(--muted); }
+.md .dv-key { color: var(--muted); }
+.md .dv-empty { color: var(--muted); font-size: 14px; margin: 0; }
+.md .dv-error { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--ground)); border-radius: var(--radius); padding: 8px 12px; font-size: 14px; white-space: pre-wrap; }
+.md span.dv-error { display: inline; padding: 1px 6px; }
+.md .dv-inline { color: inherit; }
+.md .dv-task-group { margin: 12px 0 4px; font-weight: 600; }
+.md .dv-task-group:first-child { margin-top: 0; }
+.md .dv-tasks > ul { margin: 0 0 6px; }
+.md li.dv-task[data-done] > .dv-task-text { color: var(--muted); text-decoration: line-through; }
+.md .dv-calendar { max-width: 420px; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
+.md .dv-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-weight: 600; }
+.md .dv-cal-nav { background: none; border: 1px solid var(--line); color: var(--text); border-radius: var(--radius); width: 28px; height: 28px; cursor: pointer; }
+.md .dv-cal-nav:hover { border-color: var(--line-strong); }
+.md .dv-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.md .dv-cal-wd { font-size: 12px; color: var(--muted); text-align: center; padding-bottom: 4px; }
+.md .dv-cal-day { min-height: 44px; border-radius: 4px; padding: 3px; background: var(--panel); font-size: 12px; }
+.md .dv-cal-out { opacity: 0.4; }
+.md .dv-cal-num { display: block; color: var(--muted); }
+.md .dv-cal-dot a { color: var(--accent); text-decoration: none; font-size: 10px; }
+.md li.dv-task > .dv-task-text { flex: 1; min-width: 0; }
+.md .dv-js > :last-child { margin-bottom: 0; }
+
+/* --- Mermaid (src/mermaid-view.js) --- */
+.md .mermaid-box { margin: 0 0 14px; overflow-x: auto; }
+.md .mermaid-img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.md .mermaid-error { color: var(--danger); font-size: 14px; margin-bottom: 6px; }
+
+/* --- HTML in notes (lib/html.mjs) --- */
+.md kbd { font-family: var(--font); font-size: 0.85em; padding: 1px 6px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--raised); }
+.md details { margin: 0 0 14px; }
+.md details > summary { cursor: pointer; }
+.md details[open] > summary { margin-bottom: 8px; }
+.md [align="center"] { text-align: center; }
+.md [align="right"] { text-align: right; }
+
+/* --- Draw (src/draw.js) --- */
+.content-col.is-draw { max-width: none; padding: 0; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.draw-host { flex: 1; position: relative; min-height: 0; }
+.draw-host > .excalidraw-container, .draw-host .excalidraw { height: 100%; }
+.draw-host .excalidraw { --color-primary: var(--accent); --color-primary-darker: var(--accent-fill); --color-primary-darkest: var(--accent-fill); }
+.md .draw-embed { margin: 0 0 14px; cursor: pointer; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; display: inline-block; max-width: 100%; }
+.md .draw-embed:hover { border-color: var(--line-strong); }
+.md .draw-embed-img { display: block; max-width: 100%; height: auto; }

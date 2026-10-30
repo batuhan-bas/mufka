@@ -1,7 +1,7 @@
 {
   "name": "mufka",
   "productName": "Mufka",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Personal planner and Markdown notes for macOS and Windows: a week planner, an Obsidian-like vault and a graph of your notes.",
   "author": "Batuhan Baş",
   "license": "MIT",
@@ -71,18 +71,25 @@
     "copyright": "Copyright © 2026 Calexis Labs"
   },
   "devDependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "@modelcontextprotocol/sdk": "1.31.0",
     "electron": "^44.7.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "lz-string": "^1.5.0",
+    "mermaid": "^11.17.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "vite": "^7.3.7"
   },
   "dependencies": {
+    "luxon": "^3.7.2",
     "mdast-util-from-markdown": "^2.1.0",
     "mdast-util-frontmatter": "^2.0.1",
     "mdast-util-gfm": "^3.1.0",
     "micromark-extension-frontmatter": "^2.0.0",
-    "micromark-extension-gfm": "^3.0.0"
+    "micromark-extension-gfm": "^3.0.0",
+    "yaml": "^2.9.1"
   },
   "repository": {
     "type": "git",

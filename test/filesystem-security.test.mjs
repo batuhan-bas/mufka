@@ -200,3 +200,24 @@ test('attachment protocol constrains active SVG document responses', async t => 
   assert.match(response.headers.get('content-security-policy') || '', /sandbox/);
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
 });
+
+test('the font scheme serves only font files from the Excalidraw folder', async (t) => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-font-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const fonts = path.join(base, 'renderer', 'excalidraw', 'fonts', 'Virgil');
+  fs.mkdirSync(fonts, { recursive: true });
+  fs.writeFileSync(path.join(fonts, 'Virgil.woff2'), 'font');
+  fs.writeFileSync(path.join(base, 'renderer', 'excalidraw', 'note.txt'), 'text');
+  fs.writeFileSync(path.join(base, 'secret.woff2'), 'secret');
+  let handler;
+  const ctx = vm.createContext({ fs, path, np, URL, Response, FONT_SCHEME: 'mufka-font', __dirname: path.join(base, 'main'),
+    protocol: { handle: (_scheme, fn) => { handler = fn; } } });
+  vm.runInContext(original('registerFontProtocol'), ctx); ctx.registerFontProtocol();
+  const ok = await handler({ url: 'mufka-font://excalidraw/fonts/Virgil/Virgil.woff2' });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get('content-type'), 'font/woff2');
+  assert.equal(await ok.text(), 'font');
+  assert.equal((await handler({ url: 'mufka-font://excalidraw/note.txt' })).status, 404, 'not a font');
+  assert.equal((await handler({ url: 'mufka-font://excalidraw/..%2F..%2Fsecret.woff2' })).status, 404, 'outside the folder');
+  assert.equal((await handler({ url: 'mufka-font://excalidraw/fonts/Missing.woff2' })).status, 404);
+});
