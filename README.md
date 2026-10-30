@@ -107,6 +107,8 @@ yet? Home offers to open the Planner.
   Read-only; it checks every 15 minutes. Wispr Flow's dictation also types
   straight into any note.
 
+<p align="center"><img src="docs/screenshots/dataview.png" width="85%" alt="A project overview note: a Dataview table of sprints, a total from a dataviewjs script, a Mermaid flowchart and the open tasks"></p>
+
 <p align="center"><img src="docs/screenshots/note.png" width="85%" alt="A note with the Details panel; the sidebar with coloured folders and icons"></p>
 
 <p align="center"><img src="docs/screenshots/templates.png" width="85%" alt="New note from a template: daily note, meeting notes, weekly review, project, book notes, recipe, habit tracker, budget, travel plan"></p>
@@ -145,6 +147,8 @@ yet? Home offers to open the Planner.
 - **In notes:** `![[Sketch.excalidraw]]` shows the drawing; click it to open
   it in Draw.
 - Nothing is fetched from the internet: the fonts come with the app.
+
+<p align="center"><img src="docs/screenshots/draw.png" width="85%" alt="Draw: an Excalidraw drawing of a release flow, with the Drawings list in the sidebar"></p>
 
 ### Graph, search and commands
 
