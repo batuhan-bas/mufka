@@ -215,13 +215,17 @@ are the connections you turn on yourself in **Settings**: your **Microsoft**
 and **Google** calendars (Mufka reads your events; it asks only for calendar
 read access) and **Wispr Flow** (Mufka reads your meetings). Mufka never sends
 your notes or plans anywhere. Sign-ins are kept encrypted (in the macOS Keychain, or by Windows for your user account);
-**Disconnect** forgets them. Details: the [privacy policy](https://mufka.app/privacy).
+**Disconnect** forgets them. Note scripts (` ```dataviewjs `) and Mermaid
+diagrams run in a sandbox that cannot read your files or reach the internet,
+and Draw's fonts come with the app. Details: the [privacy policy](https://mufka.app/privacy).
 
 <p align="center"><img src="docs/screenshots/settings.png" width="70%" alt="Settings: the Microsoft and Google calendars and Wispr Flow"></p>
 
 | What | Where |
 |---|---|
 | Notes | `~/Documents/Mufka` — or any folder you open with **Notes folder** at the bottom of the sidebar (for example your Obsidian vault). Plain `.md` files. |
+| Task boards | Notes in the `Tasks` folder of your notes folder, in the format of Obsidian's Kanban plugin. |
+| Drawings | Notes in the `Excalidraw` folder (`*.excalidraw.md`), in the format of Obsidian's Excalidraw plugin. |
 | Plans | `~/Library/Application Support/Mufka/planlar.json` (Windows: `%APPDATA%\Mufka\planlar.json`) |
 | Backups | **File → Export Plans…** writes a JSON copy; notes are ordinary files, so any backup tool (Time Machine, iCloud Drive, git) works. |
 
@@ -253,9 +257,12 @@ On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 
 ## For the developer
 
-Electron + plain JavaScript (no UI framework), built with
+Electron + plain JavaScript (no UI framework; React only inside Draw, for
+Excalidraw, loaded when Draw opens), built with
 [electron-vite](https://electron-vite.org). All pure logic lives in `lib/*.mjs`
-and is shared verbatim by the app and the tests.
+and is shared verbatim by the app and the tests: Dataview in `lib/dataview/`,
+HTML in notes in `lib/html.mjs`, drawings in `lib/drawing.mjs`. Note scripts and
+Mermaid run in `src/sandbox.html`, a hidden sandboxed window (`main.js`).
 
 ```sh
 npm install              # dependencies, then downloads Electron (pnpm works too)
@@ -278,7 +285,7 @@ screenshots and an installer.
 npm run dist
 ```
 
-This writes **`dist/Mufka-1.0.0-universal.dmg`** (one app for Apple silicon and
+This writes **`dist/Mufka-<version>-universal.dmg`** (one app for Apple silicon and
 Intel). The app is signed with the first Developer ID or Apple Development
 identity in your keychain (`MUFKA_SIGN_IDENTITY` overrides it; without one it
 is ad-hoc signed), which is what lets macOS show notifications. It is not
