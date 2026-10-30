@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: mufka-att:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'" />
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: mufka-att:; font-src 'self' mufka-font:; connect-src 'self' mufka-font:; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mufka</title>
   <link rel="stylesheet" href="src/styles.css" />
@@ -35,6 +35,7 @@
           <button id="mode-notes" type="button" aria-pressed="true" title="Notes, the day page and the graph (⌃Tab switches)">Notes</button>
           <button id="mode-planner" type="button" aria-pressed="false" title="Week planner with times (⌘1, ⌃Tab switches)">Planner</button>
           <button id="mode-tasks" type="button" aria-pressed="false" title="Task boards: To do, In progress, Test, Done (⌘3, ⌃Tab switches)">Tasks</button>
+          <button id="mode-draw" type="button" aria-pressed="false" title="Drawings, made with Excalidraw (⌘4, ⌃Tab switches)">Draw</button>
         </div>
         <button id="nav-back" class="pane-btn nav-btn" type="button" aria-label="Back" title="Back (⌘[)" disabled>‹</button>
         <button id="nav-forward" class="pane-btn nav-btn" type="button" aria-label="Forward" title="Forward (⌘])" disabled>›</button>

@@ -23,6 +23,10 @@ import { parseBlocks, blockText, replaceBlockText, insertBlockAfter, addBlock } 
 import { createGraphView } from './graph-view.js';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
 import { renderTasks, tasksEditing, tasksAnnounce } from './tasks.js';
+import { createDataview } from './dataview-view.js';
+import { createMermaid } from './mermaid-view.js';
+import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
+import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs';
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
@@ -89,8 +93,9 @@ const state = {
   araQuery: '',
   editPlanId: null,       // plan being edited inline on the day page
   menu: null,             // open row menu: { anchorKey, buildItems }
-  contentView: 'day',     // what the right pane shows: 'day' | 'note' | 'graph' | 'planner' | 'tasks'
+  contentView: 'day',     // what the right pane shows: 'day' | 'note' | 'graph' | 'planner' | 'tasks' | 'draw'
   board: null,            // the open task board: { rel, content } (src/tasks.js, lib/kanban.mjs)
+  drawing: null,          // the open drawing: { rel, content } (src/draw.js, lib/drawing.mjs)
   boardUndo: [],          // earlier texts of boards, for ⌘Z: [{ rel, content }]
   weekDate: new Date(),   // any day of the week the Planner shows
   sidebarCollapsed: false,
@@ -425,6 +430,7 @@ function renderSidebar() {
     renderPlaces();
     renderBookmarks();
     renderBoardsSection();
+    renderDrawingsSection();
     renderNotesSection();
   }
   sideEl.scrollTop = scroll;
@@ -509,9 +515,12 @@ function renderContent() {
   contentEl.classList.toggle('is-graph', state.contentView === 'graph');
   contentEl.classList.toggle('is-planner', state.contentView === 'planner');
   contentEl.classList.toggle('is-tasks', state.contentView === 'tasks');
+  contentEl.classList.toggle('is-draw', state.contentView === 'draw');
+  if (state.contentView !== 'draw') closeDrawing();
   if (state.contentView === 'graph') contentEl.append(graph().el);
   else if (state.contentView === 'planner') renderPlanner(contentEl, state.weekDate, plannerApi);
   else if (state.contentView === 'tasks') renderTasks(contentEl, tasksApi());
+  else if (state.contentView === 'draw') renderDraw(contentEl, drawApi());
   else if (state.contentView === 'note' && state.openNote) renderNotePane();
   else renderDayPage();
 }
@@ -547,6 +556,7 @@ function currentLocation() {
   if (state.contentView === 'graph') return { view: 'graph' };
   if (state.contentView === 'planner') return { view: 'planner', key: dayKey(startOfWeek(state.weekDate)) };
   if (state.contentView === 'tasks') return { view: 'tasks', rel: state.board ? state.board.rel : null };
+  if (state.contentView === 'draw') return { view: 'draw', rel: state.drawing ? state.drawing.rel : null };
   if (state.contentView === 'note' && state.openNote) return { view: 'note', rel: state.openNote };
   return { view: 'day', key: dayKey(state.selectedDate) };
 }
@@ -560,7 +570,7 @@ function updateNavButtons() {
   document.getElementById('nav-back').disabled = !nav.canBack;
   document.getElementById('nav-forward').disabled = !nav.canForward;
 }
-const navValid = (loc) => (loc.view !== 'note' && loc.view !== 'tasks') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel);
+const navValid = (loc) => (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel);
 async function goNav(dir) {
   const loc = dir < 0 ? nav.back(currentLocation(), navValid) : nav.forward(currentLocation(), navValid);
   updateNavButtons();
@@ -571,6 +581,7 @@ async function goNav(dir) {
     else if (loc.view === 'graph') openGraph();
     else if (loc.view === 'planner') openPlanner(parseDayKey(loc.key));
     else if (loc.view === 'tasks') await openTasks(loc.rel);
+    else if (loc.view === 'draw') await openDraw(loc.rel);
     else await selectDay(parseDayKey(loc.key), { keepTab: true });
   } finally { navigating = false; updateNavButtons(); }
 }
@@ -591,7 +602,7 @@ const previewApi = {
   renderInto: (el, content, rel) => {
     const dir = folderOf(rel);
     const attach = (raw) => resolveAttachment(raw, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
-    for (const n of renderMarkdown(content, { doc: document, noteExists: wikiExists, attach, embedNote, embedStack: [rel] })) el.append(n);
+    for (const n of renderMarkdown(content, { doc: document, noteExists: wikiExists, attach, embedNote, embedStack: [rel], ...noteRenderOptions(rel) })) el.append(n);
     el.querySelectorAll('a[data-wiki]').forEach((a) => a.addEventListener('click', (e) => {
       e.preventDefault(); hidePreview(); openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
     }));
@@ -636,15 +647,17 @@ function firstNote(node) {
   for (const f of node.folders) { const r = firstNote(f); if (r) return r; }
   return null;
 }
-// ⌃Tab goes round the modes: Notes → Planner → Tasks.
+// ⌃Tab goes round the modes: Notes → Planner → Tasks → Draw.
 function toggleMode() {
   if (state.contentView === 'planner') openTasks();
-  else if (state.contentView === 'tasks') openNotesMode();
+  else if (state.contentView === 'tasks') openDraw();
+  else if (state.contentView === 'draw') openNotesMode();
   else openPlanner(new Date());
 }
 document.getElementById('mode-planner').addEventListener('click', () => { if (state.contentView !== 'planner') openPlanner(new Date()); });
-document.getElementById('mode-notes').addEventListener('click', () => { if (state.contentView === 'planner' || state.contentView === 'tasks') openNotesMode(); });
+document.getElementById('mode-notes').addEventListener('click', () => { if (state.contentView === 'planner' || state.contentView === 'tasks' || state.contentView === 'draw') openNotesMode(); });
 document.getElementById('mode-tasks').addEventListener('click', () => { if (state.contentView !== 'tasks') openTasks(); });
+document.getElementById('mode-draw').addEventListener('click', () => { if (state.contentView !== 'draw') openDraw(); });
 
 function isThisWeekShown() { return weekKey(state.weekDate) === weekKey(new Date()); }
 function weekPlans(wk) {
@@ -1046,12 +1059,144 @@ function renderBoardsSection() {
   }
 }
 
+// --- Draw (src/draw.js): Excalidraw drawings, each a note ------------------
+// In the Obsidian Excalidraw plugin's format (lib/drawing.mjs); new ones go to
+// the Excalidraw folder.
+
+const DRAWING_KEY = 'mufka-drawing';
+function drawingList() {
+  return state.vaultNotes.filter((n) => isDrawingRel(n.rel) || isDrawingText(n.content))
+    .map((n) => ({ rel: n.rel, title: drawingTitle(n.rel) }))
+    .sort((a, b) => a.title.localeCompare(b.title));
+}
+async function openDraw(rel) {
+  if (rel === undefined) {
+    const list = drawingList();
+    let last = null;
+    try { last = localStorage.getItem(DRAWING_KEY); } catch { /* ignore */ }
+    rel = (list.find((d) => d.rel === last) || list[0] || {}).rel || null;
+  }
+  let content = null;
+  if (rel) {
+    const res = await notesApi.read(rel);
+    if (res && !res.error) content = res.content; else rel = null;
+  }
+  navVisit({ view: 'draw', rel });
+  state.drawing = rel ? { rel, content } : null;
+  state.contentView = 'draw';
+  state.menu = null;
+  if (rel) { try { localStorage.setItem(DRAWING_KEY, rel); } catch { /* ignore */ } }
+  render();
+}
+// What the editor last wrote, so the change it causes on disk is not reloaded.
+const ownDrawingWrites = new Set();
+async function saveDrawing(rel, text) {
+  ownDrawingWrites.add(text);
+  if (ownDrawingWrites.size > 20) ownDrawingWrites.delete(ownDrawingWrites.values().next().value);
+  if (state.drawing && state.drawing.rel === rel) state.drawing.content = text;
+  const res = await notesApi.write(rel, text);
+  if (res && res.error) showToast('Could not save the drawing');
+  const vn = state.vaultNotes.find((n) => n.rel === rel);
+  if (vn) vn.content = text;
+}
+async function reloadDrawing() {
+  if (!state.drawing) return;
+  if (!state.notesFlat.some((n) => n.rel === state.drawing.rel)) { state.drawing = null; render(); return; }
+  const res = await notesApi.read(state.drawing.rel);
+  if (!res || res.error || res.content === state.drawing.content || ownDrawingWrites.has(res.content)) return;
+  state.drawing.content = res.content;
+  drawingChanged(state.drawing.rel, res.content);
+}
+function newDrawing() {
+  const folder = drawingFolder(null);
+  askDialog({ heading: 'New drawing', text: `A drawing, saved as a note in ${folder}/ that Obsidian's Excalidraw plugin opens too.`, value: '', okLabel: 'Create' }, async (name) => {
+    const res = await notesApi.create(folder, `${name.replace(/\.excalidraw(\.md)?$/i, '')}.excalidraw`);
+    if (!res || !res.rel) { showToast('Could not create the drawing'); return; }
+    await notesApi.write(res.rel, serializeDrawing(emptyScene(), ''));
+    await refreshTree();
+    await rebuildBacklinks();
+    await openDraw(res.rel);
+  });
+}
+function drawingMenu() {
+  return [
+    { label: 'New drawing…', run: () => newDrawing() },
+    { label: 'Rename drawing…', run: () => {
+      const d = state.drawing;
+      if (!d) return;
+      askDialog({ heading: 'Rename drawing', value: drawingTitle(d.rel), okLabel: 'Rename' }, async (name) => {
+        closeDrawing();
+        const res = await notesApi.rename(d.rel, `${name.replace(/\.excalidraw(\.md)?$/i, '')}.excalidraw`);
+        if (!res || res.error) { showToast('Could not rename the drawing'); return; }
+        await refreshTree(); await rebuildBacklinks();
+        await openDraw(res.rel);
+      });
+    } },
+    { label: 'Open as Markdown', run: () => { if (state.drawing) openNote(state.drawing.rel, 'oku', { keepTab: true, asText: true }); } },
+    { label: 'Delete drawing…', run: () => {
+      const d = state.drawing;
+      if (!d) return;
+      askDialog({ heading: `Delete ${drawingTitle(d.rel)}?`, text: 'The drawing goes to the Trash.', okLabel: 'Delete', danger: true }, async () => {
+        closeDrawing();
+        await notesApi.remove(d.rel);
+        try { localStorage.removeItem(DRAWING_KEY); } catch { /* ignore */ }
+        state.drawing = null;
+        await refreshTree(); await rebuildBacklinks();
+        await openDraw();
+      });
+    } },
+  ];
+}
+function drawApi() {
+  const d = state.drawing;
+  return {
+    rel: d ? d.rel : null,
+    text: d ? d.content : '',
+    folder: drawingFolder(null),
+    save: saveDrawing,
+    newDrawing,
+    menu: drawingMenu(),
+    openLink: (url) => {
+      const wiki = /^\[\[([^\]]+)\]\]$/.exec(String(url).trim());
+      if (wiki) openWiki(wiki[1]);
+      else if (/^https?:\/\//i.test(url)) notesApi.openExternal(url);
+      else openWiki(url);
+    },
+  };
+}
+// The sidebar's Drawings section: one row per drawing.
+function renderDrawingsSection() {
+  const body = sidebarSection('drawings', 'Drawings', [
+    iconAction('plus', 'New drawing', () => newDrawing(), 'New drawing'),
+  ], 'tiPenLine');
+  if (!sectionOpen('drawings')) return;
+  const list = drawingList();
+  if (!list.length) {
+    const empty = elem('div', 'side-empty');
+    empty.append(document.createTextNode('No drawings yet. '), smallButton('New drawing', null, () => newDrawing()));
+    body.append(empty);
+    return;
+  }
+  for (const d of list) {
+    const on = state.contentView === 'draw' && state.drawing && state.drawing.rel === d.rel;
+    const row = elem('button', `board-row${on ? ' selected' : ''}`);
+    row.type = 'button';
+    row.title = d.rel;
+    row.append(icon('tiPenLine', { size: 15 }), elem('span', 'board-name', d.title));
+    if (on) row.setAttribute('aria-current', 'page');
+    row.addEventListener('click', () => openDraw(d.rel));
+    body.append(row);
+  }
+}
+
 function renderPaneTitle() {
   const planner = state.contentView === 'planner';
   const tasks = state.contentView === 'tasks';
+  const draw = state.contentView === 'draw';
   document.getElementById('mode-planner').setAttribute('aria-pressed', String(planner));
   document.getElementById('mode-tasks').setAttribute('aria-pressed', String(tasks));
-  document.getElementById('mode-notes').setAttribute('aria-pressed', String(!planner && !tasks));
+  document.getElementById('mode-draw').setAttribute('aria-pressed', String(draw));
+  document.getElementById('mode-notes').setAttribute('aria-pressed', String(!planner && !tasks && !draw));
   const el = document.getElementById('pane-title');
   el.replaceChildren();
   let title = 'Mufka';
@@ -1060,6 +1205,11 @@ function renderPaneTitle() {
   else if (tasks) {
     title = state.board ? noteTitleOf(state.board.rel) : 'Tasks';
     if (state.board) el.append(elem('span', 'pt-path', 'Tasks / '));
+    el.append(elem('span', 'pt-main', title));
+  }
+  else if (draw) {
+    title = state.drawing ? drawingTitle(state.drawing.rel) : 'Draw';
+    if (state.drawing) el.append(elem('span', 'pt-path', 'Draw / '));
     el.append(elem('span', 'pt-main', title));
   }
   else if (state.contentView === 'note' && state.openNote) {
@@ -1125,7 +1275,7 @@ document.getElementById('foot-keys').addEventListener('click', () => showShortcu
 
 // Keyboard shortcuts cheat sheet (⌘/, Help menu, sidebar footer).
 const SHORTCUTS = [
-  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Search notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌃Tab', 'Switch Notes / Planner / Tasks'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward']]],
+  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Search notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward']]],
   ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo']]],
   ['Window', [['⌘\\', 'Show / hide sidebar'], ['⇧⌘\\', 'Show / hide details (outline, links, tags)'], ['⌘/', 'This list'], ['⌘,', 'Settings']]],
 ];
@@ -1463,6 +1613,9 @@ function commandList() {
     { label: 'Open tasks', hint: '⌘3', run: () => openTasks() },
     { label: 'New task board', run: () => newTaskBoard() },
     ...boardList().map((b) => ({ label: `Open board: ${b.title}`, run: () => openTasks(b.rel) })),
+    { label: 'Open draw', hint: '⌘4', run: () => openDraw() },
+    { label: 'New drawing', run: () => newDrawing() },
+    ...drawingList().map((d) => ({ label: `Open drawing: ${d.title}`, run: () => openDraw(d.rel) })),
     { label: 'Open graph view', hint: '⌘G', run: () => openGraph() },
     { label: 'Open local graph', hint: '⇧⌘G', when: noteOpen, run: () => openGraph({ local: true }) },
     { label: 'Open random note', run: openRandomNote },
@@ -1974,11 +2127,24 @@ function exportSubItems(title, getSrc, saveUnsaved) {
   ];
 }
 
+// The note as the app draws it — Dataview results, diagrams and drawings
+// included — once the parts that are drawn later (scripts, Mermaid, drawings)
+// have arrived. The PDF prints this instead of re-rendering the plain text.
+async function renderedForExport(src, scope) {
+  const rel = scope === 'note' ? state.openNote : (state.dailyNote.key ? dailyRel(state.dailyNote.key) : '');
+  const box = document.createElement('div');
+  for (const n of renderMarkdown(src, { doc: document, noteExists: wikiExists, attach: attachResolverFor(scope), embedNote, ...noteRenderOptions(rel) })) box.append(n);
+  const pending = () => box.querySelector('.dv-js > .dv-empty, .mermaid-box > .dv-empty, .draw-embed > .dv-empty');
+  for (const t0 = Date.now(); pending() && Date.now() - t0 < 20000;) await new Promise((r) => setTimeout(r, 100));
+  return box.innerHTML;
+}
+
 async function runExport(kind, title, getSrc, saveUnsaved) {
   try {
     if (saveUnsaved) await saveUnsaved();
+    const scope = state.contentView === 'note' ? 'note' : 'daily';
     const res = kind === 'pdf'
-      ? await notesApi.exportPDF(title, getSrc(), attachDirFor(state.contentView === 'note' ? 'note' : 'daily'))
+      ? await notesApi.exportPDF(title, getSrc(), attachDirFor(scope), await renderedForExport(getSrc(), scope))
       : await notesApi.exportMarkdown(title, getSrc());
     if (res && res.canceled) return;
     showToast(res && res.ok ? 'Saved' : 'Export failed');
@@ -2001,6 +2167,15 @@ function embedNote(target) {
   return { rel, content: known, attach: (raw) => resolveAttachment(raw, state.attachFiles, dir, attachmentsDirFor(state.layout, dir)) };
 }
 
+// ![[Sketch.excalidraw]]: the drawing as an image; a click opens it in Draw.
+function embedDrawing(target) {
+  const rel = resolveLink(target, state.openNote || '', state.notesFlat) || resolveLink(`${target}.md`, state.openNote || '', state.notesFlat);
+  if (!rel) return null;
+  const known = (state.vaultNotes.find((n) => n.rel === rel) || {}).content ?? state.noteCache.get(rel);
+  if (known == null) return null;
+  return drawingPreview(known, () => openDraw(rel));
+}
+
 function wikiExists(target) {
   return resolveLink(target, state.openNote || '', state.notesFlat) !== null;
 }
@@ -2012,6 +2187,94 @@ const attachResolverFor = (scope) => (raw) => resolveAttachment(
   raw, state.attachFiles, attachDirFor(scope), attachmentsDirFor(state.layout, attachDirFor(scope)));
 // Vault path of a day's daily note.
 const dailyRel = (key) => (state.layout.daily ? `${state.layout.daily}/${key}.md` : `${key}.md`);
+
+// --- Dataview (src/dataview-view.js) ---
+// The vault as Dataview sees it: every note, with the open note's and day's
+// unsaved text. The same array comes back while nothing changed, so the index
+// is not rebuilt on every block render.
+let dvNotes = { base: null, key: '', list: [] };
+function dataviewNotes() {
+  const day = state.dailyNote.key ? dailyRel(state.dailyNote.key) : null;
+  const key = `${state.openNote}\u0000${state.noteContent}\u0000${day}\u0000${state.dailyNote.content}`;
+  if (dvNotes.base === state.vaultNotes && dvNotes.key === key) return dvNotes.list;
+  const list = state.vaultNotes.map((n) => {
+    if (state.openNote && n.rel === state.openNote && state.noteContent != null) return { ...n, content: state.noteContent };
+    if (day && n.rel === day && state.dailyNote.content != null) return { ...n, content: state.dailyNote.content };
+    return n;
+  });
+  dvNotes = { base: state.vaultNotes, key, list };
+  return list;
+}
+
+// Inline Markdown for Dataview values: one paragraph's contents, no block wrapper.
+function dataviewInline(src) {
+  const nodes = renderMarkdown(src, { doc: document, noteExists: wikiExists, attach: (raw) => resolveAttachment(raw, state.attachFiles, '', attachmentsDirFor(state.layout, '')) });
+  if (nodes.length === 1 && nodes[0].tagName === 'P') return [...nodes[0].childNodes];
+  return nodes;
+}
+
+function dataviewBlocks(src) {
+  return renderMarkdown(src, { doc: document, noteExists: wikiExists, attach: (raw) => resolveAttachment(raw, state.attachFiles, '', attachmentsDirFor(state.layout, '')) });
+}
+
+// Links and boxes in dataviewjs output, which arrives after the note mounted.
+function wireDataviewContent(box) {
+  box.querySelectorAll('a[data-wiki]').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation(); hidePreview(); openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
+  }));
+  box.querySelectorAll('a[data-external]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); }));
+  box.querySelectorAll('.tag[data-tag]').forEach((t) => t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); }));
+  wireDataview(box);
+}
+
+const dataview = createDataview({
+  getNotes: dataviewNotes,
+  md: dataviewInline,
+  mdBlock: dataviewBlocks,
+  runJs: (payload) => notesApi.runDataviewJs(payload),
+  wire: wireDataviewContent,
+});
+
+const mermaid = createMermaid({ render: (code) => notesApi.renderMermaid(code) });
+
+// What renderMarkdown needs for a note at `rel` beyond the basics: Dataview
+// blocks and inline queries, and Mermaid diagrams.
+function noteRenderOptions(rel) {
+  const dv = dataview.optionsFor(rel);
+  return { ...dv, blocks: { ...dv.blocks, mermaid: (src) => mermaid.block(src) }, embedDrawing };
+}
+
+// Tick a task shown by a Dataview query: in the open note or day through the
+// editor's history, elsewhere straight to its file.
+async function toggleDataviewTask(path, line) {
+  if (path === state.openNote) {
+    setSrc('note', toggleTaskLine(state.noteContent, line), true);
+    histRecord('note');
+    render();
+    return;
+  }
+  if (state.dailyNote.key && path === dailyRel(state.dailyNote.key) && state.dailyNote.content != null) {
+    setSrc('daily', toggleTaskLine(state.dailyNote.content, line), true);
+    histRecord('daily');
+    render();
+    return;
+  }
+  const res = await notesApi.read(path);
+  if (!res || res.error) return;
+  const w = await notesApi.write(path, toggleTaskLine(res.content, line));
+  if (w && w.error) return;
+  state.noteCache.delete(path);
+  await rebuildBacklinks();
+  render();
+}
+
+function wireDataview(container) {
+  container.querySelectorAll('input.dv-task-check').forEach((box) => {
+    box.addEventListener('mousedown', (e) => e.stopPropagation());
+    box.addEventListener('change', () => toggleDataviewTask(box.getAttribute('data-path'), Number(box.getAttribute('data-line'))));
+  });
+  container.querySelectorAll('.dv-cal-nav').forEach((b) => b.addEventListener('mousedown', (e) => e.stopPropagation()));
+}
 
 // Open an attachment (image or file) by its resolved vault path, via IPC.
 async function openAttachment(rel) {
@@ -2639,6 +2902,8 @@ async function openNote(rel, mode, opts = {}) {
   const res = await notesApi.read(rel);
   // A task board opens as a board ("Open as Markdown" in its menu shows the text).
   if (!opts.asText && res && !res.error && isBoard(res.content)) { await openTasks(rel); return; }
+  // A drawing opens in Draw.
+  if (!opts.asText && res && !res.error && (isDrawingRel(rel) || isDrawingText(res.content))) { await openDraw(rel); return; }
   navVisit({ view: 'note', rel });
   state.openNote = rel;
   state.noteContent = res && !res.error ? res.content : '';
@@ -2780,8 +3045,10 @@ function autoGrow(ta) {
 // Mount a single preview block; task toggles map to absolute source lines.
 function mountBlockMarkdown(container, bsrc, startLine, scope) {
   // refs: the whole note, so footnotes/link references in this block resolve
-  const nodes = renderMarkdown(bsrc, { doc: document, noteExists: wikiExists, attach: attachResolverFor(scope), refs: getSrcFor(scope), embedNote });
+  const rel = scope === 'note' ? state.openNote : (state.dailyNote.key ? dailyRel(state.dailyNote.key) : '');
+  const nodes = renderMarkdown(bsrc, { doc: document, noteExists: wikiExists, attach: attachResolverFor(scope), refs: getSrcFor(scope), embedNote, ...noteRenderOptions(rel) });
   for (const n of nodes) container.append(n);
+  wireDataview(container);
   container.querySelectorAll('[data-att]').forEach((el) => {
     el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAttachment(el.getAttribute('data-att')); });
   });
@@ -2810,7 +3077,7 @@ function blockPreview(scope, b) {
   el.dataset.blockStart = String(b.start);
   mountBlockMarkdown(el, blockText(getSrcFor(scope), b), b.start, scope);
   el.addEventListener('mousedown', (e) => {
-    if (e.target.closest('a, input, img, [data-att], summary, .tag')) return; // keep links/tasks/folds/tags single-click
+    if (e.target.closest('a, input, img:not(.mermaid-img), button, [data-att], summary, .tag')) return; // keep links/tasks/folds/tags/buttons single-click
     e.preventDefault();
     startEditBlock(scope, b.start, 'end');
   });
@@ -3610,6 +3877,7 @@ if (plansApi.onMenu) {
     else if (action === 'tab:takvim') setTab('takvim');
     else if (action === 'tab:notlar') setTab('notlar');
     else if (action === 'tasks') openTasks();
+    else if (action === 'draw') openDraw();
     else if (action === 'tab:ara') setTab('ara');
     else if (action === 'toggle-sidebar') toggleSidebar();
     else if (action === 'unused-attachments') showUnusedAttachments();
@@ -3642,6 +3910,7 @@ if (notesApi.onChanged) {
     if (isEditing()) return;
     if (state.contentView === 'graph') graph().show({ center: state.openNote });
     if (state.contentView === 'tasks' && state.board) await reloadBoard();
+    if (state.contentView === 'draw' && state.drawing) { await reloadDrawing(); return; }
     // Reload the open note if it changed on disk and nothing is being edited.
     if (state.openNote && state.noteView === 'blocks') {
       const res = await notesApi.read(state.openNote);
@@ -3672,6 +3941,9 @@ document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (!mod) return;
   const k = e.key.toLowerCase();
+  // In a drawing, Excalidraw's own shortcuts (undo, group, copy…) win; only
+  // the app's way out (modes, switcher, palette, settings) stays.
+  if (e.target && e.target.closest && e.target.closest('.draw-host') && !['1', '2', '3', '4', 'o', 'p', ',', 't', 'n'].includes(k)) return;
   if (k === 'z') {
     // Whole-document undo/redo for the block editor (overrides native undo).
     const editScope = state.blockEdit ? state.blockEdit.scope
@@ -3688,6 +3960,7 @@ document.addEventListener('keydown', (e) => {
   if (k === '1') { e.preventDefault(); setTab('takvim'); return; }
   if (k === '2') { e.preventDefault(); setTab('notlar'); return; }
   if (k === '3') { e.preventDefault(); openTasks(); return; }
+  if (k === '4') { e.preventDefault(); openDraw(); return; }
   if (k === 'f') { e.preventDefault(); setTab('ara'); return; }
   if (k === 't' && e.shiftKey) { e.preventDefault(); if (state.contentView === 'note' && state.openNote) openTemplatePicker(); return; }
   if (k === 't') { e.preventDefault(); goToday(); return; }

@@ -92,3 +92,51 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The complete list of contributors can be found at:
 - https://github.com/garycourt/uri-js/graphs/contributors```
+
+## Dataview, Mermaid (bundled into out/renderer by Vite)
+
+Notes' Dataview queries read frontmatter with **yaml** and dates with **luxon**;
+Mermaid diagrams are drawn by **mermaid** in the sandbox window. These packages
+and the ones they depend on are bundled, under these licenses (each package's
+own LICENSE file has the full text and copyright):
+
+- **MIT**: @antfu/install-pkg 2.1.0, @braintree/sanitize-url 7.1.2, @iconify/types 2.0.0, @iconify/utils 3.1.7, @mermaid-js/parser 1.2.1, @upsetjs/venn.js 2.0.0, commander 7.2.0, commander 8.3.0, cose-base 1.0.3, cose-base 2.2.0, cytoscape 3.34.4, cytoscape-cose-bilkent 4.1.0, cytoscape-fcose 2.2.0, dagre-d3-es 7.0.14, dayjs 1.11.23, es-toolkit 1.53.0, fastdom 1.0.12, hachure-fill 0.5.2, iconv-lite 0.6.3, import-meta-resolve 4.2.0, katex 0.16.47, khroma 2.1.0, layout-base 1.0.2, layout-base 2.0.1, lodash-es 4.18.1, luxon 3.7.2, marked 16.4.2, mermaid 11.17.2, package-manager-detector 1.9.0, path-data-parser 0.1.0, points-on-curve 0.2.0, points-on-path 0.2.1, roughjs 4.6.6, safer-buffer 2.1.2, strictdom 1.0.1, stylis 4.4.0, tinyexec 1.3.1, ts-dedent 2.3.0, uuid 14.0.3
+
+- **ISC**: d3 7.9.0, d3-array 3.2.4, d3-axis 3.0.0, d3-brush 3.0.0, d3-chord 3.0.1, d3-color 3.1.0, d3-contour 4.0.2, d3-delaunay 6.0.4, d3-dispatch 3.0.1, d3-drag 3.0.0, d3-dsv 3.0.1, d3-fetch 3.0.1, d3-force 3.0.0, d3-format 3.1.2, d3-geo 3.1.1, d3-hierarchy 3.1.2, d3-interpolate 3.0.1, d3-path 3.1.0, d3-polygon 3.0.1, d3-quadtree 3.0.1, d3-random 3.0.1, d3-scale 4.0.2, d3-scale-chromatic 3.1.0, d3-selection 3.0.0, d3-shape 3.2.0, d3-time 3.1.0, d3-time-format 4.1.0, d3-timer 3.0.1, d3-transition 3.0.1, d3-zoom 3.0.0, delaunator 5.1.0, internmap 2.0.3, internmap 1.0.1, yaml 2.9.1
+
+- **BSD-3-Clause**: d3-array 2.12.1, d3-ease 3.0.1, d3-path 1.0.9, d3-sankey 0.12.3, d3-shape 1.3.7, rw 1.3.3
+
+- **Apache-2.0**: @chevrotain/types 11.1.2
+
+- **(MPL-2.0 OR Apache-2.0)**: dompurify 3.4.17
+
+- **Unlicense**: robust-predicates 3.0.3
+
+## Draw (bundled into out/renderer by Vite)
+
+Draw mode is the **@excalidraw/excalidraw** editor on **react** / **react-dom**;
+drawings are stored with **lz-string**. Excalidraw's fonts (Excalifont, Virgil,
+Cascadia, Comic Shanns, Assistant, Nunito, Liberation, Lilita) are copied into
+the app as the @excalidraw/excalidraw package ships them; they are open-source
+fonts under their own licenses, listed with each font in the Excalidraw
+repository (github.com/excalidraw/excalidraw). These packages and
+the ones they depend on are bundled, under these licenses (each package's own
+LICENSE file has the full text and copyright):
+
+- **MIT**: @antfu/install-pkg 2.1.0, @babel/runtime 7.29.10, @braintree/sanitize-url 6.0.2, @braintree/sanitize-url 7.1.2, @excalidraw/excalidraw 0.18.1, @excalidraw/laser-pointer 1.3.1, @excalidraw/markdown-to-text 0.1.2, @excalidraw/mermaid-to-excalidraw 2.2.2, @excalidraw/random-username 1.1.0, @floating-ui/core 1.8.0, @floating-ui/dom 1.8.0, @floating-ui/react-dom 2.1.9, @floating-ui/utils 0.2.12, @iconify/types 2.0.0, @iconify/utils 3.1.7, @mermaid-js/parser 0.6.3, @mermaid-js/parser 1.2.1, @radix-ui/primitive 1.1.1, @radix-ui/primitive 1.0.0, @radix-ui/react-arrow 1.1.2, @radix-ui/react-collection 1.0.1, @radix-ui/react-compose-refs 1.1.1, @radix-ui/react-compose-refs 1.0.0, @radix-ui/react-context 1.1.1, @radix-ui/react-context 1.0.0, @radix-ui/react-direction 1.0.0, @radix-ui/react-dismissable-layer 1.1.5, @radix-ui/react-focus-guards 1.1.1, @radix-ui/react-focus-scope 1.1.2, @radix-ui/react-id 1.1.0, @radix-ui/react-id 1.0.0, @radix-ui/react-popover 1.1.6, @radix-ui/react-popper 1.2.2, @radix-ui/react-portal 1.1.4, @radix-ui/react-presence 1.1.2, @radix-ui/react-presence 1.0.0, @radix-ui/react-primitive 2.0.2, @radix-ui/react-primitive 1.0.1, @radix-ui/react-roving-focus 1.0.2, @radix-ui/react-slot 1.1.2, @radix-ui/react-slot 1.0.1, @radix-ui/react-tabs 1.0.2, @radix-ui/react-use-callback-ref 1.1.0, @radix-ui/react-use-callback-ref 1.0.0, @radix-ui/react-use-controllable-state 1.1.0, @radix-ui/react-use-controllable-state 1.0.0, @radix-ui/react-use-escape-keydown 1.1.0, @radix-ui/react-use-layout-effect 1.1.0, @radix-ui/react-use-layout-effect 1.0.0, @radix-ui/react-use-rect 1.1.0, @radix-ui/react-use-size 1.1.0, @radix-ui/rect 1.1.0, @upsetjs/venn.js 2.0.0, aria-hidden 1.2.6, binary-extensions 2.3.0, braces 3.0.3, canvas-roundrect-polyfill 0.0.1, chevrotain-allstar 0.3.1, chokidar 3.6.0, clsx 1.1.1, commander 7.2.0, commander 8.3.0, cose-base 1.0.3, cose-base 2.2.0, cross-env 7.0.3, cross-spawn 7.0.6, cytoscape 3.34.4, cytoscape-cose-bilkent 4.1.0, cytoscape-fcose 2.2.0, dagre-d3-es 7.0.14, dayjs 1.11.23, detect-node-es 1.1.0, es-toolkit 1.53.0, es6-promise-pool 2.5.0, fastdom 1.0.12, fill-range 7.1.1, fuzzy 0.1.3, get-nonce 1.0.1, glur 1.1.2, hachure-fill 0.5.2, iconv-lite 0.6.3, image-blob-reduce 3.0.1, immutable 4.3.9, import-meta-resolve 4.2.0, is-binary-path 2.1.0, is-extglob 2.1.1, is-glob 4.0.3, is-number 7.0.0, jotai 2.11.0, jotai-scope 0.7.2, katex 0.16.47, khroma 2.1.0, langium 3.3.1, layout-base 1.0.2, layout-base 2.0.1, lodash-es 4.17.21, lodash-es 4.18.1, lodash.debounce 4.0.8, lodash.throttle 4.1.1, lz-string 1.5.0, marked 16.4.2, mermaid 11.17.2, multimath 2.0.0, nanoid 4.0.2, nanoid 3.3.3, normalize-path 3.0.0, object-assign 4.1.1, open-color 1.9.1, package-manager-detector 1.9.0, path-data-parser 0.1.0, path-key 3.1.1, perfect-freehand 1.2.0, pica 7.1.1, picomatch 2.3.2, png-chunk-text 1.0.0, png-chunks-encode 1.0.0, png-chunks-extract 1.0.0, points-on-curve 0.2.0, points-on-curve 1.0.1, points-on-path 0.2.1, react 19.3.1, react-dom 19.3.1, react-remove-scroll 2.7.2, react-remove-scroll-bar 2.3.8, react-style-singleton 2.2.3, readdirp 3.6.0, roughjs 4.6.6, roughjs 4.6.4, safer-buffer 2.1.2, sass 1.51.0, scheduler 0.28.0, shebang-command 2.0.0, shebang-regex 3.0.0, sliced 1.0.1, strictdom 1.0.1, stylis 4.4.0, tinyexec 1.3.1, to-regex-range 5.0.1, ts-dedent 2.3.0, tunnel-rat 0.1.2, use-callback-ref 1.3.3, use-sidecar 1.1.3, use-sync-external-store 1.7.0, uuid 14.0.3, vscode-jsonrpc 8.2.0, vscode-languageserver 9.0.1, vscode-languageserver-protocol 3.17.5, vscode-languageserver-textdocument 1.0.16, vscode-languageserver-types 3.17.5, vscode-uri 3.0.8, webworkify 1.5.0, zustand 4.5.7
+
+- **ISC**: anymatch 3.1.3, d3 7.9.0, d3-array 3.2.4, d3-axis 3.0.0, d3-brush 3.0.0, d3-chord 3.0.1, d3-color 3.1.0, d3-contour 4.0.2, d3-delaunay 6.0.4, d3-dispatch 3.0.1, d3-drag 3.0.0, d3-dsv 3.0.1, d3-fetch 3.0.1, d3-force 3.0.0, d3-format 3.1.2, d3-geo 3.1.1, d3-hierarchy 3.1.2, d3-interpolate 3.0.1, d3-path 3.1.0, d3-polygon 3.0.1, d3-quadtree 3.0.1, d3-random 3.0.1, d3-scale 4.0.2, d3-scale-chromatic 3.1.0, d3-selection 3.0.0, d3-shape 3.2.0, d3-time 3.1.0, d3-time-format 4.1.0, d3-timer 3.0.1, d3-transition 3.0.1, d3-zoom 3.0.0, delaunator 5.1.0, glob-parent 5.1.2, inherits 2.0.4, internmap 2.0.3, internmap 1.0.1, isexe 2.0.0, which 2.0.2
+
+- **Apache-2.0**: @chevrotain/cst-dts-gen 11.0.3, @chevrotain/gast 11.0.3, @chevrotain/regexp-to-ast 11.0.3, @chevrotain/types 11.0.3, @chevrotain/types 11.1.2, @chevrotain/utils 11.0.3, browser-fs-access 0.29.1, chevrotain 11.0.3, crc-32 0.3.0, pwacompat 2.0.17
+
+- **BSD-3-Clause**: d3-array 2.12.1, d3-ease 3.0.1, d3-path 1.0.9, d3-sankey 0.12.3, d3-shape 1.3.7, rw 1.3.3, source-map-js 1.2.2
+
+- **(MPL-2.0 OR Apache-2.0)**: dompurify 3.4.17
+
+- **CC0-1.0**: fractional-indexing 3.2.0
+
+- **(MIT AND Zlib)**: pako 2.0.3
+
+- **Unlicense**: robust-predicates 3.0.3
+
+- **0BSD**: tslib 2.8.1

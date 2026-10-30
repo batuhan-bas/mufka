@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- The sandbox window (main.js): runs dataviewjs note scripts against a copy
+       of the vault's pages and draws Mermaid diagrams. No network (also blocked
+       for this window's session), no files, no Node. Mermaid styles its SVG
+       with inline <style>, hence style-src. -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'" />
+  <title>Sandbox</title>
+</head>
+<body>
+  <script type="module" src="./sandbox.js"></script>
+</body>
+</html>

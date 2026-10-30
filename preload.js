@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('notes', {
   openExternal: (url) => ipcRenderer.invoke('notes:openExternal', url),
   copy: (text) => ipcRenderer.invoke('app:copy', text),
   exportMarkdown: (title, content) => ipcRenderer.invoke('notes:exportMarkdown', title, content),
-  exportPDF: (title, src, noteDir) => ipcRenderer.invoke('notes:exportPDF', title, src, noteDir),
+  exportPDF: (title, src, noteDir, html) => ipcRenderer.invoke('notes:exportPDF', title, src, noteDir, html),
   // Attachments (<vault>/Ekler).
   attachList: () => ipcRenderer.invoke('attach:list'),
   // noteDir: the folder of the note the files are added to (attachments may
@@ -56,6 +56,10 @@ contextBridge.exposeInMainWorld('notes', {
   // dropped from Finder.
   pathForFile: (file) => webUtils.getPathForFile(file),
   layout: () => ipcRenderer.invoke('notes:layout'),
+  // Run a ```dataviewjs script in the sandbox window (main.js).
+  runDataviewJs: (payload) => ipcRenderer.invoke('dataview:runJs', payload),
+  // Draw a ```mermaid diagram (SVG text) in the sandbox window.
+  renderMermaid: (code) => ipcRenderer.invoke('mermaid:render', code),
   bookmarks: () => ipcRenderer.invoke('bookmarks:list'),
   treeStyles: () => ipcRenderer.invoke('treestyle:read'),
   saveTreeStyles: (data) => ipcRenderer.invoke('treestyle:write', data),

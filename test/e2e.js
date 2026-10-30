@@ -1272,9 +1272,11 @@ app.whenReady().then(() => setTimeout(async () => {
       for (let dy = 8; dy <= 48; dy += 8) { wc.sendInputEvent({ type: 'mouseMove', x: g.x, y: g.y + dy, button: 'left' }); await sleep(20); }
       wc.sendInputEvent({ type: 'mouseUp', x: g.x, y: g.y + 48, button: 'left', clickCount: 1 });
       assert(await waitFor2(() => byTitle('Eski gorev').endTime === '12:00', 3000), `resize did not save: ${byTitle('Eski gorev').endTime}`);
-      // ⌃Tab goes round: Planner → Tasks → Notes → Planner
+      // ⌃Tab goes round: Planner → Tasks → Draw → Notes → Planner
       await press('Tab', ['control']);
       assert(await waitFor('!!document.querySelector(".tasks") && document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true"', 2000), '⌃Tab did not switch to tasks');
+      await press('Tab', ['control']);
+      assert(await waitFor('document.getElementById("mode-draw").getAttribute("aria-pressed") === "true"', 2000), '⌃Tab did not switch to draw');
       await press('Tab', ['control']);
       assert(await waitFor('!document.querySelector(".planner") && document.getElementById("mode-notes").getAttribute("aria-pressed") === "true"', 2000), '⌃Tab did not switch to notes');
       await press('Tab', ['control']);

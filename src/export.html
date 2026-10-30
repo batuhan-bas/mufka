@@ -33,6 +33,19 @@
     /* Wiki links and external links print as plain black text. */
     a { color: #000; text-decoration: none; }
     input[type="checkbox"] { margin-right: 6pt; }
+    table { border-collapse: collapse; margin: 0 0 10pt; break-inside: avoid; }
+    th, td { border: 1px solid #bbb; padding: 3pt 6pt; text-align: left; vertical-align: top; }
+    th { background: #f0f0f0; }
+    /* Dataview results, Mermaid diagrams and drawings, as the app drew them. */
+    .dv-count { color: #666; font-weight: 400; margin-left: 4pt; }
+    .dv-null, .dv-key, .dv-empty { color: #666; }
+    .dv-error, .mermaid-error { color: #a00; }
+    .dv-task-group { font-weight: 600; margin: 6pt 0 2pt; }
+    .dv-cal-nav { display: none; }
+    .dv-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1pt; max-width: 360pt; }
+    .dv-cal-day { border: 1px solid #ddd; min-height: 24pt; font-size: 8pt; padding: 1pt; }
+    .mermaid-img, .draw-embed-img { display: block; max-width: 100%; height: auto; break-inside: avoid; margin: 0 0 8pt; }
+    kbd { border: 1px solid #aaa; border-radius: 3pt; padding: 0 3pt; font-size: 0.9em; }
   </style>
 </head>
 <body>
