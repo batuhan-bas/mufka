@@ -71,8 +71,9 @@ input, textarea, select { font: inherit; color: inherit; }
 
 /* --- sidebar --- */
 .sidebar {
-  width: 300px;
-  min-width: 300px;
+  position: relative;
+  width: var(--sidebar-w, 300px);
+  min-width: var(--sidebar-w, 300px);
   background: var(--panel);
   border-right: 1px solid var(--line);
   display: flex;
@@ -81,6 +82,20 @@ input, textarea, select { font: inherit; color: inherit; }
   overflow: hidden;
 }
 .side { flex: 1; overflow: auto; padding: 16px 14px; }
+/* The sidebar's right edge: drag to resize, double-click for the default width. */
+.sidebar-resizer {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 6px; z-index: 5;
+  cursor: col-resize; -webkit-app-region: no-drag;
+}
+.sidebar-resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 2px;
+  background: transparent; transition: background 0.12s ease;
+}
+.sidebar-resizer:hover::after, .sidebar-resizer:focus-visible::after, .resizing-sidebar .sidebar-resizer::after { background: var(--accent); }
+.sidebar-resizer:focus-visible { outline: none; }
+.resizing-sidebar, .resizing-sidebar * { cursor: col-resize !important; user-select: none; }
+#app.resizing-sidebar .sidebar { transition: none; }
+#app.sidebar-collapsed .sidebar-resizer { display: none; }
 
 /* --- Title bar (macOS) ---
    There is no system title bar: the traffic lights sit at the top left, over
