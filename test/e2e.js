@@ -461,6 +461,34 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor(`!!document.activeElement?.closest('.tree')`, 2000), 'Cmd+2 did not focus the notes tree');
     });
 
+    // 16b. The sidebar's right edge resizes it; the width survives a reload,
+    // double-click resets it.
+    await step('16b', 'sidebar resizes by dragging its edge', async () => {
+      const width = async () => Math.round(await js(`document.getElementById('sidebar').getBoundingClientRect().width`));
+      const r = await rectEval(`document.getElementById('sidebar-resizer')`);
+      assert(r, 'no resize handle');
+      wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y }); await sleep(60);
+      assert((await js(`getComputedStyle(document.getElementById('sidebar-resizer')).cursor`)) === 'col-resize', 'no resize cursor');
+      try { wc.debugger.attach('1.3'); } catch { /* attached */ }
+      const mouse = (type, x, buttons) => wc.debugger.sendCommand('Input.dispatchMouseEvent', { type, x, y: r.y, button: 'left', buttons, clickCount: 1 });
+      await mouse('mousePressed', r.x, 1);
+      for (let i = 1; i <= 5; i++) await mouse('mouseMoved', r.x + i * 20, 1);
+      await mouse('mouseReleased', r.x + 100, 0); await sleep(150);
+      const wide = await width();
+      assert(wide === 400, `drag did not widen the sidebar by 100px: ${wide}`);
+      assert(Number(await js(`localStorage.getItem('mufka-sidebar-width')`)) === wide, 'width not saved');
+      wc.reload(); await sleep(1800);
+      assert(Math.abs((await width()) - wide) <= 1, 'width not kept after reload');
+      const r2 = await rectEval(`document.getElementById('sidebar-resizer')`);
+      for (const clickCount of [1, 2]) {
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', x: r2.x, y: r2.y, button: 'left', buttons: 1, clickCount });
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', x: r2.x, y: r2.y, button: 'left', buttons: 0, clickCount });
+      }
+      await sleep(150);
+      assert((await width()) === 300, 'double-click did not reset the width');
+      try { wc.debugger.detach(); } catch { /* not attached */ }
+    });
+
     // 17. Copy copies the note's exact Markdown (whatever is on screen).
     let noteBody = '';
     await step(17, 'Copy copies raw Markdown', async () => {

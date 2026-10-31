@@ -327,6 +327,53 @@ function toggleSidebar() { setSidebar(!state.sidebarCollapsed); }
 function loadSidebar() { try { state.sidebarCollapsed = localStorage.getItem('mufka-sidebar') === '1'; } catch { /* ignore */ } applySidebar(); }
 sidebarToggle.addEventListener('click', toggleSidebar);
 
+// The sidebar's width: drag its right edge (arrow keys when focused),
+// double-click for the default. Remembered between launches.
+const SIDEBAR_W = { def: 300, min: 220, max: 600 };
+const sidebarResizer = document.getElementById('sidebar-resizer');
+function setSidebarWidth(w, save = true) {
+  const px = Math.round(Math.min(Math.max(w, SIDEBAR_W.min), Math.min(SIDEBAR_W.max, window.innerWidth - 360)));
+  appEl.style.setProperty('--sidebar-w', `${px}px`);
+  sidebarResizer.setAttribute('aria-valuenow', String(px));
+  if (save) { try { localStorage.setItem('mufka-sidebar-width', String(px)); } catch { /* ignore */ } }
+}
+function loadSidebarWidth() {
+  let w = SIDEBAR_W.def;
+  try { w = Number(localStorage.getItem('mufka-sidebar-width')) || SIDEBAR_W.def; } catch { /* ignore */ }
+  setSidebarWidth(w, false);
+}
+sidebarResizer.setAttribute('aria-valuemin', String(SIDEBAR_W.min));
+sidebarResizer.setAttribute('aria-valuemax', String(SIDEBAR_W.max));
+sidebarResizer.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  sidebarResizer.setPointerCapture(e.pointerId);
+  const startX = e.clientX;
+  const startW = sidebarEl.getBoundingClientRect().width;
+  appEl.classList.add('resizing-sidebar');
+  document.documentElement.classList.add('resizing-sidebar');
+  const move = (ev) => setSidebarWidth(startW + ev.clientX - startX, false);
+  const up = (ev) => {
+    sidebarResizer.removeEventListener('pointermove', move);
+    sidebarResizer.removeEventListener('pointerup', up);
+    sidebarResizer.removeEventListener('pointercancel', up);
+    appEl.classList.remove('resizing-sidebar');
+    document.documentElement.classList.remove('resizing-sidebar');
+    setSidebarWidth(startW + ev.clientX - startX);
+  };
+  sidebarResizer.addEventListener('pointermove', move);
+  sidebarResizer.addEventListener('pointerup', up);
+  sidebarResizer.addEventListener('pointercancel', up);
+});
+sidebarResizer.addEventListener('dblclick', () => setSidebarWidth(SIDEBAR_W.def));
+sidebarResizer.addEventListener('keydown', (e) => {
+  const step = e.shiftKey ? 40 : 10;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    setSidebarWidth(sidebarEl.getBoundingClientRect().width + (e.key === 'ArrowRight' ? step : -step));
+  }
+});
+
 // The old bottom tabs are now places in one sidebar. setTab keeps the names
 // (menus, shortcuts): 'takvim' opens the selected day, 'notlar' shows and
 // focuses the note tree, 'ara' focuses the search field.
@@ -4018,6 +4065,7 @@ async function safeDailyDates() {
 // --- boot ---
 
 async function boot() {
+  loadSidebarWidth();
   loadSidebar();
   loadRecent();
   loadRightbar();
