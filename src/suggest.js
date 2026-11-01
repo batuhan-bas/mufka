@@ -1,9 +1,9 @@
 // Editor autocomplete popup for textareas: "[[" suggests notes, "#x" suggests
-// tags (triggers in lib/suggest.mjs). The list sits under the caret; ↑/↓ move,
+// tags, "/" lists things to insert (triggers in lib/suggest.mjs). The list sits under the caret; ↑/↓ move,
 // Enter or Tab inserts, Esc closes. While it is open those keys belong to it,
 // so the block editor's own Enter/arrow handling does not run.
 //
-//   attachSuggest(textarea, { items(kind, query) → [{ label, detail?, insert }] })
+//   attachSuggest(textarea, { items(kind, query, trigger) → [{ label, detail?, insert, caret?, run?(ta) }] })
 
 import { detectTrigger, applySuggestion } from '../lib/suggest.mjs';
 
@@ -74,16 +74,17 @@ function choose(i) {
   const r = rows[i];
   closeSuggest();
   if (!r) return;
-  const { value, caret } = applySuggestion(ta.value, ta.selectionStart, trigger, r.insert);
+  const { value, caret } = applySuggestion(ta.value, ta.selectionStart, trigger, r.insert, r.caret);
   ta.value = value;
   ta.setSelectionRange(caret, caret);
   ta.dispatchEvent(new Event('input', { bubbles: true }));
+  if (r.run) r.run(ta);
 }
 
 function update(ta, api) {
   const trigger = ta.selectionStart === ta.selectionEnd ? detectTrigger(ta.value, ta.selectionStart) : null;
   if (!trigger) { if (state && state.ta === ta) closeSuggest(); return; }
-  const rows = api.items(trigger.kind, trigger.query).slice(0, 12);
+  const rows = api.items(trigger.kind, trigger.query, trigger).slice(0, trigger.kind === 'slash' ? 30 : 12);
   if (!rows.length) { closeSuggest(); return; }
   const keep = state && state.ta === ta && state.trigger.start === trigger.start ? Math.min(state.sel, rows.length - 1) : 0;
   state = { ta, trigger, rows, sel: keep };

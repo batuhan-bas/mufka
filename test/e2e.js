@@ -2012,6 +2012,37 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('.note-body a.wikilink');
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "Ozellik"', 3000), 'alias link did not open the note');
     });
+
+    // 73. The "/" menu: "/tas" + Enter starts a task, "/co" a code block with
+    //     the caret inside, "/link" goes on to the note suggestions.
+    await step(73, 'the / menu inserts blocks', async () => {
+      const file = path.join(notesDir, 'Slash.md');
+      fs.writeFileSync(file, 'ilk\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Slash'); await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Slash"', 3000), 'note did not open');
+      await clickSel('.note-body .block-tail'); // a new block after "ilk"
+      await typeText('/tas');
+      assert(await waitFor('document.querySelector("#suggest-list .suggest-item.selected .suggest-label")?.textContent === "Task"', 2000), `menu: ${await js('document.querySelector("#suggest-list")?.textContent')} value=${JSON.stringify(await blockVal())} active=${await js('document.activeElement?.id')}`);
+      await enter();
+      await typeText('yap');
+      assert(await waitFor('document.getElementById("block-editor")?.value === "- [ ] yap"', 2000), `after task: ${JSON.stringify(await blockVal())}`);
+      await press('Escape');
+      await clickSel('.note-body .block-tail');
+      await typeText('/co');
+      assert(await waitFor('document.querySelector("#suggest-list .suggest-item.selected .suggest-label")?.textContent === "Code block"', 2000), 'code block not offered');
+      await enter();
+      await typeText('x = 1');
+      assert(await waitFor('document.getElementById("block-editor")?.value === "```\\nx = 1\\n```"', 2000), `code: ${JSON.stringify(await blockVal())}`);
+      await press('Escape');
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('- [ ] yap') && fs.readFileSync(file, 'utf8').includes('```\nx = 1\n```'), 3000), `saved: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      await clickBlock('yap'); await press('End');
+      await typeText(' /lin');
+      assert(await waitFor('document.querySelector("#suggest-list .suggest-item.selected .suggest-label")?.textContent === "Link to a note"', 2000), 'link item not offered');
+      await enter();
+      assert(await waitFor('document.getElementById("block-editor")?.value.endsWith("yap [[") && !!document.querySelector("#suggest-list .suggest-item")', 2000), `link: ${JSON.stringify(await blockVal())}`);
+      await press('Escape'); await press('Escape');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

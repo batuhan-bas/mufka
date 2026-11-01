@@ -43,6 +43,7 @@ import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs
 import { countText } from '../lib/wordcount.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
 import { createTabs } from '../lib/tabs.mjs';
+import { slashItems } from '../lib/slash.mjs';
 import { readProps, setProp, deleteProp, renameProp, defaultValue, aliasesOf } from '../lib/properties.mjs';
 import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
@@ -3842,8 +3843,20 @@ function toggleNoteView() { setNoteView(state.noteView === 'source' ? 'blocks' :
 // rendered view can show the new file.
 // Autocomplete in every editor: [[ → notes (fuzzy, recent first on an empty
 // query), #x → tags of the vault (most used first).
+// What the "/" menu's app actions do (lib/slash.mjs); the "/" text is already gone.
+function runSlashAction(action, ta) {
+  const scope = ta.id === 'note-editor' ? 'note' : (state.blockEdit ? state.blockEdit.scope : 'note');
+  if (action === 'property') { startAddProperty(scope); return; }
+  if (scope !== 'note' || !state.openNote) { showToast('That works in a note'); return; }
+  if (action === 'attach') addFileToNote();
+  else if (action === 'template') openTemplatePicker();
+}
 const suggestApi = {
-  items(kind, q) {
+  items(kind, q, trigger) {
+    if (kind === 'slash') {
+      return slashItems(q, { atLineStart: trigger ? trigger.atLineStart : true, dailyLink: dayKey(new Date()) })
+        .map((r) => ({ ...r, run: r.action ? (ta) => runSlashAction(r.action, ta) : null }));
+    }
     if (kind === 'tag') {
       return buildTagIndex(state.vaultNotes).map((t) => ({ t, m: fuzzyMatch(q, t.tag) })).filter((x) => x.m)
         .sort((a, b) => b.m.score - a.m.score || b.t.count - a.t.count)

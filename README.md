@@ -172,6 +172,9 @@ yet? Home offers to open the Planner.
   as chips, numbers, dates and checkboxes (**⌘;** adds one, "Edit YAML" shows
   the source). **Aliases** work: `[[another name]]` links to the note, and ⌘O
   and `[[` find it by that name too.
+- **Type `/`** at the start of a line for the insert menu: headings, lists, a
+  task, quote, callout, code block, table, divider, a link or embed, a diagram,
+  a query, today's date, a file or a template. Keep typing to filter.
 - **Find in the note** with **⌘F**, and replace with **⌥⌘F**; replacing all is
   one undo step.
 - **Version history** keeps a version of each note every few minutes while you
