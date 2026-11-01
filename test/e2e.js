@@ -778,7 +778,7 @@ app.whenReady().then(() => setTimeout(async () => {
     await step(34, 'obsidian note: frontmatter, nested task, table, footnote', async () => {
       const src = '---\ntags: [is, rapor]\n---\n\n- ust\n  - [ ] alt gorev\n\n| A | B |\n| - | -: |\n| 1 | 2 |\n\nDipnot[^1].\n\n[^1]: Aciklama.';
       await setNoteSource(src);
-      assert(await waitFor('document.querySelector(".note-body dl.frontmatter")', 2500), 'frontmatter not rendered as properties');
+      assert(await waitFor('[...document.querySelectorAll(".note-body .props .prop-chip")].map(c => c.textContent.replace("×", "")).join(",") === "#is,#rapor"', 2500), 'frontmatter not rendered as properties');
       assert(!(await js('!!document.querySelector(".note-body hr")')), 'frontmatter fence rendered as a rule');
       assert(await js('document.querySelectorAll(".note-body table th").length === 2'), 'table header missing');
       assert(await js('document.querySelector(".note-body td.align-right")?.textContent === "2"'), 'column alignment missing');
@@ -818,7 +818,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(!(await js(`!!${treeRow('Blok')}`)), 'default vault notes still shown');
       await clickTreeRow('Proje'); await sleep(200);
       await clickTreeRow('Plan');
-      assert(await waitFor('document.querySelector(".note-body dl.frontmatter")', 3000), 'note from the chosen folder not opened');
+      assert(await waitFor('document.querySelector(".note-body .props")', 3000), 'note from the chosen folder not opened');
       await clickSel('#ara-input'); await typeText('Yeni dis not'); await enter();
       // Created next to the open note (Proje/), per the filter's target-folder rule.
       assert(await waitFor2(() => fs.existsSync(path.join(outsideVault, 'Proje', 'Yeni dis not.md')), 3000), 'new note not written into the chosen folder');
@@ -1974,6 +1974,43 @@ app.whenReady().then(() => setTimeout(async () => {
       await press('Escape');
       await clickSel('.split-close');
       assert(await waitFor('document.getElementById("split-pane").hidden && localStorage.getItem("mufka-split") === ""', 2000), 'right pane not closed');
+    });
+
+    // 72. Properties: edited in place (text, tags, checkbox), added with ⌘;,
+    //     removed; an alias makes [[Takma]] link to the note.
+    await step(72, 'properties editor and aliases', async () => {
+      const file = path.join(notesDir, 'Ozellik.md');
+      fs.writeFileSync(file, '---\nstatus: aktif\ntags: [bir]\ndone: false\n---\nGovde\n');
+      fs.writeFileSync(path.join(notesDir, 'Baglanti.md'), 'Bak: [[Takma]]\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Ozellik'); await enter();
+      assert(await waitFor('document.querySelectorAll(".note-body .props .prop-row").length === 3', 3000), 'properties not shown');
+      await retype('#prop-note-0-v', 'bitti'); await enter();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('status: bitti'), 3000), `text: ${fs.readFileSync(file, 'utf8')}`);
+      await clickSel('#prop-note-1-v'); await typeText('iki'); await enter();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('tags: [bir, iki]'), 3000), `tags: ${fs.readFileSync(file, 'utf8')}`);
+      assert(await waitFor('document.activeElement?.id === "prop-note-1-v"', 2000), 'focus left the tag field');
+      await clickSel('#prop-note-2-v');
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('done: true'), 3000), `checkbox: ${fs.readFileSync(file, 'utf8')}`);
+      await js('document.activeElement.blur()');
+      await press(';', ['meta']);
+      assert(await waitFor('document.activeElement?.id === "prop-note-new"', 2000), '⌘; did not start a new property');
+      await typeText('aliases'); await enter();
+      assert(await waitFor('document.activeElement?.id === "prop-note-3-v"', 3000), `new value not focused: ${await js('document.activeElement?.id')}`);
+      await typeText('Takma'); await enter();
+      assert(await waitFor2(() => /aliases:\n {2}- Takma\n---\nGovde/.test(fs.readFileSync(file, 'utf8')), 3000), `alias: ${fs.readFileSync(file, 'utf8')}`);
+      await hoverClickEval(`document.querySelector('.note-body .prop-row .prop-del')`, 'remove status');
+      assert(await waitFor2(() => !fs.readFileSync(file, 'utf8').includes('status:'), 3000), 'property not removed');
+      assert(await waitFor('document.querySelectorAll(".note-body .props .prop-row").length === 3', 2000), 'rows after remove');
+      // ⌘Z brings it back.
+      await js('document.activeElement.blur()');
+      await cmdZ();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('status: bitti'), 3000), 'undo did not bring the property back');
+      // The alias resolves.
+      await press('O', ['meta']); await typeText('Baglanti'); await enter();
+      assert(await waitFor('document.querySelector(".note-body a.wikilink")?.className === "wikilink"', 4000), `alias link: ${await js('document.querySelector(".note-body a.wikilink")?.className')}`);
+      await clickSel('.note-body a.wikilink');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Ozellik"', 3000), 'alias link did not open the note');
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);

@@ -168,6 +168,10 @@ yet? Home offers to open the Planner.
   closes it, ⇧⌘[ / ⇧⌘] switch. ⌥⌘-click puts a note in a pane on the right:
   its links, tasks and queries work there, and clicking its text swaps the
   panes so you can edit it.
+- **Properties** at the top of a note are edited in place: text, tags and lists
+  as chips, numbers, dates and checkboxes (**⌘;** adds one, "Edit YAML" shows
+  the source). **Aliases** work: `[[another name]]` links to the note, and ⌘O
+  and `[[` find it by that name too.
 - **Find in the note** with **⌘F**, and replace with **⌥⌘F**; replacing all is
   one undo step.
 - **Version history** keeps a version of each note every few minutes while you

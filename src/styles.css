@@ -865,7 +865,9 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .pl-today-btn { flex: none; font: inherit; font-size: 11px; background: var(--ground); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; cursor: pointer; color: var(--text); align-self: center; }
 .pl-today-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-.pl-scroll { flex: 1; overflow-y: auto; min-height: 220px; }
+/* Room on the right for the overlay scrollbar, so Sunday's plans (and their
+   ⋯ menus) are never under it. The day headers scroll inside, so they line up. */
+.pl-scroll { flex: 1; overflow-y: auto; min-height: 220px; padding-right: 12px; }
 .pl-hours { position: relative; }
 .pl-times { position: relative; }
 .pl-hour-label { height: 48px; font-size: 11px; color: var(--muted); text-align: right; padding-right: 6px; transform: translateY(-7px); font-variant-numeric: tabular-nums; }
@@ -1325,3 +1327,38 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 #app.split-open .content-col:not(.is-planner):not(.is-tasks):not(.is-draw):not(.is-graph) { padding-left: 32px; padding-right: 32px; }
 .split-note-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 20px; line-height: 1.2; }
 .split-col > .split-note-title + * { margin-top: 0; }
+
+/* --- the properties editor (frontmatter) --- */
+.props { border: 1px solid var(--line); border-radius: 8px; padding: 6px 6px 4px; cursor: default; }
+.props-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 4px; }
+.props-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+.props-raw { border: none; background: transparent; color: var(--muted); font-size: 12px; padding: 2px 6px; border-radius: 4px; }
+.props-raw:hover { color: var(--text); background: var(--sel); }
+.props-error { margin: 4px 6px 6px; font-size: 13px; color: var(--danger); }
+.prop-row { display: grid; grid-template-columns: 18px minmax(90px, 160px) 1fr 22px; align-items: center; gap: 6px; min-height: 32px; padding: 0 4px; border-radius: 6px; }
+.prop-row:hover { background: var(--panel); }
+.prop-icon { display: inline-grid; place-items: center; color: var(--muted); }
+.prop-num { font-size: 10px; font-weight: 700; font-family: var(--mono); }
+.prop-key, .prop-input, .prop-chip-input {
+  min-width: 0; width: 100%; border: 1px solid transparent; background: transparent; border-radius: 4px;
+  padding: 4px 6px; font-size: 14px; color: var(--text);
+}
+.prop-key { color: var(--muted); }
+.prop-key:hover, .prop-input:hover { border-color: var(--line); }
+.prop-key:focus, .prop-input:focus { outline: none; border-color: var(--accent); background: var(--ground); color: var(--text); }
+.prop-input[type="date"], .prop-input[type="datetime-local"] { color-scheme: dark; width: auto; }
+.prop-check { width: 16px; height: 16px; margin: 0 6px; accent-color: var(--accent-fill); }
+.prop-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 3px 2px; min-height: 30px; cursor: text; }
+.prop-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 2px 1px 8px; border-radius: 999px; background: var(--chip-bg); color: var(--chip-text); font-size: 13px; }
+.prop-tags .prop-chip { color: var(--accent); }
+.prop-chip-x { border: none; background: transparent; color: inherit; opacity: 0.6; width: 18px; height: 18px; padding: 0; border-radius: 50%; font-size: 13px; line-height: 1; }
+.prop-chip-x:hover { opacity: 1; background: rgb(255 255 255 / 0.1); }
+.prop-chip-input { flex: 1; min-width: 80px; width: auto; }
+.prop-chip-input:focus { outline: none; }
+.prop-object { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prop-del { border: none; background: transparent; color: var(--muted); width: 22px; height: 22px; padding: 0; border-radius: 4px; visibility: hidden; }
+.prop-row:hover .prop-del, .prop-del:focus-visible { visibility: visible; }
+.prop-del:hover { color: var(--danger); background: var(--sel); }
+.props-add { border: none; background: transparent; color: var(--muted); font-size: 13px; padding: 6px 8px; border-radius: 6px; }
+.props-add:hover { color: var(--text); background: var(--panel); }
+.prop-new { grid-template-columns: 18px minmax(90px, 220px); }

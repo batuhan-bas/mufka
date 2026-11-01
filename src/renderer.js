@@ -43,6 +43,7 @@ import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs
 import { countText } from '../lib/wordcount.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
 import { createTabs } from '../lib/tabs.mjs';
+import { readProps, setProp, deleteProp, renameProp, defaultValue, aliasesOf } from '../lib/properties.mjs';
 import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
 import { buildTagIndex } from '../lib/tags.mjs';
@@ -90,6 +91,7 @@ const state = {
   bookmarks: [],          // bookmarked note rels (Obsidian bookmarks.json via main)
   openNote: null,         // open note rel (path), e.g. 'İş/Q1.md'
   noteContent: '',
+  propAdding: null,       // 'note' | 'daily': the properties editor's new-property row is open
   noteView: 'blocks',     // 'blocks' (live preview) | 'source' (raw textarea)
   blockEdit: null,        // { scope:'note'|'daily', startLine?, newAfter?, caret }
   blockCaretPos: null,    // caret offset to apply to the block editor after render
@@ -1748,16 +1750,22 @@ function openQuickSwitcher() {
         const p = t ? null : fuzzyMatch(q, n.rel.replace(/\.md$/i, ''));
         if (t) scored.push({ n, score: t.score + (state.recent.includes(n.rel) ? 2 : 0), indices: t.indices });
         else if (p) scored.push({ n, score: p.score - 5, indices: null });
+        else {
+          // Another name of the note (its aliases), shown beside the title.
+          const a = (n.aliases || []).map((al) => ({ al, m: fuzzyMatch(q, al) })).filter((x) => x.m).sort((x, y) => y.m.score - x.m.score)[0];
+          if (a) scored.push({ n, score: a.m.score - 1, indices: null, alias: a.al });
+        }
       }
       scored.sort((a, b) => b.score - a.score);
-      return scored.map((x) => switcherRow(x.n, x.indices));
+      return scored.map((x) => switcherRow(x.n, x.indices, x.alias));
     },
     empty: createRow,
     onShiftEnter: (q) => createNamedNote(q),
   });
 }
-function switcherRow(n, indices) {
-  return { label: n.title, indices, detail: n.folder ? n.folder.split('/').join(' / ') : '', run: () => openNote(n.rel, 'oku', { keepTab: true }) };
+function switcherRow(n, indices, alias) {
+  const where = n.folder ? n.folder.split('/').join(' / ') : '';
+  return { label: alias ? `${alias} → ${n.title}` : n.title, indices, detail: where, run: () => openNote(n.rel, 'oku', { keepTab: true }) };
 }
 async function createNamedNote(q) {
   const name = q.trim();
@@ -1821,6 +1829,7 @@ function commandList() {
     { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
     { label: 'New tab', hint: '⌥⌘T', run: () => newTab() },
     { label: 'Open this note to the right', when: noteOpen, run: () => openSplit(state.openNote) },
+    { label: 'Add property to this note', hint: '⌘;', when: () => noteOpen() && state.noteView === 'blocks', run: () => startAddProperty('note') },
     { label: 'Swap the two panes', when: () => !!split, run: () => swapSplit() },
     { label: 'Close the right pane', when: () => !!split, run: () => closeSplit() },
     { label: 'Close tab', hint: '⌘W', when: () => tabs.count > 1, run: () => closeTab() },
@@ -2302,6 +2311,7 @@ function noteActionItems(title, getSrc, saveUnsaved) {
     { label: 'Open local graph', fn: () => { closeMenu(); openGraph({ local: true }); } },
     { label: 'Insert template…', fn: () => { closeMenu(); openTemplatePicker(); } },
     { label: 'Open to the right', fn: () => { closeMenu(); openSplit(state.openNote); } },
+    { label: 'Add property', fn: () => { closeMenu(); startAddProperty('note'); } },
     { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(); } },
     { label: 'Export…', fn: () => openMenu('menu-note', () => exportSubItems(title, getSrc, saveUnsaved)) },
     { label: 'Delete', fn: () => openMenu('menu-note', () => [
@@ -2518,6 +2528,7 @@ async function refreshTree() {
     state.treeFolders = res.folders.map((f) => f.rel);
     state.treeNotes = res.notes;
     state.notesFlat = flattenNotes(res.notes);
+    applyAliases();
   }
   await refreshAttachList();
 }
@@ -2531,10 +2542,19 @@ async function refreshAttachList() {
 // personal vault. Called when a note/day is opened, on window focus, and at
 // launch — i.e. right before any backlink section is shown, so it is always
 // current (a note's own backlinks are unaffected by editing that note).
+// Notes' other names (frontmatter "aliases"), so [[alias]] finds them.
+function applyAliases() {
+  const by = new Map((state.vaultNotes || []).map((n) => [n.rel, aliasesOf(n.content || '')]));
+  for (const n of state.notesFlat) {
+    const own = n.rel === state.openNote ? aliasesOf(state.noteContent) : by.get(n.rel);
+    n.aliases = own && own.length ? own : undefined;
+  }
+}
 async function rebuildBacklinks() {
   const res = await notesApi.all();
   state.vaultNotes = Array.isArray(res) ? res : [];
   state.backlinks = buildBacklinkIndex(state.vaultNotes);
+  applyAliases();
 }
 
 // Rebuild the index without blocking the current render, then re-render so the
@@ -3107,6 +3127,7 @@ async function openNote(rel, mode, opts = {}) {
   state.noteCache.set(rel, state.noteContent);
   state.noteView = 'blocks';
   state.blockEdit = null;
+  state.propAdding = null;
   state.noteDeleteConfirm = false;
   state.contentView = 'note';
   state.selectedFolder = null;
@@ -3470,7 +3491,180 @@ function mountBlockMarkdown(container, bsrc, startLine, scope) {
   });
 }
 
+// --- the properties editor (lib/properties.mjs) ---------------------------
+// The frontmatter of a note shows as a table of properties to edit in place:
+// text, lists and tags as chips, numbers, dates, checkboxes. "Edit YAML"
+// opens the raw block. Each change is saved and is one undo step.
+const PROP_ICONS = { tags: 'tag', list: 'outline', checkbox: 'check', date: 'calendar', datetime: 'calendar', object: 'more', text: 'tiFileText' };
+function commitProps(scope, change) {
+  const src = getSrcFor(scope);
+  let next;
+  try { next = change(src); } catch (e) { showToast(e.message || 'Could not change the properties'); return false; }
+  if (next === src) return false;
+  setSrc(scope, next, true);
+  histRecord(scope);
+  // Re-render once the click that caused it has landed; keep the focus where it went.
+  whenPointerUp(() => {
+    const a = document.activeElement;
+    if (!state.focus && a && a.id && a.closest && a.closest('.props')) state.focus = a.id;
+    render();
+  });
+  return true;
+}
+function startAddProperty(scope = 'note') {
+  flushActiveEditor();
+  state.propAdding = scope;
+  state.focus = `prop-${scope}-new`;
+  render();
+}
+function propertiesBlock(scope, b) {
+  const src = getSrcFor(scope);
+  const info = readProps(src);
+  const box = elem('div', 'block props');
+  if (b) box.dataset.blockStart = String(b.start);
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'Properties');
+  const head = elem('div', 'props-head');
+  head.append(elem('span', 'props-title', 'Properties'));
+  if (b) {
+    const raw = elem('button', 'props-raw', 'Edit YAML'); raw.type = 'button';
+    raw.title = 'Edit the properties as text';
+    raw.addEventListener('click', () => startEditBlock(scope, b.start, 'end'));
+    head.append(raw);
+  }
+  box.append(head);
+  if (info.error) {
+    box.append(elem('p', 'props-error', `These properties are not valid YAML (${info.error.split('\n')[0]}). Use Edit YAML to fix them.`));
+    return box;
+  }
+  info.props.forEach((p, i) => box.append(propRow(scope, p, i)));
+  if (state.propAdding === scope) box.append(propNewRow(scope));
+  else {
+    const add = elem('button', 'props-add', '+ Add property'); add.type = 'button';
+    add.addEventListener('click', () => startAddProperty(scope));
+    box.append(add);
+  }
+  return box;
+}
+function propRow(scope, p, i) {
+  const row = elem('div', `prop-row prop-${p.type}`);
+  const id = `prop-${scope}-${i}`;
+  const ic = icon(PROP_ICONS[p.type] || 'tiFileText', { size: 14 });
+  ic.classList.add('prop-icon');
+  const key = document.createElement('input');
+  key.className = 'prop-key'; key.id = `${id}-k`; key.value = p.key; key.spellcheck = false;
+  key.setAttribute('aria-label', 'Property name');
+  key.addEventListener('change', () => { if (!commitProps(scope, (s) => renameProp(s, p.key, key.value))) key.value = p.key; });
+  key.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); key.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); key.value = p.key; key.blur(); }
+  });
+  const val = elem('div', 'prop-value');
+  val.append(propEditor(scope, p, `${id}-v`));
+  const del = elem('button', 'prop-del', '×'); del.type = 'button';
+  del.title = `Remove ${p.key}`; del.setAttribute('aria-label', `Remove ${p.key}`);
+  del.addEventListener('click', () => commitProps(scope, (s) => deleteProp(s, p.key)));
+  row.append(p.type === 'number' ? elem('span', 'prop-icon prop-num', '12') : ic, key, val, del);
+  return row;
+}
+function propEditor(scope, p, id) {
+  const set = (v) => commitProps(scope, (s) => setProp(s, p.key, v));
+  const field = (type, value) => {
+    const f = document.createElement('input');
+    f.type = type; f.id = id; f.className = 'prop-input'; f.value = value;
+    f.setAttribute('aria-label', p.key);
+    f.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); f.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); f.value = value; f.blur(); }
+    });
+    return f;
+  };
+  if (p.type === 'checkbox') {
+    const c = document.createElement('input');
+    c.type = 'checkbox'; c.id = id; c.className = 'prop-check'; c.checked = p.value === true;
+    c.setAttribute('aria-label', p.key);
+    c.addEventListener('change', () => set(c.checked));
+    return c;
+  }
+  if (p.type === 'number') {
+    const f = field('number', String(p.value));
+    f.addEventListener('change', () => set(f.value === '' ? null : Number(f.value)));
+    return f;
+  }
+  if (p.type === 'date' || p.type === 'datetime') {
+    const s = p.value instanceof Date ? p.value.toISOString().slice(0, 10) : String(p.value);
+    const f = field(p.type === 'date' ? 'date' : 'datetime-local', p.type === 'date' ? s : s.replace(' ', 'T').slice(0, 16));
+    f.addEventListener('change', () => { if (f.value) set(p.type === 'date' ? f.value : (s.includes('T') ? f.value : f.value.replace('T', ' '))); });
+    return f;
+  }
+  if (p.type === 'list' || p.type === 'tags') {
+    const items = (Array.isArray(p.value) ? p.value : (p.value == null || p.value === '' ? [] : [p.value])).map((x) => String(x));
+    const wrap = elem('div', 'prop-chips');
+    items.forEach((it, k) => {
+      const chip = elem('span', 'prop-chip');
+      chip.append(elem('span', null, p.type === 'tags' ? `#${it.replace(/^#/, '')}` : it));
+      const x = elem('button', 'prop-chip-x', '×'); x.type = 'button'; x.tabIndex = -1;
+      x.setAttribute('aria-label', `Remove ${it}`);
+      x.addEventListener('click', () => set(items.filter((_, j) => j !== k)));
+      chip.append(x);
+      wrap.append(chip);
+    });
+    const add = document.createElement('input');
+    add.type = 'text'; add.id = id; add.className = 'prop-chip-input'; add.spellcheck = false;
+    add.placeholder = items.length ? '' : (p.type === 'tags' ? 'Add a tag' : 'Add a value');
+    add.setAttribute('aria-label', `Add to ${p.key}`);
+    const push = () => {
+      const v = add.value.split(',').map((x) => x.trim().replace(p.type === 'tags' ? /^#/ : /^$/, '')).filter(Boolean);
+      if (!v.length) return false;
+      add.value = '';
+      state.focus = id;
+      return set([...items, ...v.filter((x) => !items.includes(x))]);
+    };
+    add.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || (e.key === ',' && add.value.trim())) { e.preventDefault(); push(); }
+      else if (e.key === 'Backspace' && !add.value && items.length) { e.preventDefault(); state.focus = id; set(items.slice(0, -1)); }
+      else if (e.key === 'Escape') { add.value = ''; add.blur(); }
+    });
+    add.addEventListener('blur', () => { if (add.value.trim()) push(); });
+    wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) { e.preventDefault(); add.focus(); } });
+    wrap.append(add);
+    return wrap;
+  }
+  if (p.type === 'object') {
+    const t = elem('span', 'prop-object', JSON.stringify(p.value));
+    t.title = 'Nested values: use Edit YAML';
+    return t;
+  }
+  const f = field('text', p.value == null ? '' : String(p.value));
+  f.addEventListener('change', () => set(f.value));
+  return f;
+}
+function propNewRow(scope) {
+  const row = elem('div', 'prop-row prop-new');
+  const key = document.createElement('input');
+  key.className = 'prop-key'; key.id = `prop-${scope}-new`; key.placeholder = 'Property name'; key.spellcheck = false;
+  key.setAttribute('aria-label', 'New property name');
+  const done = (save) => {
+    const name = key.value.trim();
+    state.propAdding = null;
+    if (save && name) {
+      const count = readProps(getSrcFor(scope)).props?.length ?? 0;
+      if (readProps(getSrcFor(scope)).props?.some((p) => p.key === name)) { showToast(`There is already a property named “${name}”`); render(); return; }
+      state.focus = `prop-${scope}-${count}-v`;
+      if (!commitProps(scope, (s) => setProp(s, name, defaultValue(name)))) render();
+    } else render();
+  };
+  key.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); done(true); }
+    if (e.key === 'Escape') { e.preventDefault(); done(false); }
+  });
+  key.addEventListener('blur', () => { if (state.propAdding) whenPointerUp(() => { if (state.propAdding && document.activeElement !== key) done(true); }); });
+  row.append(elem('span', 'prop-icon'), key);
+  return row;
+}
+
 function blockPreview(scope, b) {
+  if (b.type === 'frontmatter') return propertiesBlock(scope, b);
   const el = elem('div', `block md block-${b.type}`); // block-image, block-heading… for spacing
   el.dataset.blockStart = String(b.start);
   mountBlockMarkdown(el, blockText(getSrcFor(scope), b), b.start, scope);
@@ -3579,6 +3773,7 @@ function renderBlockEditor(container, scope) {
   if (!edit && blocks.length === 0) { state.blockEdit = { scope, newAfter: -1, caret: 0, auto: true }; edit = state.blockEdit; }
 
   const wrap = elem('div', 'blocks');
+  if (state.propAdding === scope && !blocks.some((b) => b.type === 'frontmatter')) wrap.append(propertiesBlock(scope, null));
   if (edit && edit.newAfter === -1) wrap.append(blockTextarea(scope, null, edit));
   for (const b of blocks) {
     if (edit && edit.startLine === b.start) { wrap.append(blockTextarea(scope, b, edit)); continue; }
@@ -3659,9 +3854,18 @@ const suggestApi = {
       ? fuzzyFilter(q, state.notesFlat, (n) => n.title).map((x) => x.item)
       : [...state.recent.map((r) => state.notesFlat.find((n) => n.rel === r)).filter(Boolean),
         ...state.notesFlat.filter((n) => !state.recent.includes(n.rel))];
-    return rows.filter((n) => n.rel !== state.openNote || q.trim()).map((n) => ({
+    const out = rows.filter((n) => n.rel !== state.openNote || q.trim()).map((n) => ({
       label: n.title, detail: n.folder ? n.folder.split('/').join(' / ') : '', insert: `[[${linkTextFor(n.rel, rels)}]]`,
     }));
+    // An alias that matches links to its note and shows the alias: [[Title|alias]].
+    if (q.trim()) {
+      for (const n of state.notesFlat) {
+        for (const al of n.aliases || []) {
+          if (fuzzyMatch(q, al) && !fuzzyMatch(q, n.title)) out.push({ label: al, detail: `→ ${n.title}`, insert: `[[${linkTextFor(n.rel, rels)}|${al}]]` });
+        }
+      }
+    }
+    return out;
   },
 };
 
@@ -4444,6 +4648,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '[' || e.code === 'BracketLeft') { if (!isTextTarget(e.target)) { e.preventDefault(); goNav(-1); } return; }
   if (e.key === ']' || e.code === 'BracketRight') { if (!isTextTarget(e.target)) { e.preventDefault(); goNav(1); } return; }
   if (k === '/') { e.preventDefault(); showShortcuts(); return; }
+  if (e.code === 'Semicolon' && state.contentView === 'note' && state.openNote && state.noteView === 'blocks') { e.preventDefault(); startAddProperty('note'); return; }
   if (k === 'p' && e.shiftKey) { e.preventDefault(); plannerApi.newPlan(state.contentView === 'planner' && !isThisWeekShown() ? startOfWeek(state.weekDate) : new Date()); return; }
   if (k === 'o') { e.preventDefault(); openQuickSwitcher(); return; }
   if (state.contentView === 'planner' && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); openPlanner(addDays(state.weekDate, e.key === 'ArrowLeft' ? -7 : 7)); return; }
