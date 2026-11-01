@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('notes', {
   useDefaultVault: () => ipcRenderer.invoke('vault:useDefault'),
   openExternal: (url) => ipcRenderer.invoke('notes:openExternal', url),
   copy: (text) => ipcRenderer.invoke('app:copy', text),
+  clipboardText: () => ipcRenderer.invoke('app:clipboardText'),
   exportMarkdown: (title, content) => ipcRenderer.invoke('notes:exportMarkdown', title, content),
   exportPDF: (title, src, noteDir, html) => ipcRenderer.invoke('notes:exportPDF', title, src, noteDir, html),
   // Attachments (<vault>/Ekler).

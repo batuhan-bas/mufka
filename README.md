@@ -162,6 +162,8 @@ yet? Home offers to open the Planner.
   lists every shortcut.
 - **Code blocks** are coloured by their language (```js, ```python, ```bash and
   about 40 more), on screen and in PDF exports.
+- **Pasting from the web**, Google Docs or Mail gives Markdown: headings, bold,
+  links, lists, tasks, tables and code. **⇧⌘V** pastes plain text.
 - **Find in the note** with **⌘F**, and replace with **⌥⌘F**; replacing all is
   one undo step.
 - **Version history** keeps a version of each note every few minutes while you

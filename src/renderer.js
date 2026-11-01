@@ -33,6 +33,7 @@ import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
 import { openVersionHistory, openDeletedNotes } from './history-view.js';
 import { createFindBar } from './find-bar.js';
+import { htmlToMarkdown, isRichHtml, insideCodeFence } from '../lib/paste.mjs';
 import { parseQuery, isPlainQuery, matchNote, searchDoc, hitTerms, hitsIn, snippetFor } from '../lib/search.mjs';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
@@ -3758,7 +3759,7 @@ function wireAttachments(ta, scope) {
   ta.addEventListener('paste', async (e) => {
     const items = e.clipboardData && e.clipboardData.items;
     const hasImage = items && [...items].some((it) => it.kind === 'file' && it.type.startsWith('image/'));
-    if (!hasImage) return;
+    if (!hasImage) { pasteRich(e, ta); return; }
     e.preventDefault();
     const res = await notesApi.attachPaste(noteDir());
     if (res && res.error) { showToast(res.error); return; }
@@ -3773,6 +3774,29 @@ function wireAttachments(ta, scope) {
     e.stopPropagation(); // the note-level drop handler must not attach it twice
     await attachDropped(files, scope, null);
   });
+}
+
+// Pasted HTML (a web page, Google Docs, Mail) becomes Markdown (lib/paste.mjs).
+// Plain text, code editors' copies and a paste inside a code block stay as
+// they are; ⇧⌘V always pastes plain text. Inserted like typing, so ⌘Z undoes it.
+function pasteRich(e, ta) {
+  const data = e.clipboardData;
+  if (!data) return;
+  const html = data.getData('text/html');
+  if (!isRichHtml(html) || data.types.includes('vscode-editor-data') || insideCodeFence(ta.value, ta.selectionStart)) return;
+  let md = '';
+  try { md = htmlToMarkdown(html); } catch { return; }
+  if (!md || md === data.getData('text/plain').trim()) return;
+  e.preventDefault();
+  if (!document.execCommand('insertText', false, md)) ta._attachInsert(md);
+}
+async function pastePlain() {
+  const t = document.activeElement;
+  if (!t || !(t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && /^(text|search)$/.test(t.type)))) return;
+  const text = await notesApi.clipboardText();
+  if (typeof text !== 'string' || !text) return;
+  t.focus();
+  if (!document.execCommand('insertText', false, text)) t.setRangeText(text, t.selectionStart, t.selectionEnd, 'end');
 }
 
 // "Dosya ekle…": pick files via a native dialog and insert at the note's caret.
@@ -4049,6 +4073,7 @@ if (plansApi.onMenu) {
     else if (action === 'tasks') openTasks();
     else if (action === 'draw') openDraw();
     else if (action === 'tab:ara') setTab('ara');
+    else if (action === 'paste-plain') pastePlain();
     else if (action === 'toggle-sidebar') toggleSidebar();
     else if (action === 'unused-attachments') showUnusedAttachments();
     else if (action === 'graph') openGraph();

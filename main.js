@@ -1450,6 +1450,7 @@ function buildMenu() {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
+        { label: 'Paste as Plain Text', accelerator: 'Shift+CmdOrCtrl+V', click: () => sendMenu('paste-plain') },
         { role: 'selectAll' },
       ],
     },
@@ -1737,6 +1738,7 @@ ipcMain.handle('bookmarks:toggle', wrap((rel) => bookmarksToggle(rel)));
 ipcMain.handle('attach:open', wrap((rel) => attachOpen(rel)));
 ipcMain.handle('attach:unused', wrap(() => attachUnused()));
 ipcMain.handle('attach:trash', wrap((names) => attachTrash(names)));
+ipcMain.handle('app:clipboardText', wrap(async () => clipboard.readText()));
 ipcMain.handle('app:copy', wrap(async (text) => { await clipboard.writeText(String(text ?? '')); return { ok: true }; }));
 ipcMain.handle('notes:exportMarkdown', wrap((title, content) => exportMarkdown(title, content)));
 ipcMain.handle('notes:exportPDF', wrap((title, src, noteDir, html) => exportPDF(title, src, noteDir, html)));

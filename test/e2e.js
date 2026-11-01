@@ -1901,6 +1901,31 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.getElementById("block-editor")?.value.startsWith("```python")', 2000), 'editing did not show the source');
       await press('Escape');
     });
+
+    // 69. Pasting a web page's HTML gives Markdown; ⇧⌘V (Paste as Plain
+    //     Text) and a paste inside a code block keep the plain text.
+    await step(69, 'pasted HTML becomes Markdown; plain paste stays plain', async () => {
+      const file = path.join(notesDir, 'Yapistir.md');
+      fs.writeFileSync(file, 'Basla\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Yapistir');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Yapistir"', 3000), 'note not in the switcher');
+      await enter();
+      await toSource();
+      const html = '<h2>Liste</h2><ul><li><b>kalın</b> madde</li><li><a href="https://example.com">bağlantı</a></li></ul>';
+      const put = async (h, t) => clipboard.write([new ClipboardItem({ 'text/html': new Blob([h], { type: 'text/html' }), 'text/plain': new Blob([t], { type: 'text/plain' }) })]);
+      await put(html, 'Liste\nkalın madde\nbağlantı');
+      await js(`(()=>{const t=document.querySelector('#note-editor'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); return true;})()`);
+      wc.paste(); await sleep(300);
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === 'Basla\n## Liste\n\n- **kalın** madde\n- [bağlantı](https://example.com)', 3000), `paste: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      wc.send('menu:action', 'paste-plain'); await sleep(400);
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').endsWith('(https://example.com)Liste\nkalın madde\nbağlantı'), 3000), `plain paste: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      // Inside a code block: plain.
+      await js(`(()=>{const t=document.querySelector('#note-editor'); t.value='\`\`\`\\n'; t.dispatchEvent(new Event('input',{bubbles:true})); t.setSelectionRange(4,4); return true;})()`);
+      wc.paste(); await sleep(300);
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === '```\nListe\nkalın madde\nbağlantı', 3000), `code paste: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      await press('E', ['meta']);
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }
