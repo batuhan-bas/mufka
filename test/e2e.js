@@ -1926,6 +1926,35 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === '```\nListe\nkalın madde\nbağlantı', 3000), `code paste: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
       await press('E', ['meta']);
     });
+
+    // 70. Tabs: ⌘Enter in the switcher opens a note in a new tab; ⇧⌘[ ⇧⌘]
+    //     switch, each tab keeps its place; ⌘W closes; a closed tab reopens;
+    //     the tabs are saved; one tab hides the strip.
+    await step(70, 'tabs: open in a new tab, switch, close, reopen', async () => {
+      await press('O', ['meta']); await typeText('Bul'); await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul" && document.getElementById("tab-strip").hidden', 3000), 'one tab should hide the strip');
+      await press('O', ['meta']); await typeText('Kod');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Kod"', 3000), 'Kod not in the switcher');
+      await press('Return', ['meta']);
+      const tabNames = 'JSON.stringify([...document.querySelectorAll("#tab-strip .tab-item")].map(t => (t.classList.contains("active") ? "*" : "") + t.textContent.replace("×", "")))';
+      assert(await waitFor(`${tabNames} === '["Bul","*Kod"]' && document.querySelector(".note-title")?.textContent === "Kod"`, 3000), `tabs: ${await js(tabNames)}`);
+      await press('[', ['meta', 'shift']);
+      assert(await waitFor(`${tabNames} === '["*Bul","Kod"]' && document.querySelector(".note-title")?.textContent === "Bul"`, 3000), `after ⇧⌘[: ${await js(tabNames)}`);
+      // This tab moves on; the other keeps its note.
+      await press('O', ['meta']); await typeText('Gecmis'); await enter();
+      assert(await waitFor(`${tabNames} === '["*Gecmis","Kod"]'`, 3000), `navigate in tab: ${await js(tabNames)}`);
+      await press('[', ['meta']);
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'back within the tab');
+      assert(await js('JSON.parse(localStorage.getItem("mufka-tabs")).tabs.length === 2'), 'tabs not saved');
+      await press('W', ['meta']);
+      assert(await waitFor(`document.getElementById("tab-strip").hidden && document.querySelector(".note-title")?.textContent === "Kod"`, 3000), 'close tab');
+      await press('P', ['meta']); await typeText('reopen closed tab');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Reopen closed tab"', 2000), 'reopen command missing');
+      await enter();
+      assert(await waitFor(`${tabNames} === '["*Bul","Kod"]'`, 3000), `reopen: ${await js(tabNames)}`);
+      await clickEval(`[...document.querySelectorAll('#tab-strip .tab-item')].find(t => !t.classList.contains('active')).querySelector('.tab-close')`, 'close button');
+      assert(await waitFor('document.getElementById("tab-strip").hidden && document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'close by ×');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

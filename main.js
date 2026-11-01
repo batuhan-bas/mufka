@@ -1429,6 +1429,12 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'New Note', click: () => sendMenu('new-note') },
+        // The page handles these keys itself (registerAccelerator: false), so
+        // they work wherever the focus is and the menu only shows them.
+        { label: 'New Tab', accelerator: 'Alt+CmdOrCtrl+T', registerAccelerator: false, click: () => sendMenu('new-tab') },
+        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', registerAccelerator: false, click: () => sendMenu('close-tab') },
+        { label: 'Reopen Closed Tab', click: () => sendMenu('reopen-tab') },
+        { type: 'separator' },
         { label: 'Quick Switcher…', click: () => sendMenu('switcher') },
         { label: 'Command Palette…', click: () => sendMenu('commands') },
         { label: 'Open Random Note', click: () => sendMenu('random-note') },
@@ -1482,7 +1488,7 @@ function buildMenu() {
     },
     {
       role: 'windowMenu',
-      submenu: isMac ? [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close' }] : [{ role: 'minimize' }, { role: 'close' }],
+      submenu: isMac ? [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close', accelerator: 'Shift+Cmd+W' }] : [{ role: 'minimize' }, { role: 'close', accelerator: 'Shift+Ctrl+W' }],
     },
     {
       role: 'help',

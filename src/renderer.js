@@ -42,6 +42,7 @@ import { keyLabel } from '../lib/keys.mjs';
 import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs';
 import { countText } from '../lib/wordcount.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
+import { createTabs } from '../lib/tabs.mjs';
 import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
 import { buildTagIndex } from '../lib/tags.mjs';
@@ -260,6 +261,7 @@ function render() {
   state.suppressBlockBlur = true;
   renderSidebar(); renderContent(); renderPaneActions(); renderRightbar(); restoreFocus(); renderMenu();
   state.suppressBlockBlur = false;
+  syncTabs();
   if (findBar) findBar.refresh();
 }
 
@@ -601,10 +603,15 @@ function openGraph({ local = false, focus = false } = {}) {
   render();
   graph().show({ center: state.openNote, local }).then(() => { if (focus) graph().focusCanvas(); });
 }
-// --- back / forward (Cmd+[ / Cmd+], the ‹ › in the pane bar) ---
+// --- tabs and back / forward (lib/tabs.mjs, lib/navhistory.mjs) ---
+// Every way of opening something goes through navVisit. Each tab has its own
+// back/forward history (⌘[ / ⌘], the ‹ › in the pane bar). ⌘-click (or
+// ⌘Enter) opens the place in a new tab; ⌘W closes a tab, ⇧⌘[ ⇧⌘] switch.
 
-const nav = createNavHistory();
+const tabs = createTabs(() => createNavHistory());
+tabs.add(null);
 let navigating = false; // moving through history must not record a new visit
+const curNav = () => tabs.active.nav;
 function currentLocation() {
   if (state.contentView === 'graph') return { view: 'graph' };
   if (state.contentView === 'planner') return { view: 'planner', key: dayKey(startOfWeek(state.weekDate)) };
@@ -613,24 +620,35 @@ function currentLocation() {
   if (state.contentView === 'note' && state.openNote) return { view: 'note', rel: state.openNote };
   return { view: 'day', key: dayKey(state.selectedDate) };
 }
+// A click or Enter with ⌘ (Ctrl) held asks for a new tab; the navigation it
+// starts (maybe after reading a file) comes within a moment.
+let newTabAsk = 0;
+const askNewTab = (e) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.type === 'click' || e.key === 'Enter')) newTabAsk = Date.now(); };
+document.addEventListener('click', askNewTab, true);
+document.addEventListener('keydown', askNewTab, true);
 function navVisit(to) {
   hidePreview();
   state.menu = null; // a row menu belongs to the pane it was opened on
-  if (!navigating) nav.visit(currentLocation(), to);
+  if (!navigating && newTabAsk && Date.now() - newTabAsk < 1500) {
+    newTabAsk = 0;
+    const from = currentLocation();
+    if (!sameLocation(from, to)) { tabs.active.loc = from; tabs.add(to); updateNavButtons(); return; }
+  }
+  newTabAsk = 0;
+  if (!navigating) curNav().visit(currentLocation(), to);
   updateNavButtons();
 }
 function updateNavButtons() {
-  document.getElementById('nav-back').disabled = !nav.canBack;
-  document.getElementById('nav-forward').disabled = !nav.canForward;
+  document.getElementById('nav-back').disabled = !curNav().canBack;
+  document.getElementById('nav-forward').disabled = !curNav().canForward;
 }
 const navValid = (loc) => (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel);
-async function goNav(dir) {
-  const loc = dir < 0 ? nav.back(currentLocation(), navValid) : nav.forward(currentLocation(), navValid);
-  updateNavButtons();
-  if (!loc) return;
+// Show a place without recording it in the history.
+async function goTo(loc) {
   navigating = true;
   try {
-    if (loc.view === 'note') await openNote(loc.rel, 'oku', { keepTab: true });
+    if (!loc || !navValid(loc)) await selectDay(new Date(), { keepTab: true });
+    else if (loc.view === 'note') await openNote(loc.rel, 'oku', { keepTab: true });
     else if (loc.view === 'graph') openGraph();
     else if (loc.view === 'planner') openPlanner(parseDayKey(loc.key));
     else if (loc.view === 'tasks') await openTasks(loc.rel);
@@ -638,8 +656,106 @@ async function goNav(dir) {
     else await selectDay(parseDayKey(loc.key), { keepTab: true });
   } finally { navigating = false; updateNavButtons(); }
 }
+async function goNav(dir) {
+  const loc = dir < 0 ? curNav().back(currentLocation(), navValid) : curNav().forward(currentLocation(), navValid);
+  updateNavButtons();
+  if (loc) await goTo(loc);
+}
 document.getElementById('nav-back').addEventListener('click', () => goNav(-1));
 document.getElementById('nav-forward').addEventListener('click', () => goNav(1));
+
+// The active tab follows what the pane shows (also after a rename or delete).
+function syncTabs() {
+  tabs.active.loc = currentLocation();
+  tabs.prune(navValid);
+  renderTabStrip();
+  try { localStorage.setItem('mufka-tabs', JSON.stringify(tabs)); } catch { /* private window */ }
+}
+async function switchTab(t) {
+  if (!t || t === tabs.active) return;
+  flushActiveEditor();
+  tabs.active.loc = currentLocation();
+  tabs.activate(t.id);
+  await goTo(t.loc);
+}
+async function closeTab(t = tabs.active) {
+  if (tabs.count === 1) { if (!sameLocation(t.loc, { view: 'day', key: dayKey(new Date()) })) goToday(); return; }
+  if (t === tabs.active) flushActiveEditor();
+  const next = tabs.close(t.id);
+  if (next) await goTo(next.loc); else render();
+}
+async function newTab(loc = { view: 'day', key: dayKey(new Date()) }) {
+  flushActiveEditor();
+  tabs.active.loc = currentLocation();
+  tabs.add(loc);
+  await goTo(loc);
+}
+async function reopenTab() {
+  if (!tabs.canReopen) return;
+  flushActiveEditor();
+  tabs.active.loc = currentLocation();
+  await goTo(tabs.reopen().loc);
+}
+function tabTitle(loc) {
+  if (!loc) return 'Home';
+  if (loc.view === 'note') return noteTitleOf(loc.rel);
+  if (loc.view === 'graph') return 'Graph';
+  if (loc.view === 'planner') return 'Planner';
+  if (loc.view === 'tasks') return loc.rel ? noteTitleOf(loc.rel) : 'Tasks';
+  if (loc.view === 'draw') return loc.rel ? drawingTitle(loc.rel) : 'Draw';
+  return loc.key === dayKey(new Date()) ? 'Home' : formatDayNumeric(parseDayKey(loc.key));
+}
+const TAB_ICONS = { note: 'tiFileText', graph: 'graph', planner: 'calendar', tasks: 'kanban', draw: 'tiPenLine', day: 'home' };
+// The strip shows only when there is more than one tab.
+const tabStripEl = document.getElementById('tab-strip');
+let tabDrag = null;
+function renderTabStrip() {
+  const many = tabs.count > 1;
+  tabStripEl.hidden = !many;
+  paneEl.classList.toggle('has-tabs', many);
+  tabStripEl.replaceChildren();
+  if (!many) return;
+  tabs.list.forEach((t, i) => {
+    const active = t === tabs.active;
+    const tab = elem('div', `tab-item${active ? ' active' : ''}`);
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+    tab.draggable = true;
+    tab.dataset.menuAnchor = `tab:${t.id}`;
+    const label = tabTitle(t.loc);
+    tab.title = label;
+    tab.append(icon(TAB_ICONS[t.loc ? t.loc.view : 'day'] || 'tiFileText', { size: 14 }), elem('span', 'tab-label', label));
+    const x = elem('button', 'tab-close', '×');
+    x.type = 'button'; x.title = K('Close tab (⌘W)'); x.setAttribute('aria-label', `Close ${label}`); x.tabIndex = -1;
+    x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t); });
+    tab.append(x);
+    tab.addEventListener('click', () => switchTab(t));
+    tab.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t); } });
+    tab.addEventListener('contextmenu', (e) => { e.preventDefault(); openTabMenu(t); });
+    tab.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); switchTab(tabs.neighbour(e.key === 'ArrowRight' ? 1 : -1)).then(focusActiveTab); }
+    });
+    tab.addEventListener('dragstart', (e) => { tabDrag = t; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', label); });
+    tab.addEventListener('dragover', (e) => { if (tabDrag) { e.preventDefault(); tab.classList.add('drop'); } });
+    tab.addEventListener('dragleave', () => tab.classList.remove('drop'));
+    tab.addEventListener('drop', (e) => { e.preventDefault(); if (tabDrag && tabDrag !== t) { tabs.move(tabDrag.id, i); syncTabs(); } tabDrag = null; });
+    tab.addEventListener('dragend', () => { tabDrag = null; });
+    tabStripEl.append(tab);
+  });
+  const plus = elem('button', 'tab-new', '+');
+  plus.type = 'button'; plus.title = K('New tab (⌥⌘T)'); plus.setAttribute('aria-label', 'New tab');
+  plus.addEventListener('click', () => newTab());
+  tabStripEl.append(plus);
+}
+function focusActiveTab() { tabStripEl.querySelector('.tab-item.active')?.focus(); }
+function openTabMenu(t) {
+  openMenu(`tab:${t.id}`, () => [
+    { label: 'Close', fn: () => { closeMenu(); closeTab(t); } },
+    { label: 'Close other tabs', fn: async () => { closeMenu(); await switchTab(t); tabs.closeOthers(t.id); render(); } },
+    ...(tabs.canReopen ? [{ label: 'Reopen closed tab', fn: () => { closeMenu(); reopenTab(); } }] : []),
+  ]);
+}
 
 // Page preview of [[links]] (src/hover-preview.js).
 const previewApi = {
@@ -1328,7 +1444,7 @@ document.getElementById('foot-keys').addEventListener('click', () => showShortcu
 
 // Keyboard shortcuts cheat sheet (⌘/, Help menu, sidebar footer).
 const SHORTCUTS = [
-  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Find in this note'], ['⌥⌘F', 'Find and replace in this note'], ['⇧⌘F', 'Search all notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward']]],
+  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Find in this note'], ['⌥⌘F', 'Find and replace in this note'], ['⇧⌘F', 'Search all notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward'], ['⌘-click', 'Open in a new tab'], ['⌥⌘T', 'New tab'], ['⌘W', 'Close tab'], ['⇧⌘[ / ⇧⌘]', 'Previous / next tab']]],
   ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo']]],
   ['Window', [['⌘\\', 'Show / hide sidebar'], ['⇧⌘\\', 'Show / hide details (outline, links, tags)'], ['⌘/', 'This list'], ['⌘,', 'Settings']]],
 ];
@@ -1697,6 +1813,12 @@ function commandList() {
     { label: 'Find in this note', hint: '⌘F', when: noteOpen, run: () => findBar.open() },
     { label: 'Find and replace in this note', hint: '⌥⌘F', when: noteOpen, run: () => findBar.open({ replace: true }) },
     { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
+    { label: 'New tab', hint: '⌥⌘T', run: () => newTab() },
+    { label: 'Close tab', hint: '⌘W', when: () => tabs.count > 1, run: () => closeTab() },
+    { label: 'Close other tabs', when: () => tabs.count > 1, run: () => { tabs.closeOthers(tabs.active.id); render(); } },
+    { label: 'Reopen closed tab', when: () => tabs.canReopen, run: reopenTab },
+    { label: 'Next tab', hint: '⇧⌘]', when: () => tabs.count > 1, run: () => switchTab(tabs.neighbour(1)) },
+    { label: 'Previous tab', hint: '⇧⌘[', when: () => tabs.count > 1, run: () => switchTab(tabs.neighbour(-1)) },
     { label: 'Recover deleted notes', run: openDeletedRecovery },
     { label: 'Show unused attachments', run: showUnusedAttachments },
     { label: `Show notes folder in ${FILES_APP}`, run: () => notesApi.reveal() },
@@ -2552,6 +2674,7 @@ async function commitTreeEdit(value) {
 function remapRel(oldRel, newRel) {
   const fix = (r) => (r === oldRel ? newRel : (r && r.startsWith(`${oldRel}/`) ? newRel + r.slice(oldRel.length) : r));
   if (state.openNote) state.openNote = fix(state.openNote);
+  tabs.remap(oldRel, newRel);
   if (state.selectedFolder != null) state.selectedFolder = fix(state.selectedFolder);
   const next = new Set();
   for (const r of state.expanded) next.add(fix(r));
@@ -4074,6 +4197,9 @@ if (plansApi.onMenu) {
     else if (action === 'draw') openDraw();
     else if (action === 'tab:ara') setTab('ara');
     else if (action === 'paste-plain') pastePlain();
+    else if (action === 'new-tab') newTab();
+    else if (action === 'close-tab') closeTab();
+    else if (action === 'reopen-tab') reopenTab();
     else if (action === 'toggle-sidebar') toggleSidebar();
     else if (action === 'unused-attachments') showUnusedAttachments();
     else if (action === 'graph') openGraph();
@@ -4139,7 +4265,7 @@ document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   // In a drawing, Excalidraw's own shortcuts (undo, group, copy…) win; only
   // the app's way out (modes, switcher, palette, settings) stays.
-  if (e.target && e.target.closest && e.target.closest('.draw-host') && !['1', '2', '3', '4', 'o', 'p', ',', 't', 'n'].includes(k)) return;
+  if (e.target && e.target.closest && e.target.closest('.draw-host') && !['1', '2', '3', '4', 'o', 'p', ',', 't', 'n', 'w'].includes(k) && !(e.shiftKey && /^Bracket/.test(e.code))) return;
   if (k === 'z') {
     if (findBar.contains(e.target)) return; // the find fields' own undo
     // Whole-document undo/redo for the block editor (overrides native undo).
@@ -4153,6 +4279,9 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.code === 'Backslash' && e.shiftKey) { e.preventDefault(); toggleRightbar(); return; }
+  if (e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { e.preventDefault(); switchTab(tabs.neighbour(e.code === 'BracketRight' ? 1 : -1)); return; }
+  if (e.code === 'KeyW' && !e.shiftKey) { e.preventDefault(); closeTab(); return; }
+  if (e.code === 'KeyT' && e.altKey) { e.preventDefault(); newTab(); return; }
   if (k === '\\') { e.preventDefault(); toggleSidebar(); return; }
   if (k === '1') { e.preventDefault(); setTab('takvim'); return; }
   if (k === '2') { e.preventDefault(); setTab('notlar'); return; }
@@ -4238,7 +4367,13 @@ async function boot() {
   const now = new Date();
   const res = await notesApi.readDaily(dayKey(now));
   state.dailyNote = { key: dayKey(now), content: res && !res.error ? res.content : null };
+  // Tabs come back as they were left, when there were several.
+  let savedTabs = null;
+  try { savedTabs = JSON.parse(localStorage.getItem('mufka-tabs') || 'null'); } catch { /* none */ }
+  const restored = savedTabs && Array.isArray(savedTabs.tabs) && savedTabs.tabs.length > 1 && tabs.restore(savedTabs, navValid);
+  const startAt = restored ? tabs.active.loc : null;
   render();
+  if (startAt) await goTo(startAt);
   lastTick = Date.now();
   setInterval(() => checkDue(), 30000);
 }

@@ -1273,3 +1273,31 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .hljs-deletion { color: var(--danger); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
+
+/* --- tabs (lib/tabs.mjs): a strip under the pane bar, shown with 2+ tabs --- */
+.tab-strip {
+  position: sticky; top: 44px; z-index: 6; flex: 0 0 34px; height: 34px;
+  display: flex; align-items: flex-end; gap: 2px; padding: 0 12px;
+  background: var(--ground); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none;
+}
+.tab-strip[hidden] { display: none; }
+.tab-item {
+  flex: 0 1 200px; min-width: 90px; height: 30px; display: flex; align-items: center; gap: 6px;
+  padding: 0 4px 0 10px; border: 1px solid transparent; border-bottom: none; border-radius: 7px 7px 0 0;
+  color: var(--muted); font-size: 13px; cursor: default; user-select: none;
+}
+.tab-item:hover { color: var(--text); background: var(--panel); }
+.tab-item.active { color: var(--text); background: var(--raised); border-color: var(--line); margin-bottom: -1px; height: 31px; }
+.tab-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab-item.drop { box-shadow: inset 2px 0 0 var(--accent); }
+.tab-item svg { flex: none; opacity: 0.8; }
+.tab-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-close {
+  flex: none; width: 20px; height: 20px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; color: var(--muted); font-size: 15px; line-height: 1; visibility: hidden;
+}
+.tab-item:hover .tab-close, .tab-item.active .tab-close { visibility: visible; }
+.tab-close:hover { background: var(--sel); color: var(--text); }
+.tab-new { flex: none; align-self: center; width: 26px; height: 26px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 17px; }
+.tab-new:hover { background: var(--sel); color: var(--text); }
+.content.has-tabs .find-bar { top: 79px; }
