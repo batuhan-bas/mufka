@@ -33,6 +33,7 @@ import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
 import { openVersionHistory, openDeletedNotes } from './history-view.js';
 import { createFindBar } from './find-bar.js';
+import { parseQuery, isPlainQuery, matchNote, searchDoc, hitTerms, hitsIn, snippetFor } from '../lib/search.mjs';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
 import { applyTemplate } from '../lib/template.mjs';
@@ -42,7 +43,7 @@ import { countText } from '../lib/wordcount.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
 import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
-import { buildTagIndex, scanTags } from '../lib/tags.mjs';
+import { buildTagIndex } from '../lib/tags.mjs';
 import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
 import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
 
@@ -499,7 +500,7 @@ function renderSearchField() {
   field.placeholder = 'Search or create a note';
   field.value = state.araQuery;
   field.setAttribute('aria-label', 'Search');
-  field.title = K('Search notes and plans (⇧⌘F). Enter opens the note with this name, or creates it.');
+  field.title = K('Search notes and plans (⇧⌘F). Enter opens the note with this name, or creates it. Also: "phrase", -word, a OR b, file:, path:, #tag, line:(…), section:(…), task:, [property:value], /regex/');
   field.addEventListener('focus', () => ensureNoteCache());
   field.addEventListener('input', () => { state.araQuery = field.value; state.focus = 'ara-input'; refreshSidebar(); });
   field.addEventListener('keydown', (e) => {
@@ -2946,7 +2947,7 @@ function onTreeKey(e) {
 // in the target folder. (A "#tag" search only searches.)
 async function openOrCreateFromSearch() {
   const name = state.araQuery.trim();
-  if (!name || name.startsWith('#')) return;
+  if (!name || !isPlainQuery(parseQuery(name))) return;
   const exact = state.notesFlat.find((n) => foldTR(n.title) === foldTR(name));
   state.araQuery = '';
   if (exact) { await openNote(exact.rel, 'oku', { keepTab: true }); return; }
@@ -3907,18 +3908,19 @@ async function ensureNoteCache() {
 function renderSearchResults() {
   const q = state.araQuery.trim();
   if (!q) return;
+  const tree = parseQuery(q);
+  const plain = isPlainQuery(tree);
   // Enter = open the note with exactly this name, else create it: say so.
-  if (!/^#/.test(q) && !state.notesFlat.some((n) => foldTR(n.title) === foldTR(q))) {
+  if (plain && !state.notesFlat.some((n) => foldTR(n.title) === foldTR(q))) {
     const c = elem('button', 'ara-result ara-create');
     c.type = 'button';
     c.append(elem('div', null, `Create note “${q}”`), elem('div', 'meta', 'Enter'));
     c.addEventListener('click', () => openOrCreateFromSearch());
     sideEl.append(c);
   }
-  const qf = foldTR(q);
 
-  // Plans (day-scoped), by title.
-  const planHits = searchPlans(state.store.items.filter((p) => p.scope === 'day'), q);
+  // Plans (day-scoped), by title; only for plain words.
+  const planHits = plain ? searchPlans(state.store.items.filter((p) => p.scope === 'day'), q) : [];
   if (planHits.length) sideEl.append(elem('div', 'ara-group-title', 'Plans'));
   for (const p of planHits) {
     const btn = elem('button', 'ara-result');
@@ -3928,25 +3930,64 @@ function renderSearchResults() {
     sideEl.append(btn);
   }
 
-  // Notes: title or body match. "#tag" finds notes with that tag (inline or in
-  // the frontmatter; "#a" also finds nested "#a/b").
-  const tagQ = /^#([^\s#]+)$/.exec(q);
-  const hasTag = (content) => scanTags(content).some((t) => { const f = foldTR(t); const w = foldTR(tagQ[1]); return f === w || f.startsWith(`${w}/`); });
-  const noteHits = tagQ
-    ? state.notesFlat.filter((n) => hasTag(state.noteCache.get(n.rel) || ''))
-    : state.notesFlat.filter((n) => foldTR(n.title).includes(qf)
-      || foldTR(state.noteCache.get(n.rel) || '').includes(qf));
-  if (noteHits.length) sideEl.append(elem('div', 'ara-group-title', 'Notes'));
-  if (!noteHits.length && !planHits.length) sideEl.append(elem('div', 'ara-empty', 'No results.'));
-  for (const n of noteHits) {
+  // Notes: every word in the title or the text, or what the operators say
+  // (lib/search.mjs: file: path: tag: line: section: task: "…" -x OR /re/ [prop]).
+  const terms = hitTerms(tree);
+  const noteHits = [];
+  for (const n of state.notesFlat) {
+    const doc = searchDoc({ rel: n.rel, title: n.title, content: state.noteCache.get(n.rel) || '' });
+    if (matchNote(tree, doc)) noteHits.push({ n, doc });
+  }
+  if (noteHits.length) sideEl.append(elem('div', 'ara-group-title', `Notes · ${noteHits.length}`));
+  if (!noteHits.length && !planHits.length) {
+    sideEl.append(elem('div', 'ara-empty', 'No results.'));
+    if (plain) sideEl.append(searchHelp());
+  }
+  for (const { n, doc } of noteHits) {
     const btn = elem('button', 'ara-result');
-    btn.append(elem('div', null, n.title));
-    const line = !tagQ && !foldTR(n.title).includes(qf) ? (state.noteCache.get(n.rel) || '').split('\n').find((l) => foldTR(l).includes(qf)) : null;
-    if (line) btn.append(elem('div', 'snippet', line.trim().slice(0, 120)));
+    btn.append(markedText('div', null, n.title, hitsIn(n.title, terms)));
+    const snip = snippetFor(doc, terms);
+    if (snip) btn.append(markedText('div', 'snippet', snip.text, snip.hits));
     if (n.folder) btn.append(elem('div', 'meta', n.folder.split('/').join(' / ')));
-    btn.addEventListener('click', () => openNote(n.rel, 'oku', { keepTab: true }));
+    // Open the note with its first hit found, so it is easy to see where.
+    const first = snip && snip.hits[0] ? snip.text.slice(snip.hits[0].start, snip.hits[0].end) : '';
+    btn.addEventListener('click', async () => {
+      await openNote(n.rel, 'oku', { keepTab: true });
+      if (first && state.openNote === n.rel) findBar.open({ query: first, focus: false });
+    });
     sideEl.append(btn);
   }
+}
+
+// Text with some ranges in <mark>.
+function markedText(tag, cls, text, hits) {
+  const e = elem(tag, cls);
+  let at = 0;
+  for (const h of hits) {
+    e.append(text.slice(at, h.start));
+    const m = document.createElement('mark'); m.className = 'ara-hit'; m.textContent = text.slice(h.start, h.end);
+    e.append(m);
+    at = h.end;
+  }
+  e.append(text.slice(at));
+  return e;
+}
+
+function searchHelp() {
+  const box = elem('div', 'ara-help');
+  box.append(elem('div', 'ara-help-title', 'Search can also use'));
+  const dl = elem('dl', 'ara-help-list');
+  for (const [k, v] of [
+    ['"two words"', 'this exact phrase'], ['a OR b', 'either one'], ['-word', 'not this word'],
+    ['file:name', 'in the note name'], ['path:Work', 'in the folder path'], ['#tag', 'has the tag'],
+    ['line:(a b)', 'both on one line'], ['section:(a b)', 'under one heading'],
+    ['task-todo:x', 'in an open task (task:, task-done:)'], ['[status:active]', 'a property'], ['/regex/', 'a pattern'],
+  ]) {
+    const dt = elem('dt'); dt.append(elem('code', null, k));
+    dl.append(dt, elem('dd', null, v));
+  }
+  box.append(dl);
+  return box;
 }
 
 // --- first-run welcome card on the day page ---
@@ -4067,6 +4108,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && settingsLayer) { e.preventDefault(); settingsLayer._close(); return; }
   if (e.ctrlKey && !e.metaKey && e.key === 'Tab') { e.preventDefault(); toggleMode(); return; }
   if (e.key === 'Escape' && state.editPlanId) { state.editPlanId = null; removeOutside(); render(); return; }
+  if (e.key === 'Escape' && findBar.isOpen() && !isTextTarget(e.target) && !state.blockEdit && !isPaletteOpen()) { findBar.close({ keepFocus: true }); return; }
   const mod = e.metaKey || e.ctrlKey;
   if (!mod) return;
   const k = e.key.toLowerCase();

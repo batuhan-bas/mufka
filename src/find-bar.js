@@ -61,7 +61,7 @@ const hasHighlights = typeof CSS !== 'undefined' && CSS.highlights && typeof Hig
 //   toast(text),
 // }
 export function createFindBar(host, api) {
-  const s = { open: false, query: '', caseSensitive: false, replace: false, pos: 0, matches: [], cur: -1, rel: null };
+  const s = { open: false, transient: false, query: '', caseSensitive: false, replace: false, pos: 0, matches: [], cur: -1, rel: null };
 
   host.classList.add('find-bar');
   host.hidden = true;
@@ -194,7 +194,10 @@ export function createFindBar(host, api) {
     clearMarks();
     if (!s.open) return;
     if (!api.active()) { close({ keepFocus: true }); return; }
-    if (api.rel() !== s.rel) { s.rel = api.rel(); s.pos = 0; }
+    if (api.rel() !== s.rel) {
+      if (s.transient) { close({ keepFocus: true }); return; } // shown for a search result: that note only
+      s.rel = api.rel(); s.pos = 0;
+    }
     const src = api.mode() === 'source' && api.sourceArea() ? api.sourceArea().value : api.src();
     s.matches = findMatches(src, s.query, { caseSensitive: s.caseSensitive });
     const exact = s.matches.findIndex((m) => m.start === s.pos);
@@ -219,18 +222,23 @@ export function createFindBar(host, api) {
     replToggle.setAttribute('aria-pressed', String(on));
   }
 
-  function open({ replace = false } = {}) {
+  // query: look for this (from a search result); focus: false leaves the
+  // keyboard where it is.
+  function open({ replace = false, query = null, focus = true } = {}) {
     if (!api.active()) return false;
     api.prepare();
     const wasOpen = s.open;
     s.open = true;
+    s.transient = !focus && (!wasOpen || s.transient);
     s.rel = api.rel();
     host.hidden = false;
     if (replace) setReplace(true);
+    else if (query != null && !wasOpen) setReplace(false);
     // Start from the selected text, if any (as in every editor).
-    const sel = String(window.getSelection() || '').trim();
+    const sel = query ?? String(window.getSelection() || '').trim();
     if (sel && !sel.includes('\n') && sel.length < 200) { s.query = sel; input.value = sel; }
-    if (!wasOpen) {
+    if (query != null) s.pos = 0;
+    else if (!wasOpen) {
       const sc = api.scroller.getBoundingClientRect();
       s.pos = 0;
       // Begin at the first match in view rather than at the top of the note.
@@ -241,8 +249,7 @@ export function createFindBar(host, api) {
       }
     }
     refresh(true);
-    const f = replace && s.query ? rinput : input;
-    f.focus(); f.select();
+    if (focus) { const f = replace && s.query ? rinput : input; f.focus(); f.select(); }
     return true;
   }
 
@@ -294,6 +301,7 @@ export function createFindBar(host, api) {
     ta.scrollTop = top;
   }
 
+  box.addEventListener('focusin', () => { s.transient = false; });
   input.addEventListener('input', () => { s.query = input.value; refresh(true); });
   const keys = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }

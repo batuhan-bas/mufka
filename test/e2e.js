@@ -1864,6 +1864,25 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('!document.getElementById("find-backdrop") && document.activeElement?.id === "note-editor"', 2000), 'source view not restored');
       await press('E', ['meta']);
     });
+
+    // 67. Search operators: words are all needed, file:/-file: narrow it, the
+    //     hit is marked in the result, and opening it shows the hit in the note.
+    await step(67, 'search operators, marked hits, the hit shown in the note', async () => {
+      await press('F', ['meta', 'shift']);
+      assert(await waitFor('document.activeElement?.id === "ara-input"', 2000), 'search not focused');
+      await typeText('file:Bul elma');
+      assert(await waitFor('document.querySelectorAll(".ara-result").length === 1 && document.querySelector(".ara-result mark.ara-hit")?.textContent === "ELMA"', 3000), `results: ${await js('[...document.querySelectorAll(".ara-result")].map(r=>r.textContent).join(" | ")')}`);
+      assert(await js('!document.querySelector(".ara-create")'), 'an operator query offered to create a note');
+      await clickSel('.ara-result');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul" && !document.getElementById("find-bar").hidden && document.querySelector(".find-count")?.textContent === "1 of 2"', 3000), `find after open: ${await js('document.querySelector(".find-count")?.textContent')}`);
+      await retype('#ara-input', 'elma -file:Bul');
+      assert(await waitFor('![...document.querySelectorAll(".ara-result")].some(r => r.textContent.startsWith("Bul"))', 2000), '-file: did not exclude');
+      await retype('#ara-input', 'zzqqxx');
+      assert(await waitFor('!!document.querySelector(".ara-help")', 2000), 'no operator help when nothing is found');
+      await retype('#ara-input', ''); await sleep(200);
+      await press('O', ['meta']); await typeText('Gecmis'); await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Gecmis" && document.getElementById("find-bar").hidden', 3000), 'the find bar from a search stayed on another note');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

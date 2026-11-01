@@ -154,9 +154,17 @@ yet? Home offers to open the Planner.
 
 - **Graph** shows how notes connect; hover to highlight, click to open, or show
   just one note's neighbourhood.
-- **Search** at the top of the sidebar finds notes and plans (and creates a note
-  when nothing matches). **⌘O** jumps to any note, **⌘P** runs any command,
-  **⌘/** lists every shortcut.
+- **Search** at the top of the sidebar (**⇧⌘F**) finds notes and plans (and
+  creates a note when nothing matches). It understands `"exact phrase"`,
+  `-word`, `a OR b`, `file:`, `path:`, `#tag`, `line:(…)`, `section:(…)`,
+  `task:` / `task-todo:` / `task-done:`, `[property:value]` and `/regex/`, and
+  marks the hits. **⌘O** jumps to any note, **⌘P** runs any command, **⌘/**
+  lists every shortcut.
+- **Find in the note** with **⌘F**, and replace with **⌥⌘F**; replacing all is
+  one undo step.
+- **Version history** keeps a version of each note every few minutes while you
+  edit, for seven days, outside your notes folder. Bring one back from the
+  note's ⋯ menu; **Recover deleted notes** (⌘P) brings back a deleted note.
 
 <p align="center"><img src="docs/screenshots/graph.png" width="85%" alt="The graph of notes and links"></p>
 
