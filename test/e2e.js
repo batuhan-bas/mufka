@@ -1772,6 +1772,47 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval(`[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === 'Sprint')`, 'Sprint row');
       assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true" && !!document.querySelector(".tk-col")', 3000), 'board note did not open as a board');
     });
+
+    // 65. File recovery: a saved change keeps the text it replaced; the
+    //     version comes back from Version history; a deleted note comes back
+    //     from Recover deleted notes. Versions live outside the vault.
+    await step(65, 'version history restores a version; a deleted note is recovered', async () => {
+      const file = path.join(notesDir, 'Gecmis.md');
+      fs.writeFileSync(file, 'ilk hali\n');
+      await clickSel('#mode-notes');
+      await sleep(1700); // past the watcher's own-write window
+      await press('O', ['meta']); await typeText('Gecmis');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Gecmis"', 3000), 'note not in the switcher');
+      await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Gecmis"', 3000), 'note did not open');
+      await setNoteSource('ikinci hali\n');
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === 'ikinci hali\n', 3000), 'edit not saved');
+      assert(!fs.readdirSync(notesDir).some((n) => /history/i.test(n)), 'history written into the vault');
+      assert(fs.existsSync(path.join(tmp, 'history')), 'no history folder in userData');
+      await press('P', ['meta']); await typeText('version history');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Version history of this note"', 2000), 'command not found');
+      await enter();
+      assert(await waitFor('document.querySelectorAll(".history-dialog .hist-row").length === 1', 3000), `versions: ${await js('document.querySelectorAll(".history-dialog .hist-row").length')}`);
+      assert(await waitFor('[...document.querySelectorAll(".hist-line.add")].some(l => l.textContent.includes("ilk hali")) && [...document.querySelectorAll(".hist-line.del")].some(l => l.textContent.includes("ikinci hali"))', 2000), 'changes not shown');
+      await clickEval(`[...document.querySelectorAll('.history-dialog button')].find(b => b.textContent === 'Restore this version')`, 'restore button');
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === 'ilk hali\n', 3000), `not restored: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      assert(await waitFor('!document.querySelector(".history-dialog") && document.querySelector(".note-body")?.textContent.includes("ilk hali")', 3000), 'restored text not shown');
+      // What the restore replaced is a version too.
+      await press('P', ['meta']); await typeText('version history'); await enter();
+      assert(await waitFor('document.querySelectorAll(".history-dialog .hist-row").length === 2', 3000), 'replaced text not kept');
+      await press('Escape');
+      assert(await waitFor('!document.querySelector(".history-dialog")', 2000), 'Esc did not close');
+      // Delete the note, then bring it back.
+      await clickSel('[data-menu-anchor="menu-note"]');
+      await clickEval(`[...document.querySelectorAll('.menu-item')].find(b => b.textContent === 'Delete')`, 'Delete');
+      await clickEval(`[...document.querySelectorAll('.menu-item')].find(b => b.textContent === 'Delete')`, 'confirm Delete');
+      assert(await waitFor2(() => !fs.existsSync(file), 3000), 'note not deleted');
+      await press('P', ['meta']); await typeText('recover deleted'); await enter();
+      assert(await waitFor('[...document.querySelectorAll(".hist-row-deleted")].some(r => r.textContent.includes("Gecmis"))', 3000), 'deleted note not listed');
+      await clickEval(`[...document.querySelectorAll('.hist-row-deleted')].find(r => r.textContent.includes('Gecmis')).querySelector('button')`, 'restore deleted');
+      assert(await waitFor2(() => fs.existsSync(file) && fs.readFileSync(file, 'utf8') === 'ilk hali\n', 3000), 'deleted note not restored');
+      await press('Escape');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

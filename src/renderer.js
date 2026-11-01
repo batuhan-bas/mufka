@@ -31,6 +31,7 @@ import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
+import { openVersionHistory, openDeletedNotes } from './history-view.js';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
 import { applyTemplate } from '../lib/template.mjs';
@@ -1688,6 +1689,8 @@ function commandList() {
     { label: 'Copy built-in templates to the Templates folder', run: copyBuiltinTemplates },
     { label: 'Export note as PDF', when: noteOpen, run: () => runExport('pdf', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Export note as Markdown', when: noteOpen, run: () => runExport('md', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
+    { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
+    { label: 'Recover deleted notes', run: openDeletedRecovery },
     { label: 'Show unused attachments', run: showUnusedAttachments },
     { label: `Show notes folder in ${FILES_APP}`, run: () => notesApi.reveal() },
   ].filter((c) => !c.when || c.when());
@@ -2160,6 +2163,7 @@ function noteActionItems(title, getSrc, saveUnsaved) {
     { label: isBookmarked(state.openNote) ? 'Remove bookmark' : 'Bookmark', fn: () => { closeMenu(); toggleBookmark(state.openNote); } },
     { label: 'Open local graph', fn: () => { closeMenu(); openGraph({ local: true }); } },
     { label: 'Insert template…', fn: () => { closeMenu(); openTemplatePicker(); } },
+    { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(); } },
     { label: 'Export…', fn: () => openMenu('menu-note', () => exportSubItems(title, getSrc, saveUnsaved)) },
     { label: 'Delete', fn: () => openMenu('menu-note', () => [
       { label: 'Cancel', fn: () => closeMenu() },
@@ -2877,6 +2881,7 @@ function noteMenuItems(n) {
     { label: 'Icon…', fn: () => openIconPicker(`n:${n.rel}`, n.rel) },
     { label: 'Colour…', fn: () => openColorPicker(`n:${n.rel}`, n.rel, 'note') },
     { label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-note', rel: n.rel }); } },
+    { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(n.rel); } },
     { label: 'Delete', fn: () => { closeMenu(); deleteNoteRel(n.rel); } },
   ];
 }
@@ -2982,6 +2987,49 @@ async function openNote(rel, mode, opts = {}) {
 // blocks render correctly. The raw source is the single source of truth.
 
 function getSrcFor(scope) { return scope === 'note' ? state.noteContent : (state.dailyNote.content || ''); }
+
+// --- file recovery (src/history-view.js, lib/history.mjs) ---------------
+const okOr = (fallback) => (res) => (res && !res.error ? res : fallback);
+async function openNoteHistory(rel = state.openNote) {
+  if (!rel) return;
+  // Save what is pending first, so "now" is what is on screen.
+  if (rel === state.openNote && noteSaveTimer) {
+    clearTimeout(noteSaveTimer); noteSaveTimer = null;
+    await notesApi.write(rel, state.noteContent);
+  }
+  const now = rel === state.openNote ? state.noteContent : okOr({ content: '' })(await notesApi.read(rel)).content;
+  openVersionHistory({
+    rel,
+    title: noteTitleOf(rel),
+    list: (r) => notesApi.historyList(r).then(okOr([])),
+    get: (r, t) => notesApi.historyGet(r, t).then((x) => (typeof x === 'string' ? x : null)),
+    current: () => now,
+    copy: async (text) => { await notesApi.copy(text); showToast('Copied'); },
+    restore: async (r, t) => {
+      const res = await notesApi.historyRestore(r, t);
+      if (!res || res.error) { showToast(res && res.error ? res.error : 'Could not restore the version'); return false; }
+      state.noteCache.delete(r);
+      if (state.openNote === r) await openNote(r, 'oku', { keepTab: true });
+      showToast('Version restored. The text it replaced is kept as a version.');
+      return true;
+    },
+  });
+}
+function openDeletedRecovery() {
+  openDeletedNotes({
+    list: () => notesApi.historyDeleted().then(okOr([])),
+    titleOf: noteTitleOf,
+    restore: async (rel, t) => {
+      const res = await notesApi.historyRestoreDeleted(rel, t);
+      if (!res || res.error) { showToast(res && res.error ? res.error : 'Could not restore the note'); return null; }
+      await refreshTree();
+      await rebuildBacklinks();
+      render();
+      showToast(`Restored “${noteTitleOf(res.rel)}”`);
+      return res;
+    },
+  });
+}
 
 let noteSaveTimer = null;
 let dailySaveTimer = null;

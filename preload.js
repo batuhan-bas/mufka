@@ -37,6 +37,12 @@ contextBridge.exposeInMainWorld('notes', {
   readDaily: (dateKey) => ipcRenderer.invoke('notes:readDaily', dateKey),
   writeDaily: (dateKey, content) => ipcRenderer.invoke('notes:writeDaily', dateKey, content),
   deleteDaily: (dateKey) => ipcRenderer.invoke('notes:deleteDaily', dateKey),
+  // File recovery: past versions of notes, and deleted notes (lib/history.mjs).
+  historyList: (rel) => ipcRenderer.invoke('history:list', rel),
+  historyGet: (rel, t) => ipcRenderer.invoke('history:get', rel, t),
+  historyRestore: (rel, t) => ipcRenderer.invoke('history:restore', rel, t),
+  historyDeleted: () => ipcRenderer.invoke('history:deleted'),
+  historyRestoreDeleted: (rel, t) => ipcRenderer.invoke('history:restoreDeleted', rel, t),
   reveal: () => ipcRenderer.invoke('notes:reveal'),
   vaultInfo: () => ipcRenderer.invoke('vault:info'),
   chooseVault: () => ipcRenderer.invoke('vault:choose'),
