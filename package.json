@@ -83,6 +83,7 @@
     "vite": "^7.3.7"
   },
   "dependencies": {
+    "lowlight": "3.3.0",
     "luxon": "^3.7.2",
     "mdast-util-from-markdown": "^2.1.0",
     "mdast-util-frontmatter": "^2.0.1",

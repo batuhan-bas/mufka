@@ -62,6 +62,20 @@ test('fenced code keeps raw text; a script tag stays inert text', () => {
   assert.equal(findAll(pre, 'script').length, 0);
 });
 
+test('a code block in a known language is coloured; its text is unchanged and inert', () => {
+  const src = 'const a = "<script>x</script>"; // note';
+  const [pre] = render('```js\n' + src + '\n```');
+  const code = find(pre, 'code');
+  assert.equal(code.textContent, src);
+  assert.match(code.attrs.class, /language-js hljs/);
+  const spans = findAll(code, 'span');
+  assert.ok(spans.some((sp) => sp.attrs.class === 'hljs-keyword' && sp.textContent === 'const'));
+  assert.ok(spans.some((sp) => sp.attrs.class === 'hljs-comment'));
+  assert.equal(findAll(pre, 'script').length, 0);
+  // Unknown or missing language: plain text, as in Obsidian.
+  assert.equal(findAll(find(render('```nosuchlang\nconst a\n```')[0], 'code'), 'span').length, 0);
+});
+
 test('inline script-looking text never becomes an element', () => {
   const [p] = render('danger <script>x</script> ok');
   assert.equal(findAll(p, 'script').length, 0);

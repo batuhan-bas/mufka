@@ -1258,3 +1258,18 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .ara-help-list { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 0; }
 .ara-help-list dt, .ara-help-list dd { margin: 0; }
 .ara-help-list code { font-family: var(--mono); font-size: 11.5px; color: var(--chip-text); }
+
+/* --- code block colours (lib/highlight.mjs: highlight.js token classes) --- */
+.md pre code.hljs { color: var(--text); }
+.hljs-comment, .hljs-quote { color: #7d8390; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-meta .hljs-keyword { color: #c792ea; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta .hljs-string { color: #a5d6a7; }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: #f6b26b; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: #82aaff; }
+.hljs-title.class_, .hljs-type, .hljs-built_in { color: #ffcb6b; }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property, .hljs-params { color: #f07178; }
+.hljs-name, .hljs-tag, .hljs-selector-id, .hljs-selector-class { color: #89ddff; }
+.hljs-meta, .hljs-link { color: #89ddff; }
+.hljs-deletion { color: var(--danger); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }

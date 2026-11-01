@@ -160,6 +160,8 @@ yet? Home offers to open the Planner.
   `task:` / `task-todo:` / `task-done:`, `[property:value]` and `/regex/`, and
   marks the hits. **⌘O** jumps to any note, **⌘P** runs any command, **⌘/**
   lists every shortcut.
+- **Code blocks** are coloured by their language (```js, ```python, ```bash and
+  about 40 more), on screen and in PDF exports.
 - **Find in the note** with **⌘F**, and replace with **⌥⌘F**; replacing all is
   one undo step.
 - **Version history** keeps a version of each note every few minutes while you

@@ -1883,6 +1883,24 @@ app.whenReady().then(() => setTimeout(async () => {
       await press('O', ['meta']); await typeText('Gecmis'); await enter();
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "Gecmis" && document.getElementById("find-bar").hidden', 3000), 'the find bar from a search stayed on another note');
     });
+
+    // 68. Code blocks are coloured by their language; editing one shows its
+    //     plain source.
+    await step(68, 'code blocks are coloured by language', async () => {
+      const file = path.join(notesDir, 'Kod.md');
+      fs.writeFileSync(file, '```python\ndef selam(ad):\n    return f"Merhaba {ad}"  # yorum\n```\n\n```\nduz metin\n```\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Kod');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Kod"', 3000), 'note not in the switcher');
+      await enter();
+      assert(await waitFor('!!document.querySelector(".note-body pre code.language-python span.hljs-keyword")', 3000), 'python not coloured');
+      const colours = await js(`(()=>{const c=document.querySelector('.note-body code.language-python'); const k=c.querySelector('.hljs-keyword'), m=c.querySelector('.hljs-comment'); return [getComputedStyle(c).color, getComputedStyle(k).color, getComputedStyle(m).color];})()`);
+      assert(new Set(colours).size === 3, `token colours: ${colours}`);
+      assert(await js('document.querySelectorAll(".note-body pre")[1].querySelectorAll("span").length === 0'), 'a block without a language was coloured');
+      await clickEval(`document.querySelector('.note-body pre code.language-python')`, 'code block');
+      assert(await waitFor('document.getElementById("block-editor")?.value.startsWith("```python")', 2000), 'editing did not show the source');
+      await press('Escape');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }
