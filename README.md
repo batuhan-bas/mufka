@@ -79,7 +79,7 @@ yet? Home offers to open the Planner.
   order are kept in the vault's `.mufka/tree.json`, so they travel with your
   notes.
 - **Write in place**: notes always look formatted; click a paragraph to edit it.
-  Tables, task lists, callouts, footnotes, frontmatter, `==highlights==`.
+  Tables, task lists, callouts, footnotes, properties, `==highlights==`.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
@@ -266,8 +266,15 @@ On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 | ⌥⌘← / ⌥⌘→ | Previous / next week |
 | ⌘N | New note |
 | ⌘O · ⌘P | Open a note · command palette |
+| ⌘-click · ⌘↵ in ⌘O | Open in a new tab |
+| ⌥⌘-click · ⌥⌘↵ in ⌘O | Open in the right pane |
+| ⌥⌘T · ⌘W | New tab · close tab (⇧⌘W closes the window) |
+| ⇧⌘[ · ⇧⌘] | Previous · next tab |
 | ⌘F | Find in the open note (⌥⌘F: find and replace) |
 | ⇧⌘F | Search all notes and plans |
+| ⌘; | Add a property to the note |
+| `/` | Insert menu (at the start of a line) |
+| ⇧⌘V | Paste as plain text |
 | ⌘G · ⇧⌘G | Graph · local graph |
 | ⌘E | Edit a note's raw Markdown |
 | ⌘, | Settings (calendar and Wispr Flow connections), also the gear next to the notes folder |
@@ -362,5 +369,5 @@ end-to-end test) before opening a pull request.
 [MIT](LICENSE) © 2026 [Calexis Labs](https://github.com/Calexis-Labs).
 
 Mufka includes open-source components under their own licenses (Electron,
-mdast/micromark, Lucide icons); see
+mdast/micromark, Lucide icons, highlight.js, turndown and others); see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
