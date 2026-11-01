@@ -18,6 +18,7 @@ import * as bm from './lib/bookmarks.mjs';
 import * as ts from './lib/treestyle.mjs';
 import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
+import { createHistory } from './lib/history.mjs';
 import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
 import * as cal from './lib/calendar.mjs';
@@ -431,6 +432,63 @@ function isGunlukRoot(rel) {
   return fs.existsSync(abs) && fs.existsSync(daily) && fs.realpathSync(abs) === fs.realpathSync(daily);
 }
 function relOf(abs) { return np.relFromAbs(notesRoot(), abs); }
+
+// --- file recovery ---------------------------------------------------------
+// Past versions of notes (lib/history.mjs), per vault, in
+// <userData>/history/<hash of the vault path>/ — never in the vault itself.
+const histories = new Map();
+function history() {
+  const root = notesRoot();
+  if (!histories.has(root)) {
+    const id = crypto.createHash('sha1').update(root).digest('hex').slice(0, 16);
+    histories.set(root, createHistory(path.join(app.getPath('userData'), 'history', id)));
+  }
+  return histories.get(root);
+}
+function readIfFile(abs) { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } }
+// `abs` is about to be overwritten: keep its current text as a version.
+function keepBefore(abs, opts) {
+  const old = readIfFile(abs);
+  if (old != null) history().before(relOf(abs), old, opts);
+}
+// Every note under `abs` (a note or a folder) is about to be deleted.
+function keepDeleted(abs) {
+  let st;
+  try { st = fs.statSync(abs); } catch { return; }
+  if (st.isFile()) { if (abs.endsWith('.md')) { const text = readIfFile(abs); if (text != null) history().deleted(relOf(abs), text); } return; }
+  let entries = [];
+  try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) if (!e.isSymbolicLink()) keepDeleted(path.join(abs, e.name));
+}
+function historyList(rel) { safeAbs(rel); return history().list(rel); }
+function historyGet(rel, t) { safeAbs(rel); return history().get(rel, Number(t)); }
+// Put a past version back; what was there becomes a version first.
+function historyRestore(rel, t) {
+  const content = historyGet(rel, t);
+  if (content == null) throw new Error('That version is no longer kept');
+  const abs = safeAbs(rel);
+  keepBefore(abs, { force: true });
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  writeFileAtomic(abs, content);
+  return { rel, mtime: fs.statSync(abs).mtimeMs };
+}
+function historyDeleted() {
+  return history().deletedNotes((rel) => { try { return fs.existsSync(safeAbs(rel)); } catch { return true; } });
+}
+// Bring a deleted note back: at its old place, or beside it under a free name.
+function historyRestoreDeleted(rel, t) {
+  const content = historyGet(rel, t);
+  if (content == null) throw new Error('That version is no longer kept');
+  let abs = safeAbs(rel);
+  if (fs.existsSync(abs)) {
+    const dir = path.dirname(abs);
+    const unique = np.resolveUniqueName(np.titleFromFile(path.basename(rel)), new Set(siblingNames(dir, false)));
+    abs = path.join(dir, `${unique}.md`);
+  }
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  writeFileAtomic(abs, content);
+  return { rel: relOf(abs) };
+}
 function isDescendantRel(ancestor, other) {
   if (!ancestor) return Boolean(other);
   return other === ancestor || other.startsWith(`${ancestor}/`);
@@ -477,6 +535,7 @@ function readNoteRel(rel) {
 
 function writeNoteRel(rel, content) {
   const abs = safeAbs(rel);
+  keepBefore(abs);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   writeFileAtomic(abs, String(content ?? ''));
   return { rel, mtime: fs.statSync(abs).mtimeMs };
@@ -524,7 +583,7 @@ function applyLinkRewrite(before, oldRel, newRel) {
   let linksUpdated = 0;
   let linksFailed = 0;
   for (const f of files) {
-    try { writeFileAtomic(safeAbs(f.rel), f.content); linksUpdated += f.count; }
+    try { keepBefore(safeAbs(f.rel)); writeFileAtomic(safeAbs(f.rel), f.content); linksUpdated += f.count; }
     catch { linksFailed += f.count; }
   }
   return { linksUpdated, linksFailed };
@@ -540,6 +599,7 @@ function renameNoteRel(rel, newName) {
   if (toRel === rel) return { rel: toRel, linksUpdated: 0, linksFailed: 0 };
   const before = collectNotes();
   fs.renameSync(abs, safeAbs(toRel));
+  history().moved(rel, toRel);
   return { rel: toRel, ...applyLinkRewrite(before, rel, toRel) };
 }
 
@@ -554,6 +614,7 @@ function renameFolder(rel, newName) {
   if (toRel === rel) return { rel: toRel, linksUpdated: 0, linksFailed: 0 };
   const before = collectNotes();
   fs.renameSync(abs, safeAbs(toRel));
+  history().moved(rel, toRel);
   return { rel: toRel, ...applyLinkRewrite(before, rel, toRel) };
 }
 
@@ -572,13 +633,21 @@ function moveEntry(srcRel, destFolderRel) {
   const toRel = relOf(path.join(destAbs, isFolder ? unique : `${unique}.md`));
   const before = collectNotes();
   fs.renameSync(srcAbs, safeAbs(toRel));
+  history().moved(srcRel, toRel);
   return { rel: toRel, ...applyLinkRewrite(before, srcRel, toRel) };
 }
 
-async function trashNote(rel) { await shell.trashItem(mutationAbs(rel, 'note')); return { ok: true }; }
+async function trashNote(rel) {
+  const abs = mutationAbs(rel, 'note');
+  keepDeleted(abs);
+  await shell.trashItem(abs);
+  return { ok: true };
+}
 async function trashFolder(rel) {
   if (isGunlukRoot(rel)) throw new Error('The daily notes folder cannot be deleted');
-  await shell.trashItem(mutationAbs(rel, 'folder'));
+  const abs = mutationAbs(rel, 'folder');
+  keepDeleted(abs);
+  await shell.trashItem(abs);
   return { ok: true };
 }
 
@@ -594,6 +663,7 @@ function readDaily(dateKey) {
 
 function writeDaily(dateKey, content) {
   const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
+  keepBefore(p);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   writeFileAtomic(p, String(content ?? ''));
   return { ok: true };
@@ -601,6 +671,7 @@ function writeDaily(dateKey, content) {
 
 async function deleteDaily(dateKey) {
   const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
+  keepDeleted(p);
   await shell.trashItem(p);
   return { ok: true };
 }
@@ -1358,6 +1429,12 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'New Note', click: () => sendMenu('new-note') },
+        // The page handles these keys itself (registerAccelerator: false), so
+        // they work wherever the focus is and the menu only shows them.
+        { label: 'New Tab', accelerator: 'Alt+CmdOrCtrl+T', registerAccelerator: false, click: () => sendMenu('new-tab') },
+        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', registerAccelerator: false, click: () => sendMenu('close-tab') },
+        { label: 'Reopen Closed Tab', click: () => sendMenu('reopen-tab') },
+        { type: 'separator' },
         { label: 'Quick Switcher…', click: () => sendMenu('switcher') },
         { label: 'Command Palette…', click: () => sendMenu('commands') },
         { label: 'Open Random Note', click: () => sendMenu('random-note') },
@@ -1379,6 +1456,7 @@ function buildMenu() {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
+        { label: 'Paste as Plain Text', accelerator: 'Shift+CmdOrCtrl+V', click: () => sendMenu('paste-plain') },
         { role: 'selectAll' },
       ],
     },
@@ -1410,7 +1488,7 @@ function buildMenu() {
     },
     {
       role: 'windowMenu',
-      submenu: isMac ? [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close' }] : [{ role: 'minimize' }, { role: 'close' }],
+      submenu: isMac ? [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close', accelerator: 'Shift+Cmd+W' }] : [{ role: 'minimize' }, { role: 'close', accelerator: 'Shift+Ctrl+W' }],
     },
     {
       role: 'help',
@@ -1645,6 +1723,11 @@ ipcMain.handle('notes:dailyDates', wrap(() => {
 ipcMain.handle('notes:readDaily', wrap((dateKey) => readDaily(dateKey)));
 ipcMain.handle('notes:writeDaily', wrap((dateKey, content) => writeDaily(dateKey, content)));
 ipcMain.handle('notes:deleteDaily', wrap((dateKey) => deleteDaily(dateKey)));
+ipcMain.handle('history:list', wrap((rel) => historyList(rel)));
+ipcMain.handle('history:get', wrap((rel, t) => historyGet(rel, t)));
+ipcMain.handle('history:restore', wrap((rel, t) => historyRestore(rel, t)));
+ipcMain.handle('history:deleted', wrap(() => historyDeleted()));
+ipcMain.handle('history:restoreDeleted', wrap((rel, t) => historyRestoreDeleted(rel, t)));
 ipcMain.handle('vault:info', wrap(() => ({ name: path.basename(notesRoot()), path: notesRoot(), custom: vault.custom })));
 ipcMain.handle('vault:choose', wrap(async () => { await chooseVault(); return { ok: true }; }));
 ipcMain.handle('vault:useDefault', wrap(() => { setVault(null); return { ok: true }; }));
@@ -1661,6 +1744,7 @@ ipcMain.handle('bookmarks:toggle', wrap((rel) => bookmarksToggle(rel)));
 ipcMain.handle('attach:open', wrap((rel) => attachOpen(rel)));
 ipcMain.handle('attach:unused', wrap(() => attachUnused()));
 ipcMain.handle('attach:trash', wrap((names) => attachTrash(names)));
+ipcMain.handle('app:clipboardText', wrap(async () => clipboard.readText()));
 ipcMain.handle('app:copy', wrap(async (text) => { await clipboard.writeText(String(text ?? '')); return { ok: true }; }));
 ipcMain.handle('notes:exportMarkdown', wrap((title, content) => exportMarkdown(title, content)));
 ipcMain.handle('notes:exportPDF', wrap((title, src, noteDir, html) => exportPDF(title, src, noteDir, html)));
@@ -1701,6 +1785,8 @@ app.whenReady().then(() => {
   // The UI is dark-only; force the native chrome (title bar, menus) to match
   // regardless of the system appearance.
   nativeTheme.themeSource = 'dark';
+  // Expired note versions go a little after start-up (file recovery).
+  setTimeout(() => { try { history().prune(); } catch { /* best effort */ } }, 15000);
   // Windows shows notifications only for an app with an id (the installer's).
   if (process.platform === 'win32') app.setAppUserModelId('com.mufka.app');
   // Unpackaged runs use node_modules' Electron.app, whose bundle icon is

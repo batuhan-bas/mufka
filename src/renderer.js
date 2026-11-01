@@ -31,6 +31,10 @@ import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
+import { openVersionHistory, openDeletedNotes } from './history-view.js';
+import { createFindBar } from './find-bar.js';
+import { htmlToMarkdown, isRichHtml, insideCodeFence } from '../lib/paste.mjs';
+import { parseQuery, isPlainQuery, matchNote, searchDoc, hitTerms, hitsIn, snippetFor } from '../lib/search.mjs';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
 import { applyTemplate } from '../lib/template.mjs';
@@ -38,9 +42,12 @@ import { keyLabel } from '../lib/keys.mjs';
 import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs';
 import { countText } from '../lib/wordcount.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
+import { createTabs } from '../lib/tabs.mjs';
+import { slashItems } from '../lib/slash.mjs';
+import { readProps, setProp, deleteProp, renameProp, defaultValue, aliasesOf } from '../lib/properties.mjs';
 import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
-import { buildTagIndex, scanTags } from '../lib/tags.mjs';
+import { buildTagIndex } from '../lib/tags.mjs';
 import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
 import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
 
@@ -85,6 +92,7 @@ const state = {
   bookmarks: [],          // bookmarked note rels (Obsidian bookmarks.json via main)
   openNote: null,         // open note rel (path), e.g. 'İş/Q1.md'
   noteContent: '',
+  propAdding: null,       // 'note' | 'daily': the properties editor's new-property row is open
   noteView: 'blocks',     // 'blocks' (live preview) | 'source' (raw textarea)
   blockEdit: null,        // { scope:'note'|'daily', startLine?, newAfter?, caret }
   blockCaretPos: null,    // caret offset to apply to the block editor after render
@@ -246,6 +254,12 @@ const toastEl = document.getElementById('toast');
 // A fixed row menu would drift if its anchor scrolls; close it on scroll.
 paneEl.addEventListener('scroll', () => { if (state.menu) closeMenu(); });
 
+let findBar = null; // set below, once its helpers exist
+// The right pane (see "the right pane" below).
+const splitEl = document.getElementById('split-pane');
+let split = null; // { rel, text }
+let splitShown = null;
+let splitAsk = 0;
 function render() {
   // Safety net: the click-outside-saves listener must never outlive an edit.
   if (!state.editPlanId) removeOutside();
@@ -255,6 +269,9 @@ function render() {
   state.suppressBlockBlur = true;
   renderSidebar(); renderContent(); renderPaneActions(); renderRightbar(); restoreFocus(); renderMenu();
   state.suppressBlockBlur = false;
+  syncTabs();
+  renderSplit();
+  if (findBar) findBar.refresh();
 }
 
 // The pane top bar's right actions follow what the pane shows: the open note
@@ -495,7 +512,7 @@ function renderSearchField() {
   field.placeholder = 'Search or create a note';
   field.value = state.araQuery;
   field.setAttribute('aria-label', 'Search');
-  field.title = K('Search notes and plans (⌘F). Enter opens the note with this name, or creates it.');
+  field.title = K('Search notes and plans (⇧⌘F). Enter opens the note with this name, or creates it. Also: "phrase", -word, a OR b, file:, path:, #tag, line:(…), section:(…), task:, [property:value], /regex/');
   field.addEventListener('focus', () => ensureNoteCache());
   field.addEventListener('input', () => { state.araQuery = field.value; state.focus = 'ara-input'; refreshSidebar(); });
   field.addEventListener('keydown', (e) => {
@@ -595,10 +612,15 @@ function openGraph({ local = false, focus = false } = {}) {
   render();
   graph().show({ center: state.openNote, local }).then(() => { if (focus) graph().focusCanvas(); });
 }
-// --- back / forward (Cmd+[ / Cmd+], the ‹ › in the pane bar) ---
+// --- tabs and back / forward (lib/tabs.mjs, lib/navhistory.mjs) ---
+// Every way of opening something goes through navVisit. Each tab has its own
+// back/forward history (⌘[ / ⌘], the ‹ › in the pane bar). ⌘-click (or
+// ⌘Enter) opens the place in a new tab; ⌘W closes a tab, ⇧⌘[ ⇧⌘] switch.
 
-const nav = createNavHistory();
+const tabs = createTabs(() => createNavHistory());
+tabs.add(null);
 let navigating = false; // moving through history must not record a new visit
+const curNav = () => tabs.active.nav;
 function currentLocation() {
   if (state.contentView === 'graph') return { view: 'graph' };
   if (state.contentView === 'planner') return { view: 'planner', key: dayKey(startOfWeek(state.weekDate)) };
@@ -607,24 +629,35 @@ function currentLocation() {
   if (state.contentView === 'note' && state.openNote) return { view: 'note', rel: state.openNote };
   return { view: 'day', key: dayKey(state.selectedDate) };
 }
+// A click or Enter with ⌘ (Ctrl) held asks for a new tab; the navigation it
+// starts (maybe after reading a file) comes within a moment.
+let newTabAsk = 0;
+const askNewTab = (e) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.type === 'click' || e.key === 'Enter')) newTabAsk = Date.now(); };
+document.addEventListener('click', askNewTab, true);
+document.addEventListener('keydown', askNewTab, true);
 function navVisit(to) {
   hidePreview();
   state.menu = null; // a row menu belongs to the pane it was opened on
-  if (!navigating) nav.visit(currentLocation(), to);
+  if (!navigating && newTabAsk && Date.now() - newTabAsk < 1500) {
+    newTabAsk = 0;
+    const from = currentLocation();
+    if (!sameLocation(from, to)) { tabs.active.loc = from; tabs.add(to); updateNavButtons(); return; }
+  }
+  newTabAsk = 0;
+  if (!navigating) curNav().visit(currentLocation(), to);
   updateNavButtons();
 }
 function updateNavButtons() {
-  document.getElementById('nav-back').disabled = !nav.canBack;
-  document.getElementById('nav-forward').disabled = !nav.canForward;
+  document.getElementById('nav-back').disabled = !curNav().canBack;
+  document.getElementById('nav-forward').disabled = !curNav().canForward;
 }
 const navValid = (loc) => (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel);
-async function goNav(dir) {
-  const loc = dir < 0 ? nav.back(currentLocation(), navValid) : nav.forward(currentLocation(), navValid);
-  updateNavButtons();
-  if (!loc) return;
+// Show a place without recording it in the history.
+async function goTo(loc) {
   navigating = true;
   try {
-    if (loc.view === 'note') await openNote(loc.rel, 'oku', { keepTab: true });
+    if (!loc || !navValid(loc)) await selectDay(new Date(), { keepTab: true });
+    else if (loc.view === 'note') await openNote(loc.rel, 'oku', { keepTab: true });
     else if (loc.view === 'graph') openGraph();
     else if (loc.view === 'planner') openPlanner(parseDayKey(loc.key));
     else if (loc.view === 'tasks') await openTasks(loc.rel);
@@ -632,8 +665,106 @@ async function goNav(dir) {
     else await selectDay(parseDayKey(loc.key), { keepTab: true });
   } finally { navigating = false; updateNavButtons(); }
 }
+async function goNav(dir) {
+  const loc = dir < 0 ? curNav().back(currentLocation(), navValid) : curNav().forward(currentLocation(), navValid);
+  updateNavButtons();
+  if (loc) await goTo(loc);
+}
 document.getElementById('nav-back').addEventListener('click', () => goNav(-1));
 document.getElementById('nav-forward').addEventListener('click', () => goNav(1));
+
+// The active tab follows what the pane shows (also after a rename or delete).
+function syncTabs() {
+  tabs.active.loc = currentLocation();
+  tabs.prune(navValid);
+  renderTabStrip();
+  try { localStorage.setItem('mufka-tabs', JSON.stringify(tabs)); } catch { /* private window */ }
+}
+async function switchTab(t) {
+  if (!t || t === tabs.active) return;
+  flushActiveEditor();
+  tabs.active.loc = currentLocation();
+  tabs.activate(t.id);
+  await goTo(t.loc);
+}
+async function closeTab(t = tabs.active) {
+  if (tabs.count === 1) { if (!sameLocation(t.loc, { view: 'day', key: dayKey(new Date()) })) goToday(); return; }
+  if (t === tabs.active) flushActiveEditor();
+  const next = tabs.close(t.id);
+  if (next) await goTo(next.loc); else render();
+}
+async function newTab(loc = { view: 'day', key: dayKey(new Date()) }) {
+  flushActiveEditor();
+  tabs.active.loc = currentLocation();
+  tabs.add(loc);
+  await goTo(loc);
+}
+async function reopenTab() {
+  if (!tabs.canReopen) return;
+  flushActiveEditor();
+  tabs.active.loc = currentLocation();
+  await goTo(tabs.reopen().loc);
+}
+function tabTitle(loc) {
+  if (!loc) return 'Home';
+  if (loc.view === 'note') return noteTitleOf(loc.rel);
+  if (loc.view === 'graph') return 'Graph';
+  if (loc.view === 'planner') return 'Planner';
+  if (loc.view === 'tasks') return loc.rel ? noteTitleOf(loc.rel) : 'Tasks';
+  if (loc.view === 'draw') return loc.rel ? drawingTitle(loc.rel) : 'Draw';
+  return loc.key === dayKey(new Date()) ? 'Home' : formatDayNumeric(parseDayKey(loc.key));
+}
+const TAB_ICONS = { note: 'tiFileText', graph: 'graph', planner: 'calendar', tasks: 'kanban', draw: 'tiPenLine', day: 'home' };
+// The strip shows only when there is more than one tab.
+const tabStripEl = document.getElementById('tab-strip');
+let tabDrag = null;
+function renderTabStrip() {
+  const many = tabs.count > 1;
+  tabStripEl.hidden = !many;
+  paneEl.classList.toggle('has-tabs', many);
+  tabStripEl.replaceChildren();
+  if (!many) return;
+  tabs.list.forEach((t, i) => {
+    const active = t === tabs.active;
+    const tab = elem('div', `tab-item${active ? ' active' : ''}`);
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+    tab.draggable = true;
+    tab.dataset.menuAnchor = `tab:${t.id}`;
+    const label = tabTitle(t.loc);
+    tab.title = label;
+    tab.append(icon(TAB_ICONS[t.loc ? t.loc.view : 'day'] || 'tiFileText', { size: 14 }), elem('span', 'tab-label', label));
+    const x = elem('button', 'tab-close', '×');
+    x.type = 'button'; x.title = K('Close tab (⌘W)'); x.setAttribute('aria-label', `Close ${label}`); x.tabIndex = -1;
+    x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t); });
+    tab.append(x);
+    tab.addEventListener('click', () => switchTab(t));
+    tab.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t); } });
+    tab.addEventListener('contextmenu', (e) => { e.preventDefault(); openTabMenu(t); });
+    tab.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); switchTab(tabs.neighbour(e.key === 'ArrowRight' ? 1 : -1)).then(focusActiveTab); }
+    });
+    tab.addEventListener('dragstart', (e) => { tabDrag = t; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', label); });
+    tab.addEventListener('dragover', (e) => { if (tabDrag) { e.preventDefault(); tab.classList.add('drop'); } });
+    tab.addEventListener('dragleave', () => tab.classList.remove('drop'));
+    tab.addEventListener('drop', (e) => { e.preventDefault(); if (tabDrag && tabDrag !== t) { tabs.move(tabDrag.id, i); syncTabs(); } tabDrag = null; });
+    tab.addEventListener('dragend', () => { tabDrag = null; });
+    tabStripEl.append(tab);
+  });
+  const plus = elem('button', 'tab-new', '+');
+  plus.type = 'button'; plus.title = K('New tab (⌥⌘T)'); plus.setAttribute('aria-label', 'New tab');
+  plus.addEventListener('click', () => newTab());
+  tabStripEl.append(plus);
+}
+function focusActiveTab() { tabStripEl.querySelector('.tab-item.active')?.focus(); }
+function openTabMenu(t) {
+  openMenu(`tab:${t.id}`, () => [
+    { label: 'Close', fn: () => { closeMenu(); closeTab(t); } },
+    { label: 'Close other tabs', fn: async () => { closeMenu(); await switchTab(t); tabs.closeOthers(t.id); render(); } },
+    ...(tabs.canReopen ? [{ label: 'Reopen closed tab', fn: () => { closeMenu(); reopenTab(); } }] : []),
+  ]);
+}
 
 // Page preview of [[links]] (src/hover-preview.js).
 const previewApi = {
@@ -1322,7 +1453,7 @@ document.getElementById('foot-keys').addEventListener('click', () => showShortcu
 
 // Keyboard shortcuts cheat sheet (⌘/, Help menu, sidebar footer).
 const SHORTCUTS = [
-  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Search notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward']]],
+  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Find in this note'], ['⌥⌘F', 'Find and replace in this note'], ['⇧⌘F', 'Search all notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward'], ['⌘-click', 'Open in a new tab'], ['⌥⌘-click', 'Open to the right'], ['⌥⌘T', 'New tab'], ['⌘W', 'Close tab'], ['⇧⌘[ / ⇧⌘]', 'Previous / next tab']]],
   ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo']]],
   ['Window', [['⌘\\', 'Show / hide sidebar'], ['⇧⌘\\', 'Show / hide details (outline, links, tags)'], ['⌘/', 'This list'], ['⌘,', 'Settings']]],
 ];
@@ -1620,16 +1751,22 @@ function openQuickSwitcher() {
         const p = t ? null : fuzzyMatch(q, n.rel.replace(/\.md$/i, ''));
         if (t) scored.push({ n, score: t.score + (state.recent.includes(n.rel) ? 2 : 0), indices: t.indices });
         else if (p) scored.push({ n, score: p.score - 5, indices: null });
+        else {
+          // Another name of the note (its aliases), shown beside the title.
+          const a = (n.aliases || []).map((al) => ({ al, m: fuzzyMatch(q, al) })).filter((x) => x.m).sort((x, y) => y.m.score - x.m.score)[0];
+          if (a) scored.push({ n, score: a.m.score - 1, indices: null, alias: a.al });
+        }
       }
       scored.sort((a, b) => b.score - a.score);
-      return scored.map((x) => switcherRow(x.n, x.indices));
+      return scored.map((x) => switcherRow(x.n, x.indices, x.alias));
     },
     empty: createRow,
     onShiftEnter: (q) => createNamedNote(q),
   });
 }
-function switcherRow(n, indices) {
-  return { label: n.title, indices, detail: n.folder ? n.folder.split('/').join(' / ') : '', run: () => openNote(n.rel, 'oku', { keepTab: true }) };
+function switcherRow(n, indices, alias) {
+  const where = n.folder ? n.folder.split('/').join(' / ') : '';
+  return { label: alias ? `${alias} → ${n.title}` : n.title, indices, detail: where, run: () => openNote(n.rel, 'oku', { keepTab: true }) };
 }
 async function createNamedNote(q) {
   const name = q.trim();
@@ -1672,7 +1809,7 @@ function commandList() {
     { label: 'Go home (today)', hint: '⌘T', run: goToday },
     { label: 'Show calendar', hint: '⌘1', run: () => setTab('takvim') },
     { label: 'Show notes', hint: '⌘2', run: () => setTab('notlar') },
-    { label: 'Search plans and notes', hint: '⌘F', run: () => setTab('ara') },
+    { label: 'Search plans and notes', hint: '⇧⌘F', run: () => setTab('ara') },
     { label: 'Toggle sidebar', hint: '⌘\\', run: toggleSidebar },
     { label: 'Toggle right sidebar', hint: '⇧⌘\\', run: () => toggleRightbar() },
     { label: 'Show outline', run: () => { state.rightbar.tab = 'outline'; toggleRightbar(true); } },
@@ -1688,6 +1825,20 @@ function commandList() {
     { label: 'Copy built-in templates to the Templates folder', run: copyBuiltinTemplates },
     { label: 'Export note as PDF', when: noteOpen, run: () => runExport('pdf', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Export note as Markdown', when: noteOpen, run: () => runExport('md', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
+    { label: 'Find in this note', hint: '⌘F', when: noteOpen, run: () => findBar.open() },
+    { label: 'Find and replace in this note', hint: '⌥⌘F', when: noteOpen, run: () => findBar.open({ replace: true }) },
+    { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
+    { label: 'New tab', hint: '⌥⌘T', run: () => newTab() },
+    { label: 'Open this note to the right', when: noteOpen, run: () => openSplit(state.openNote) },
+    { label: 'Add property to this note', hint: '⌘;', when: () => noteOpen() && state.noteView === 'blocks', run: () => startAddProperty('note') },
+    { label: 'Swap the two panes', when: () => !!split, run: () => swapSplit() },
+    { label: 'Close the right pane', when: () => !!split, run: () => closeSplit() },
+    { label: 'Close tab', hint: '⌘W', when: () => tabs.count > 1, run: () => closeTab() },
+    { label: 'Close other tabs', when: () => tabs.count > 1, run: () => { tabs.closeOthers(tabs.active.id); render(); } },
+    { label: 'Reopen closed tab', when: () => tabs.canReopen, run: reopenTab },
+    { label: 'Next tab', hint: '⇧⌘]', when: () => tabs.count > 1, run: () => switchTab(tabs.neighbour(1)) },
+    { label: 'Previous tab', hint: '⇧⌘[', when: () => tabs.count > 1, run: () => switchTab(tabs.neighbour(-1)) },
+    { label: 'Recover deleted notes', run: openDeletedRecovery },
     { label: 'Show unused attachments', run: showUnusedAttachments },
     { label: `Show notes folder in ${FILES_APP}`, run: () => notesApi.reveal() },
   ].filter((c) => !c.when || c.when());
@@ -2160,6 +2311,9 @@ function noteActionItems(title, getSrc, saveUnsaved) {
     { label: isBookmarked(state.openNote) ? 'Remove bookmark' : 'Bookmark', fn: () => { closeMenu(); toggleBookmark(state.openNote); } },
     { label: 'Open local graph', fn: () => { closeMenu(); openGraph({ local: true }); } },
     { label: 'Insert template…', fn: () => { closeMenu(); openTemplatePicker(); } },
+    { label: 'Open to the right', fn: () => { closeMenu(); openSplit(state.openNote); } },
+    { label: 'Add property', fn: () => { closeMenu(); startAddProperty('note'); } },
+    { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(); } },
     { label: 'Export…', fn: () => openMenu('menu-note', () => exportSubItems(title, getSrc, saveUnsaved)) },
     { label: 'Delete', fn: () => openMenu('menu-note', () => [
       { label: 'Cancel', fn: () => closeMenu() },
@@ -2375,6 +2529,7 @@ async function refreshTree() {
     state.treeFolders = res.folders.map((f) => f.rel);
     state.treeNotes = res.notes;
     state.notesFlat = flattenNotes(res.notes);
+    applyAliases();
   }
   await refreshAttachList();
 }
@@ -2388,10 +2543,19 @@ async function refreshAttachList() {
 // personal vault. Called when a note/day is opened, on window focus, and at
 // launch — i.e. right before any backlink section is shown, so it is always
 // current (a note's own backlinks are unaffected by editing that note).
+// Notes' other names (frontmatter "aliases"), so [[alias]] finds them.
+function applyAliases() {
+  const by = new Map((state.vaultNotes || []).map((n) => [n.rel, aliasesOf(n.content || '')]));
+  for (const n of state.notesFlat) {
+    const own = n.rel === state.openNote ? aliasesOf(state.noteContent) : by.get(n.rel);
+    n.aliases = own && own.length ? own : undefined;
+  }
+}
 async function rebuildBacklinks() {
   const res = await notesApi.all();
   state.vaultNotes = Array.isArray(res) ? res : [];
   state.backlinks = buildBacklinkIndex(state.vaultNotes);
+  applyAliases();
 }
 
 // Rebuild the index without blocking the current render, then re-render so the
@@ -2541,6 +2705,8 @@ async function commitTreeEdit(value) {
 function remapRel(oldRel, newRel) {
   const fix = (r) => (r === oldRel ? newRel : (r && r.startsWith(`${oldRel}/`) ? newRel + r.slice(oldRel.length) : r));
   if (state.openNote) state.openNote = fix(state.openNote);
+  tabs.remap(oldRel, newRel);
+  if (split) { split.rel = fix(split.rel); saveSplit(); }
   if (state.selectedFolder != null) state.selectedFolder = fix(state.selectedFolder);
   const next = new Set();
   for (const r of state.expanded) next.add(fix(r));
@@ -2877,6 +3043,9 @@ function noteMenuItems(n) {
     { label: 'Icon…', fn: () => openIconPicker(`n:${n.rel}`, n.rel) },
     { label: 'Colour…', fn: () => openColorPicker(`n:${n.rel}`, n.rel, 'note') },
     { label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-note', rel: n.rel }); } },
+    { label: 'Open in new tab', fn: () => { closeMenu(); openNoteInNewTab(n.rel); } },
+    { label: 'Open to the right', fn: () => { closeMenu(); openSplit(n.rel); } },
+    { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(n.rel); } },
     { label: 'Delete', fn: () => { closeMenu(); deleteNoteRel(n.rel); } },
   ];
 }
@@ -2936,7 +3105,7 @@ function onTreeKey(e) {
 // in the target folder. (A "#tag" search only searches.)
 async function openOrCreateFromSearch() {
   const name = state.araQuery.trim();
-  if (!name || name.startsWith('#')) return;
+  if (!name || !isPlainQuery(parseQuery(name))) return;
   const exact = state.notesFlat.find((n) => foldTR(n.title) === foldTR(name));
   state.araQuery = '';
   if (exact) { await openNote(exact.rel, 'oku', { keepTab: true }); return; }
@@ -2951,12 +3120,15 @@ async function openNote(rel, mode, opts = {}) {
   if (!opts.asText && res && !res.error && isBoard(res.content)) { await openTasks(rel); return; }
   // A drawing opens in Draw.
   if (!opts.asText && res && !res.error && (isDrawingRel(rel) || isDrawingText(res.content))) { await openDraw(rel); return; }
+  // ⌥⌘-click (or ⌥⌘Enter) opens it in the right pane instead.
+  if (takeSplitAsk()) { openSplit(rel, res && !res.error ? res.content : ''); return; }
   navVisit({ view: 'note', rel });
   state.openNote = rel;
   state.noteContent = res && !res.error ? res.content : '';
   state.noteCache.set(rel, state.noteContent);
   state.noteView = 'blocks';
   state.blockEdit = null;
+  state.propAdding = null;
   state.noteDeleteConfirm = false;
   state.contentView = 'note';
   state.selectedFolder = null;
@@ -2982,6 +3154,207 @@ async function openNote(rel, mode, opts = {}) {
 // blocks render correctly. The raw source is the single source of truth.
 
 function getSrcFor(scope) { return scope === 'note' ? state.noteContent : (state.dailyNote.content || ''); }
+
+// --- file recovery (src/history-view.js, lib/history.mjs) ---------------
+const okOr = (fallback) => (res) => (res && !res.error ? res : fallback);
+async function openNoteHistory(rel = state.openNote) {
+  if (!rel) return;
+  // Save what is pending first, so "now" is what is on screen.
+  if (rel === state.openNote && noteSaveTimer) {
+    clearTimeout(noteSaveTimer); noteSaveTimer = null;
+    await notesApi.write(rel, state.noteContent);
+  }
+  const now = rel === state.openNote ? state.noteContent : okOr({ content: '' })(await notesApi.read(rel)).content;
+  openVersionHistory({
+    rel,
+    title: noteTitleOf(rel),
+    list: (r) => notesApi.historyList(r).then(okOr([])),
+    get: (r, t) => notesApi.historyGet(r, t).then((x) => (typeof x === 'string' ? x : null)),
+    current: () => now,
+    copy: async (text) => { await notesApi.copy(text); showToast('Copied'); },
+    restore: async (r, t) => {
+      const res = await notesApi.historyRestore(r, t);
+      if (!res || res.error) { showToast(res && res.error ? res.error : 'Could not restore the version'); return false; }
+      state.noteCache.delete(r);
+      if (state.openNote === r) await openNote(r, 'oku', { keepTab: true });
+      showToast('Version restored. The text it replaced is kept as a version.');
+      return true;
+    },
+  });
+}
+function openDeletedRecovery() {
+  openDeletedNotes({
+    list: () => notesApi.historyDeleted().then(okOr([])),
+    titleOf: noteTitleOf,
+    restore: async (rel, t) => {
+      const res = await notesApi.historyRestoreDeleted(rel, t);
+      if (!res || res.error) { showToast(res && res.error ? res.error : 'Could not restore the note'); return null; }
+      await refreshTree();
+      await rebuildBacklinks();
+      render();
+      showToast(`Restored “${noteTitleOf(res.rel)}”`);
+      return res;
+    },
+  });
+}
+
+// --- find and replace in the note (src/find-bar.js, lib/find.mjs) -------
+const noteShown = () => state.contentView === 'note' && !!state.openNote;
+findBar = createFindBar(document.getElementById('find-bar'), {
+  active: noteShown,
+  src: () => state.noteContent,
+  rel: () => state.openNote,
+  mode: () => state.noteView,
+  blocksRoot: () => contentEl.querySelector('.note-body > .blocks'),
+  sourceArea: () => document.getElementById('note-editor'),
+  scroller: paneEl,
+  prepare: () => { if (state.blockEdit) { flushActiveEditor(); render(); } },
+  replaceSource: (text) => { setSrc('note', text, true); histRecord('note'); render(); },
+  focusMatch: (m) => {
+    if (state.noteView === 'source') {
+      const ta = document.getElementById('note-editor');
+      if (ta) { ta.focus(); ta.setSelectionRange(m.start, m.end); }
+      return;
+    }
+    // Edit the block holding the match, caret after it.
+    const src = state.noteContent;
+    const line = src.slice(0, m.start).split('\n').length - 1;
+    const b = parseBlocks(src).find((x) => x.start <= line && line <= x.end);
+    if (!b) return;
+    const from = src.split('\n').slice(0, b.start).join('\n').length + (b.start ? 1 : 0);
+    startEditBlock('note', b.start, m.end - from);
+  },
+  toast: (t) => showToast(t),
+});
+
+// --- the right pane: a second note beside the main one ------------------
+// It shows the note as the preview does: links (they open in this pane),
+// tasks, embeds, queries. Clicking its text swaps the panes and edits there,
+// so either note can be written in; the main pane is the one being edited.
+const askSplit = (e) => { if ((e.metaKey || e.ctrlKey) && e.altKey && (e.type === 'click' || e.key === 'Enter')) splitAsk = Date.now(); };
+document.addEventListener('click', askSplit, true);
+document.addEventListener('keydown', askSplit, true);
+function takeSplitAsk() { const yes = splitAsk && Date.now() - splitAsk < 1500; splitAsk = 0; return !!yes; }
+function saveSplit() { try { localStorage.setItem('mufka-split', split ? split.rel : ''); } catch { /* private window */ } }
+function loadSplit() {
+  let rel = '';
+  try { rel = localStorage.getItem('mufka-split') || ''; } catch { /* none */ }
+  if (rel && state.notesFlat.some((n) => n.rel === rel)) openSplit(rel);
+}
+const splitText = () => (split.rel === state.openNote ? state.noteContent : (state.noteCache.get(split.rel) ?? split.text));
+async function openSplit(rel, text) {
+  if (!rel) return;
+  if (text == null) {
+    const res = rel === state.openNote ? { content: state.noteContent } : await notesApi.read(rel);
+    if (!res || res.error) { showToast('Could not open the note'); return; }
+    text = res.content;
+  }
+  hidePreview();
+  state.noteCache.set(rel, text);
+  split = { rel, text };
+  saveSplit();
+  splitShown = null;
+  renderSplit();
+  splitEl.querySelector('.split-scroll').scrollTop = 0;
+}
+function closeSplit() {
+  split = null; splitShown = null; saveSplit();
+  renderSplit();
+}
+// Swap the panes: the right note becomes the one edited, the main one moves
+// right (when it was a note). editAt: the line of a block to start editing.
+async function swapSplit(editAt = null) {
+  if (!split) return;
+  flushActiveEditor();
+  const target = split.rel;
+  const main = state.contentView === 'note' && state.openNote ? state.openNote : null;
+  if (main && main !== target) { split = { rel: main, text: state.noteContent }; saveSplit(); splitShown = null; } else if (!main) closeSplit();
+  if (main !== target) await openNote(target, 'oku', { keepTab: true });
+  if (editAt != null && state.openNote === target) startEditBlock('note', editAt, 'end');
+}
+async function toggleSplitTask(line) {
+  const rel = split.rel;
+  if (rel === state.openNote) { setSrc('note', toggleTaskLine(state.noteContent, line), true); histRecord('note'); render(); return; }
+  const next = toggleTaskLine(splitText(), line);
+  const w = await notesApi.write(rel, next);
+  if (w && w.error) { showToast(w.error); return; }
+  state.noteCache.set(rel, next);
+  split.text = next;
+  renderSplit();
+}
+function renderSplit() {
+  const valid = split && state.notesFlat.some((n) => n.rel === split.rel);
+  if (split && !valid && state.notesFlat.length) { split = null; saveSplit(); }
+  splitEl.hidden = !split;
+  document.getElementById('app').classList.toggle('split-open', !!split);
+  if (!split) { splitShown = null; return; }
+  const text = splitText();
+  if (splitShown && splitShown.rel === split.rel && splitShown.text === text) return;
+  splitShown = { rel: split.rel, text };
+  const rel = split.rel;
+  const title = splitEl.querySelector('.split-title');
+  title.textContent = noteTitleOf(rel);
+  title.title = rel;
+  const col = splitEl.querySelector('.split-col');
+  const scroller = splitEl.querySelector('.split-scroll');
+  const top = scroller.scrollTop;
+  col.replaceChildren();
+  const dir = folderOf(rel);
+  const attach = (raw) => resolveAttachment(raw, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+  const blocks = parseBlocks(text);
+  // The file name as a title, unless the note starts with the same "# Title".
+  const first = blocks.find((b) => b.type !== 'frontmatter');
+  const firstLine = first ? blockText(text, first).split('\n')[0] : '';
+  if (!(/^#\s/.test(firstLine) && foldTR(firstLine.replace(/^#\s+/, '').trim()) === foldTR(noteTitleOf(rel)))) col.append(elem('h1', 'split-note-title', noteTitleOf(rel)));
+  if (!blocks.length) col.append(hint('This note is empty.'));
+  for (const b of blocks) {
+    const el = elem('div', `block md block-${b.type}`);
+    el.dataset.blockStart = String(b.start);
+    for (const n of renderMarkdown(blockText(text, b), { doc: document, noteExists: wikiExists, attach, refs: text, embedNote, embedStack: [rel], ...noteRenderOptions(rel) })) el.append(n);
+    el.querySelectorAll('a[data-wiki]').forEach((a) => a.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation(); hidePreview();
+      const to = resolveLink(a.getAttribute('data-wiki'), rel, state.notesFlat);
+      if (to) openSplit(to); else openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
+    }));
+    el.querySelectorAll('a[data-external]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); }));
+    el.querySelectorAll('[data-att]').forEach((x) => x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAttachment(x.getAttribute('data-att')); }));
+    el.querySelectorAll('.tag[data-tag]').forEach((t) => t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); }));
+    el.querySelectorAll('input.task-check').forEach((box) => box.addEventListener('change', () => toggleSplitTask(b.start + Number(box.getAttribute('data-line')))));
+    wireDataview(el);
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || e.target.closest('a, input, img:not(.mermaid-img), button, [data-att], summary, .tag')) return;
+      e.preventDefault();
+      swapSplit(b.start);
+    });
+    col.append(el);
+  }
+  attachHoverPreview(col, previewApi);
+  scroller.scrollTop = top;
+}
+splitEl.querySelector('.split-swap').addEventListener('click', () => swapSplit());
+splitEl.querySelector('.split-close').addEventListener('click', () => closeSplit());
+// Drag its left edge to resize (double-click: half and half); remembered.
+(() => {
+  const handle = splitEl.querySelector('.split-resizer');
+  const setW = (w, save) => {
+    const room = document.getElementById('app').clientWidth - document.getElementById('sidebar').offsetWidth - 360;
+    if (w == null) splitEl.style.removeProperty('flex');
+    else splitEl.style.flex = `0 0 ${Math.round(Math.max(280, Math.min(w, room)))}px`;
+    if (save) { try { localStorage.setItem('mufka-split-width', w == null ? '' : String(splitEl.offsetWidth)); } catch { /* ignore */ } }
+  };
+  try { const w = Number(localStorage.getItem('mufka-split-width')); if (w) splitEl.style.flex = `0 0 ${w}px`; } catch { /* none */ }
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX; const startW = splitEl.offsetWidth;
+    const move = (ev) => setW(startW - (ev.clientX - startX), false);
+    const up = () => { handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up); setW(splitEl.offsetWidth, true); };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+  });
+  handle.addEventListener('dblclick', () => setW(null, true));
+})();
+function openNoteInNewTab(rel) { newTab({ view: 'note', rel }); }
 
 let noteSaveTimer = null;
 let dailySaveTimer = null;
@@ -3119,7 +3492,180 @@ function mountBlockMarkdown(container, bsrc, startLine, scope) {
   });
 }
 
+// --- the properties editor (lib/properties.mjs) ---------------------------
+// The frontmatter of a note shows as a table of properties to edit in place:
+// text, lists and tags as chips, numbers, dates, checkboxes. "Edit YAML"
+// opens the raw block. Each change is saved and is one undo step.
+const PROP_ICONS = { tags: 'tag', list: 'outline', checkbox: 'check', date: 'calendar', datetime: 'calendar', object: 'more', text: 'tiFileText' };
+function commitProps(scope, change) {
+  const src = getSrcFor(scope);
+  let next;
+  try { next = change(src); } catch (e) { showToast(e.message || 'Could not change the properties'); return false; }
+  if (next === src) return false;
+  setSrc(scope, next, true);
+  histRecord(scope);
+  // Re-render once the click that caused it has landed; keep the focus where it went.
+  whenPointerUp(() => {
+    const a = document.activeElement;
+    if (!state.focus && a && a.id && a.closest && a.closest('.props')) state.focus = a.id;
+    render();
+  });
+  return true;
+}
+function startAddProperty(scope = 'note') {
+  flushActiveEditor();
+  state.propAdding = scope;
+  state.focus = `prop-${scope}-new`;
+  render();
+}
+function propertiesBlock(scope, b) {
+  const src = getSrcFor(scope);
+  const info = readProps(src);
+  const box = elem('div', 'block props');
+  if (b) box.dataset.blockStart = String(b.start);
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'Properties');
+  const head = elem('div', 'props-head');
+  head.append(elem('span', 'props-title', 'Properties'));
+  if (b) {
+    const raw = elem('button', 'props-raw', 'Edit YAML'); raw.type = 'button';
+    raw.title = 'Edit the properties as text';
+    raw.addEventListener('click', () => startEditBlock(scope, b.start, 'end'));
+    head.append(raw);
+  }
+  box.append(head);
+  if (info.error) {
+    box.append(elem('p', 'props-error', `These properties are not valid YAML (${info.error.split('\n')[0]}). Use Edit YAML to fix them.`));
+    return box;
+  }
+  info.props.forEach((p, i) => box.append(propRow(scope, p, i)));
+  if (state.propAdding === scope) box.append(propNewRow(scope));
+  else {
+    const add = elem('button', 'props-add', '+ Add property'); add.type = 'button';
+    add.addEventListener('click', () => startAddProperty(scope));
+    box.append(add);
+  }
+  return box;
+}
+function propRow(scope, p, i) {
+  const row = elem('div', `prop-row prop-${p.type}`);
+  const id = `prop-${scope}-${i}`;
+  const ic = icon(PROP_ICONS[p.type] || 'tiFileText', { size: 14 });
+  ic.classList.add('prop-icon');
+  const key = document.createElement('input');
+  key.className = 'prop-key'; key.id = `${id}-k`; key.value = p.key; key.spellcheck = false;
+  key.setAttribute('aria-label', 'Property name');
+  key.addEventListener('change', () => { if (!commitProps(scope, (s) => renameProp(s, p.key, key.value))) key.value = p.key; });
+  key.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); key.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); key.value = p.key; key.blur(); }
+  });
+  const val = elem('div', 'prop-value');
+  val.append(propEditor(scope, p, `${id}-v`));
+  const del = elem('button', 'prop-del', '×'); del.type = 'button';
+  del.title = `Remove ${p.key}`; del.setAttribute('aria-label', `Remove ${p.key}`);
+  del.addEventListener('click', () => commitProps(scope, (s) => deleteProp(s, p.key)));
+  row.append(p.type === 'number' ? elem('span', 'prop-icon prop-num', '12') : ic, key, val, del);
+  return row;
+}
+function propEditor(scope, p, id) {
+  const set = (v) => commitProps(scope, (s) => setProp(s, p.key, v));
+  const field = (type, value) => {
+    const f = document.createElement('input');
+    f.type = type; f.id = id; f.className = 'prop-input'; f.value = value;
+    f.setAttribute('aria-label', p.key);
+    f.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); f.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); f.value = value; f.blur(); }
+    });
+    return f;
+  };
+  if (p.type === 'checkbox') {
+    const c = document.createElement('input');
+    c.type = 'checkbox'; c.id = id; c.className = 'prop-check'; c.checked = p.value === true;
+    c.setAttribute('aria-label', p.key);
+    c.addEventListener('change', () => set(c.checked));
+    return c;
+  }
+  if (p.type === 'number') {
+    const f = field('number', String(p.value));
+    f.addEventListener('change', () => set(f.value === '' ? null : Number(f.value)));
+    return f;
+  }
+  if (p.type === 'date' || p.type === 'datetime') {
+    const s = p.value instanceof Date ? p.value.toISOString().slice(0, 10) : String(p.value);
+    const f = field(p.type === 'date' ? 'date' : 'datetime-local', p.type === 'date' ? s : s.replace(' ', 'T').slice(0, 16));
+    f.addEventListener('change', () => { if (f.value) set(p.type === 'date' ? f.value : (s.includes('T') ? f.value : f.value.replace('T', ' '))); });
+    return f;
+  }
+  if (p.type === 'list' || p.type === 'tags') {
+    const items = (Array.isArray(p.value) ? p.value : (p.value == null || p.value === '' ? [] : [p.value])).map((x) => String(x));
+    const wrap = elem('div', 'prop-chips');
+    items.forEach((it, k) => {
+      const chip = elem('span', 'prop-chip');
+      chip.append(elem('span', null, p.type === 'tags' ? `#${it.replace(/^#/, '')}` : it));
+      const x = elem('button', 'prop-chip-x', '×'); x.type = 'button'; x.tabIndex = -1;
+      x.setAttribute('aria-label', `Remove ${it}`);
+      x.addEventListener('click', () => set(items.filter((_, j) => j !== k)));
+      chip.append(x);
+      wrap.append(chip);
+    });
+    const add = document.createElement('input');
+    add.type = 'text'; add.id = id; add.className = 'prop-chip-input'; add.spellcheck = false;
+    add.placeholder = items.length ? '' : (p.type === 'tags' ? 'Add a tag' : 'Add a value');
+    add.setAttribute('aria-label', `Add to ${p.key}`);
+    const push = () => {
+      const v = add.value.split(',').map((x) => x.trim().replace(p.type === 'tags' ? /^#/ : /^$/, '')).filter(Boolean);
+      if (!v.length) return false;
+      add.value = '';
+      state.focus = id;
+      return set([...items, ...v.filter((x) => !items.includes(x))]);
+    };
+    add.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || (e.key === ',' && add.value.trim())) { e.preventDefault(); push(); }
+      else if (e.key === 'Backspace' && !add.value && items.length) { e.preventDefault(); state.focus = id; set(items.slice(0, -1)); }
+      else if (e.key === 'Escape') { add.value = ''; add.blur(); }
+    });
+    add.addEventListener('blur', () => { if (add.value.trim()) push(); });
+    wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) { e.preventDefault(); add.focus(); } });
+    wrap.append(add);
+    return wrap;
+  }
+  if (p.type === 'object') {
+    const t = elem('span', 'prop-object', JSON.stringify(p.value));
+    t.title = 'Nested values: use Edit YAML';
+    return t;
+  }
+  const f = field('text', p.value == null ? '' : String(p.value));
+  f.addEventListener('change', () => set(f.value));
+  return f;
+}
+function propNewRow(scope) {
+  const row = elem('div', 'prop-row prop-new');
+  const key = document.createElement('input');
+  key.className = 'prop-key'; key.id = `prop-${scope}-new`; key.placeholder = 'Property name'; key.spellcheck = false;
+  key.setAttribute('aria-label', 'New property name');
+  const done = (save) => {
+    const name = key.value.trim();
+    state.propAdding = null;
+    if (save && name) {
+      const count = readProps(getSrcFor(scope)).props?.length ?? 0;
+      if (readProps(getSrcFor(scope)).props?.some((p) => p.key === name)) { showToast(`There is already a property named “${name}”`); render(); return; }
+      state.focus = `prop-${scope}-${count}-v`;
+      if (!commitProps(scope, (s) => setProp(s, name, defaultValue(name)))) render();
+    } else render();
+  };
+  key.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); done(true); }
+    if (e.key === 'Escape') { e.preventDefault(); done(false); }
+  });
+  key.addEventListener('blur', () => { if (state.propAdding) whenPointerUp(() => { if (state.propAdding && document.activeElement !== key) done(true); }); });
+  row.append(elem('span', 'prop-icon'), key);
+  return row;
+}
+
 function blockPreview(scope, b) {
+  if (b.type === 'frontmatter') return propertiesBlock(scope, b);
   const el = elem('div', `block md block-${b.type}`); // block-image, block-heading… for spacing
   el.dataset.blockStart = String(b.start);
   mountBlockMarkdown(el, blockText(getSrcFor(scope), b), b.start, scope);
@@ -3228,6 +3774,7 @@ function renderBlockEditor(container, scope) {
   if (!edit && blocks.length === 0) { state.blockEdit = { scope, newAfter: -1, caret: 0, auto: true }; edit = state.blockEdit; }
 
   const wrap = elem('div', 'blocks');
+  if (state.propAdding === scope && !blocks.some((b) => b.type === 'frontmatter')) wrap.append(propertiesBlock(scope, null));
   if (edit && edit.newAfter === -1) wrap.append(blockTextarea(scope, null, edit));
   for (const b of blocks) {
     if (edit && edit.startLine === b.start) { wrap.append(blockTextarea(scope, b, edit)); continue; }
@@ -3296,8 +3843,20 @@ function toggleNoteView() { setNoteView(state.noteView === 'source' ? 'blocks' :
 // rendered view can show the new file.
 // Autocomplete in every editor: [[ → notes (fuzzy, recent first on an empty
 // query), #x → tags of the vault (most used first).
+// What the "/" menu's app actions do (lib/slash.mjs); the "/" text is already gone.
+function runSlashAction(action, ta) {
+  const scope = ta.id === 'note-editor' ? 'note' : (state.blockEdit ? state.blockEdit.scope : 'note');
+  if (action === 'property') { startAddProperty(scope); return; }
+  if (scope !== 'note' || !state.openNote) { showToast('That works in a note'); return; }
+  if (action === 'attach') addFileToNote();
+  else if (action === 'template') openTemplatePicker();
+}
 const suggestApi = {
-  items(kind, q) {
+  items(kind, q, trigger) {
+    if (kind === 'slash') {
+      return slashItems(q, { atLineStart: trigger ? trigger.atLineStart : true, dailyLink: dayKey(new Date()) })
+        .map((r) => ({ ...r, run: r.action ? (ta) => runSlashAction(r.action, ta) : null }));
+    }
     if (kind === 'tag') {
       return buildTagIndex(state.vaultNotes).map((t) => ({ t, m: fuzzyMatch(q, t.tag) })).filter((x) => x.m)
         .sort((a, b) => b.m.score - a.m.score || b.t.count - a.t.count)
@@ -3308,9 +3867,18 @@ const suggestApi = {
       ? fuzzyFilter(q, state.notesFlat, (n) => n.title).map((x) => x.item)
       : [...state.recent.map((r) => state.notesFlat.find((n) => n.rel === r)).filter(Boolean),
         ...state.notesFlat.filter((n) => !state.recent.includes(n.rel))];
-    return rows.filter((n) => n.rel !== state.openNote || q.trim()).map((n) => ({
+    const out = rows.filter((n) => n.rel !== state.openNote || q.trim()).map((n) => ({
       label: n.title, detail: n.folder ? n.folder.split('/').join(' / ') : '', insert: `[[${linkTextFor(n.rel, rels)}]]`,
     }));
+    // An alias that matches links to its note and shows the alias: [[Title|alias]].
+    if (q.trim()) {
+      for (const n of state.notesFlat) {
+        for (const al of n.aliases || []) {
+          if (fuzzyMatch(q, al) && !fuzzyMatch(q, n.title)) out.push({ label: al, detail: `→ ${n.title}`, insert: `[[${linkTextFor(n.rel, rels)}|${al}]]` });
+        }
+      }
+    }
+    return out;
   },
 };
 
@@ -3675,7 +4243,7 @@ function wireAttachments(ta, scope) {
   ta.addEventListener('paste', async (e) => {
     const items = e.clipboardData && e.clipboardData.items;
     const hasImage = items && [...items].some((it) => it.kind === 'file' && it.type.startsWith('image/'));
-    if (!hasImage) return;
+    if (!hasImage) { pasteRich(e, ta); return; }
     e.preventDefault();
     const res = await notesApi.attachPaste(noteDir());
     if (res && res.error) { showToast(res.error); return; }
@@ -3690,6 +4258,29 @@ function wireAttachments(ta, scope) {
     e.stopPropagation(); // the note-level drop handler must not attach it twice
     await attachDropped(files, scope, null);
   });
+}
+
+// Pasted HTML (a web page, Google Docs, Mail) becomes Markdown (lib/paste.mjs).
+// Plain text, code editors' copies and a paste inside a code block stay as
+// they are; ⇧⌘V always pastes plain text. Inserted like typing, so ⌘Z undoes it.
+function pasteRich(e, ta) {
+  const data = e.clipboardData;
+  if (!data) return;
+  const html = data.getData('text/html');
+  if (!isRichHtml(html) || data.types.includes('vscode-editor-data') || insideCodeFence(ta.value, ta.selectionStart)) return;
+  let md = '';
+  try { md = htmlToMarkdown(html); } catch { return; }
+  if (!md || md === data.getData('text/plain').trim()) return;
+  e.preventDefault();
+  if (!document.execCommand('insertText', false, md)) ta._attachInsert(md);
+}
+async function pastePlain() {
+  const t = document.activeElement;
+  if (!t || !(t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && /^(text|search)$/.test(t.type)))) return;
+  const text = await notesApi.clipboardText();
+  if (typeof text !== 'string' || !text) return;
+  t.focus();
+  if (!document.execCommand('insertText', false, text)) t.setRangeText(text, t.selectionStart, t.selectionEnd, 'end');
 }
 
 // "Dosya ekle…": pick files via a native dialog and insert at the note's caret.
@@ -3825,18 +4416,19 @@ async function ensureNoteCache() {
 function renderSearchResults() {
   const q = state.araQuery.trim();
   if (!q) return;
+  const tree = parseQuery(q);
+  const plain = isPlainQuery(tree);
   // Enter = open the note with exactly this name, else create it: say so.
-  if (!/^#/.test(q) && !state.notesFlat.some((n) => foldTR(n.title) === foldTR(q))) {
+  if (plain && !state.notesFlat.some((n) => foldTR(n.title) === foldTR(q))) {
     const c = elem('button', 'ara-result ara-create');
     c.type = 'button';
     c.append(elem('div', null, `Create note “${q}”`), elem('div', 'meta', 'Enter'));
     c.addEventListener('click', () => openOrCreateFromSearch());
     sideEl.append(c);
   }
-  const qf = foldTR(q);
 
-  // Plans (day-scoped), by title.
-  const planHits = searchPlans(state.store.items.filter((p) => p.scope === 'day'), q);
+  // Plans (day-scoped), by title; only for plain words.
+  const planHits = plain ? searchPlans(state.store.items.filter((p) => p.scope === 'day'), q) : [];
   if (planHits.length) sideEl.append(elem('div', 'ara-group-title', 'Plans'));
   for (const p of planHits) {
     const btn = elem('button', 'ara-result');
@@ -3846,25 +4438,64 @@ function renderSearchResults() {
     sideEl.append(btn);
   }
 
-  // Notes: title or body match. "#tag" finds notes with that tag (inline or in
-  // the frontmatter; "#a" also finds nested "#a/b").
-  const tagQ = /^#([^\s#]+)$/.exec(q);
-  const hasTag = (content) => scanTags(content).some((t) => { const f = foldTR(t); const w = foldTR(tagQ[1]); return f === w || f.startsWith(`${w}/`); });
-  const noteHits = tagQ
-    ? state.notesFlat.filter((n) => hasTag(state.noteCache.get(n.rel) || ''))
-    : state.notesFlat.filter((n) => foldTR(n.title).includes(qf)
-      || foldTR(state.noteCache.get(n.rel) || '').includes(qf));
-  if (noteHits.length) sideEl.append(elem('div', 'ara-group-title', 'Notes'));
-  if (!noteHits.length && !planHits.length) sideEl.append(elem('div', 'ara-empty', 'No results.'));
-  for (const n of noteHits) {
+  // Notes: every word in the title or the text, or what the operators say
+  // (lib/search.mjs: file: path: tag: line: section: task: "…" -x OR /re/ [prop]).
+  const terms = hitTerms(tree);
+  const noteHits = [];
+  for (const n of state.notesFlat) {
+    const doc = searchDoc({ rel: n.rel, title: n.title, content: state.noteCache.get(n.rel) || '' });
+    if (matchNote(tree, doc)) noteHits.push({ n, doc });
+  }
+  if (noteHits.length) sideEl.append(elem('div', 'ara-group-title', `Notes · ${noteHits.length}`));
+  if (!noteHits.length && !planHits.length) {
+    sideEl.append(elem('div', 'ara-empty', 'No results.'));
+    if (plain) sideEl.append(searchHelp());
+  }
+  for (const { n, doc } of noteHits) {
     const btn = elem('button', 'ara-result');
-    btn.append(elem('div', null, n.title));
-    const line = !tagQ && !foldTR(n.title).includes(qf) ? (state.noteCache.get(n.rel) || '').split('\n').find((l) => foldTR(l).includes(qf)) : null;
-    if (line) btn.append(elem('div', 'snippet', line.trim().slice(0, 120)));
+    btn.append(markedText('div', null, n.title, hitsIn(n.title, terms)));
+    const snip = snippetFor(doc, terms);
+    if (snip) btn.append(markedText('div', 'snippet', snip.text, snip.hits));
     if (n.folder) btn.append(elem('div', 'meta', n.folder.split('/').join(' / ')));
-    btn.addEventListener('click', () => openNote(n.rel, 'oku', { keepTab: true }));
+    // Open the note with its first hit found, so it is easy to see where.
+    const first = snip && snip.hits[0] ? snip.text.slice(snip.hits[0].start, snip.hits[0].end) : '';
+    btn.addEventListener('click', async () => {
+      await openNote(n.rel, 'oku', { keepTab: true });
+      if (first && state.openNote === n.rel) findBar.open({ query: first, focus: false });
+    });
     sideEl.append(btn);
   }
+}
+
+// Text with some ranges in <mark>.
+function markedText(tag, cls, text, hits) {
+  const e = elem(tag, cls);
+  let at = 0;
+  for (const h of hits) {
+    e.append(text.slice(at, h.start));
+    const m = document.createElement('mark'); m.className = 'ara-hit'; m.textContent = text.slice(h.start, h.end);
+    e.append(m);
+    at = h.end;
+  }
+  e.append(text.slice(at));
+  return e;
+}
+
+function searchHelp() {
+  const box = elem('div', 'ara-help');
+  box.append(elem('div', 'ara-help-title', 'Search can also use'));
+  const dl = elem('dl', 'ara-help-list');
+  for (const [k, v] of [
+    ['"two words"', 'this exact phrase'], ['a OR b', 'either one'], ['-word', 'not this word'],
+    ['file:name', 'in the note name'], ['path:Work', 'in the folder path'], ['#tag', 'has the tag'],
+    ['line:(a b)', 'both on one line'], ['section:(a b)', 'under one heading'],
+    ['task-todo:x', 'in an open task (task:, task-done:)'], ['[status:active]', 'a property'], ['/regex/', 'a pattern'],
+  ]) {
+    const dt = elem('dt'); dt.append(elem('code', null, k));
+    dl.append(dt, elem('dd', null, v));
+  }
+  box.append(dl);
+  return box;
 }
 
 // --- first-run welcome card on the day page ---
@@ -3926,6 +4557,10 @@ if (plansApi.onMenu) {
     else if (action === 'tasks') openTasks();
     else if (action === 'draw') openDraw();
     else if (action === 'tab:ara') setTab('ara');
+    else if (action === 'paste-plain') pastePlain();
+    else if (action === 'new-tab') newTab();
+    else if (action === 'close-tab') closeTab();
+    else if (action === 'reopen-tab') reopenTab();
     else if (action === 'toggle-sidebar') toggleSidebar();
     else if (action === 'unused-attachments') showUnusedAttachments();
     else if (action === 'graph') openGraph();
@@ -3985,13 +4620,15 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && settingsLayer) { e.preventDefault(); settingsLayer._close(); return; }
   if (e.ctrlKey && !e.metaKey && e.key === 'Tab') { e.preventDefault(); toggleMode(); return; }
   if (e.key === 'Escape' && state.editPlanId) { state.editPlanId = null; removeOutside(); render(); return; }
+  if (e.key === 'Escape' && findBar.isOpen() && !isTextTarget(e.target) && !state.blockEdit && !isPaletteOpen()) { findBar.close({ keepFocus: true }); return; }
   const mod = e.metaKey || e.ctrlKey;
   if (!mod) return;
   const k = e.key.toLowerCase();
   // In a drawing, Excalidraw's own shortcuts (undo, group, copy…) win; only
   // the app's way out (modes, switcher, palette, settings) stays.
-  if (e.target && e.target.closest && e.target.closest('.draw-host') && !['1', '2', '3', '4', 'o', 'p', ',', 't', 'n'].includes(k)) return;
+  if (e.target && e.target.closest && e.target.closest('.draw-host') && !['1', '2', '3', '4', 'o', 'p', ',', 't', 'n', 'w'].includes(k) && !(e.shiftKey && /^Bracket/.test(e.code))) return;
   if (k === 'z') {
+    if (findBar.contains(e.target)) return; // the find fields' own undo
     // Whole-document undo/redo for the block editor (overrides native undo).
     const editScope = state.blockEdit ? state.blockEdit.scope
       : (state.contentView === 'note' && state.openNote && state.noteView === 'blocks' ? 'note' : null);
@@ -4003,12 +4640,20 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.code === 'Backslash' && e.shiftKey) { e.preventDefault(); toggleRightbar(); return; }
+  if (e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { e.preventDefault(); switchTab(tabs.neighbour(e.code === 'BracketRight' ? 1 : -1)); return; }
+  if (e.code === 'KeyW' && !e.shiftKey) { e.preventDefault(); closeTab(); return; }
+  if (e.code === 'KeyT' && e.altKey) { e.preventDefault(); newTab(); return; }
   if (k === '\\') { e.preventDefault(); toggleSidebar(); return; }
   if (k === '1') { e.preventDefault(); setTab('takvim'); return; }
   if (k === '2') { e.preventDefault(); setTab('notlar'); return; }
   if (k === '3') { e.preventDefault(); openTasks(); return; }
   if (k === '4') { e.preventDefault(); openDraw(); return; }
-  if (k === 'f') { e.preventDefault(); setTab('ara'); return; }
+  if (e.code === 'KeyF' || k === 'f') {
+    // ⌘F finds in the open note (⌥⌘F with replace); ⇧⌘F, or ⌘F anywhere else, searches every note.
+    e.preventDefault();
+    if (e.shiftKey || !findBar.open({ replace: e.altKey })) setTab('ara');
+    return;
+  }
   if (k === 't' && e.shiftKey) { e.preventDefault(); if (state.contentView === 'note' && state.openNote) openTemplatePicker(); return; }
   if (k === 't') { e.preventDefault(); goToday(); return; }
   if (k === 'n') { e.preventDefault(); newNote(); return; }
@@ -4016,6 +4661,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '[' || e.code === 'BracketLeft') { if (!isTextTarget(e.target)) { e.preventDefault(); goNav(-1); } return; }
   if (e.key === ']' || e.code === 'BracketRight') { if (!isTextTarget(e.target)) { e.preventDefault(); goNav(1); } return; }
   if (k === '/') { e.preventDefault(); showShortcuts(); return; }
+  if (e.code === 'Semicolon' && state.contentView === 'note' && state.openNote && state.noteView === 'blocks') { e.preventDefault(); startAddProperty('note'); return; }
   if (k === 'p' && e.shiftKey) { e.preventDefault(); plannerApi.newPlan(state.contentView === 'planner' && !isThisWeekShown() ? startOfWeek(state.weekDate) : new Date()); return; }
   if (k === 'o') { e.preventDefault(); openQuickSwitcher(); return; }
   if (state.contentView === 'planner' && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); openPlanner(addDays(state.weekDate, e.key === 'ArrowLeft' ? -7 : 7)); return; }
@@ -4083,7 +4729,14 @@ async function boot() {
   const now = new Date();
   const res = await notesApi.readDaily(dayKey(now));
   state.dailyNote = { key: dayKey(now), content: res && !res.error ? res.content : null };
+  // Tabs come back as they were left, when there were several.
+  let savedTabs = null;
+  try { savedTabs = JSON.parse(localStorage.getItem('mufka-tabs') || 'null'); } catch { /* none */ }
+  const restored = savedTabs && Array.isArray(savedTabs.tabs) && savedTabs.tabs.length > 1 && tabs.restore(savedTabs, navValid);
+  const startAt = restored ? tabs.active.loc : null;
+  loadSplit();
   render();
+  if (startAt) await goTo(startAt);
   lastTick = Date.now();
   setInterval(() => checkDue(), 30000);
 }

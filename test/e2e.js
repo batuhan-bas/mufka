@@ -778,7 +778,7 @@ app.whenReady().then(() => setTimeout(async () => {
     await step(34, 'obsidian note: frontmatter, nested task, table, footnote', async () => {
       const src = '---\ntags: [is, rapor]\n---\n\n- ust\n  - [ ] alt gorev\n\n| A | B |\n| - | -: |\n| 1 | 2 |\n\nDipnot[^1].\n\n[^1]: Aciklama.';
       await setNoteSource(src);
-      assert(await waitFor('document.querySelector(".note-body dl.frontmatter")', 2500), 'frontmatter not rendered as properties');
+      assert(await waitFor('[...document.querySelectorAll(".note-body .props .prop-chip")].map(c => c.textContent.replace("×", "")).join(",") === "#is,#rapor"', 2500), 'frontmatter not rendered as properties');
       assert(!(await js('!!document.querySelector(".note-body hr")')), 'frontmatter fence rendered as a rule');
       assert(await js('document.querySelectorAll(".note-body table th").length === 2'), 'table header missing');
       assert(await js('document.querySelector(".note-body td.align-right")?.textContent === "2"'), 'column alignment missing');
@@ -818,7 +818,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(!(await js(`!!${treeRow('Blok')}`)), 'default vault notes still shown');
       await clickTreeRow('Proje'); await sleep(200);
       await clickTreeRow('Plan');
-      assert(await waitFor('document.querySelector(".note-body dl.frontmatter")', 3000), 'note from the chosen folder not opened');
+      assert(await waitFor('document.querySelector(".note-body .props")', 3000), 'note from the chosen folder not opened');
       await clickSel('#ara-input'); await typeText('Yeni dis not'); await enter();
       // Created next to the open note (Proje/), per the filter's target-folder rule.
       assert(await waitFor2(() => fs.existsSync(path.join(outsideVault, 'Proje', 'Yeni dis not.md')), 3000), 'new note not written into the chosen folder');
@@ -1771,6 +1771,277 @@ app.whenReady().then(() => setTimeout(async () => {
       await sleep(300);
       await clickEval(`[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === 'Sprint')`, 'Sprint row');
       assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true" && !!document.querySelector(".tk-col")', 3000), 'board note did not open as a board');
+    });
+
+    // 65. File recovery: a saved change keeps the text it replaced; the
+    //     version comes back from Version history; a deleted note comes back
+    //     from Recover deleted notes. Versions live outside the vault.
+    await step(65, 'version history restores a version; a deleted note is recovered', async () => {
+      const file = path.join(notesDir, 'Gecmis.md');
+      fs.writeFileSync(file, 'ilk hali\n');
+      await clickSel('#mode-notes');
+      await sleep(1700); // past the watcher's own-write window
+      await press('O', ['meta']); await typeText('Gecmis');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Gecmis"', 3000), 'note not in the switcher');
+      await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Gecmis"', 3000), 'note did not open');
+      await setNoteSource('ikinci hali\n');
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === 'ikinci hali\n', 3000), 'edit not saved');
+      assert(!fs.readdirSync(notesDir).some((n) => /history/i.test(n)), 'history written into the vault');
+      assert(fs.existsSync(path.join(tmp, 'history')), 'no history folder in userData');
+      await press('P', ['meta']); await typeText('version history');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Version history of this note"', 2000), 'command not found');
+      await enter();
+      assert(await waitFor('document.querySelectorAll(".history-dialog .hist-row").length === 1', 3000), `versions: ${await js('document.querySelectorAll(".history-dialog .hist-row").length')}`);
+      assert(await waitFor('[...document.querySelectorAll(".hist-line.add")].some(l => l.textContent.includes("ilk hali")) && [...document.querySelectorAll(".hist-line.del")].some(l => l.textContent.includes("ikinci hali"))', 2000), 'changes not shown');
+      await clickEval(`[...document.querySelectorAll('.history-dialog button')].find(b => b.textContent === 'Restore this version')`, 'restore button');
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === 'ilk hali\n', 3000), `not restored: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      assert(await waitFor('!document.querySelector(".history-dialog") && document.querySelector(".note-body")?.textContent.includes("ilk hali")', 3000), 'restored text not shown');
+      // What the restore replaced is a version too.
+      await press('P', ['meta']); await typeText('version history'); await enter();
+      assert(await waitFor('document.querySelectorAll(".history-dialog .hist-row").length === 2', 3000), 'replaced text not kept');
+      await press('Escape');
+      assert(await waitFor('!document.querySelector(".history-dialog")', 2000), 'Esc did not close');
+      // Delete the note, then bring it back.
+      await clickSel('[data-menu-anchor="menu-note"]');
+      await clickEval(`[...document.querySelectorAll('.menu-item')].find(b => b.textContent === 'Delete')`, 'Delete');
+      await clickEval(`[...document.querySelectorAll('.menu-item')].find(b => b.textContent === 'Delete')`, 'confirm Delete');
+      assert(await waitFor2(() => !fs.existsSync(file), 3000), 'note not deleted');
+      await press('P', ['meta']); await typeText('recover deleted'); await enter();
+      assert(await waitFor('[...document.querySelectorAll(".hist-row-deleted")].some(r => r.textContent.includes("Gecmis"))', 3000), 'deleted note not listed');
+      await clickEval(`[...document.querySelectorAll('.hist-row-deleted')].find(r => r.textContent.includes('Gecmis')).querySelector('button')`, 'restore deleted');
+      assert(await waitFor2(() => fs.existsSync(file) && fs.readFileSync(file, 'utf8') === 'ilk hali\n', 3000), 'deleted note not restored');
+      await press('Escape');
+      assert(await waitFor('!document.querySelector(".history-dialog")', 2000), 'Esc did not close after a restore');
+    });
+
+    // 66. Find and replace in the note: ⌘F highlights matches in the preview
+    //     (case and Turkish i ignored; one is hidden in a link's address, so
+    //     its block is marked), ⌥⌘F replaces all, ⌘Z undoes it, and the
+    //     source view marks matches behind its text.
+    await step(66, 'find and replace in the note', async () => {
+      const file = path.join(notesDir, 'Bul.md');
+      fs.writeFileSync(file, 'elma armut\n\nbir ELMA daha\n\n[link](https://elma.example)\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Bul');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Bul"', 3000), 'note not in the switcher');
+      await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'note did not open');
+      await press('F', ['meta']);
+      assert(await waitFor('document.activeElement?.id === "find-input"', 2000), 'find field not focused');
+      await typeText('elma');
+      assert(await waitFor('document.querySelector(".find-count")?.textContent === "1 of 3"', 2000), `count: ${await js('document.querySelector(".find-count")?.textContent')}`);
+      assert(await js('CSS.highlights.get("find-match")?.size === 2 && CSS.highlights.get("find-current")?.size === 1'), 'matches not highlighted');
+      await enter(); await enter();
+      assert(await waitFor('document.querySelector(".find-count")?.textContent === "3 of 3" && !!document.querySelector(".block.find-block")', 2000), 'the match in the link address is not marked');
+      await press('F', ['meta', 'alt']);
+      assert(await waitFor('document.querySelector(".find-box.replacing") && document.activeElement?.id === "find-replace-input"', 2000), 'replace field not shown');
+      await typeText('kiraz');
+      await press('Return', ['meta']);
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === 'kiraz armut\n\nbir kiraz daha\n\n[link](https://kiraz.example)\n', 3000), `not replaced: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      assert(await waitFor('document.querySelector(".find-count")?.textContent === "No results"', 2000), 'count after replace');
+      await press('Escape');
+      assert(await waitFor('document.getElementById("find-bar").hidden && !CSS.highlights.get("find-match")', 2000), 'Esc did not close');
+      await cmdZ();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').startsWith('elma armut'), 3000), 'undo did not bring the text back');
+      // ⇧⌘F still searches every note.
+      await press('F', ['meta', 'shift']);
+      assert(await waitFor('document.activeElement?.id === "ara-input"', 2000), '⇧⌘F did not open search');
+      // Source view: matches marked behind the text; replace one.
+      await press('O', ['meta']); await typeText('Bul');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Bul"', 3000), 'note not in the switcher');
+      await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'note did not reopen');
+      await press('E', ['meta']);
+      assert(await waitFor('!!document.querySelector("#note-editor")', 2000), 'no source view');
+      await press('F', ['meta', 'alt']);
+      await retype('#find-input', 'elma');
+      assert(await waitFor('document.querySelectorAll("#find-backdrop .find-mark").length === 3 && document.querySelectorAll("#find-backdrop .find-mark.current").length === 1', 2000), 'source matches not marked');
+      await retype('#find-replace-input', 'erik'); await enter();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').startsWith('erik armut\n\nbir ELMA'), 3000), `source replace: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      assert(await waitFor('document.querySelector(".find-count")?.textContent === "1 of 2"', 2000), `count after one: ${await js('document.querySelector(".find-count")?.textContent')}`);
+      await press('Escape');
+      assert(await waitFor('!document.getElementById("find-backdrop") && document.activeElement?.id === "note-editor"', 2000), 'source view not restored');
+      await press('E', ['meta']);
+    });
+
+    // 67. Search operators: words are all needed, file:/-file: narrow it, the
+    //     hit is marked in the result, and opening it shows the hit in the note.
+    await step(67, 'search operators, marked hits, the hit shown in the note', async () => {
+      await press('F', ['meta', 'shift']);
+      assert(await waitFor('document.activeElement?.id === "ara-input"', 2000), 'search not focused');
+      await typeText('file:Bul elma');
+      assert(await waitFor('document.querySelectorAll(".ara-result").length === 1 && document.querySelector(".ara-result mark.ara-hit")?.textContent === "ELMA"', 3000), `results: ${await js('[...document.querySelectorAll(".ara-result")].map(r=>r.textContent).join(" | ")')}`);
+      assert(await js('!document.querySelector(".ara-create")'), 'an operator query offered to create a note');
+      await clickSel('.ara-result');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul" && !document.getElementById("find-bar").hidden && document.querySelector(".find-count")?.textContent === "1 of 2"', 3000), `find after open: ${await js('document.querySelector(".find-count")?.textContent')}`);
+      await retype('#ara-input', 'elma -file:Bul');
+      assert(await waitFor('![...document.querySelectorAll(".ara-result")].some(r => r.textContent.startsWith("Bul"))', 2000), '-file: did not exclude');
+      await retype('#ara-input', 'zzqqxx');
+      assert(await waitFor('!!document.querySelector(".ara-help")', 2000), 'no operator help when nothing is found');
+      await retype('#ara-input', ''); await sleep(200);
+      await press('O', ['meta']); await typeText('Gecmis'); await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Gecmis" && document.getElementById("find-bar").hidden', 3000), 'the find bar from a search stayed on another note');
+    });
+
+    // 68. Code blocks are coloured by their language; editing one shows its
+    //     plain source.
+    await step(68, 'code blocks are coloured by language', async () => {
+      const file = path.join(notesDir, 'Kod.md');
+      fs.writeFileSync(file, '```python\ndef selam(ad):\n    return f"Merhaba {ad}"  # yorum\n```\n\n```\nduz metin\n```\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Kod');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Kod"', 3000), 'note not in the switcher');
+      await enter();
+      assert(await waitFor('!!document.querySelector(".note-body pre code.language-python span.hljs-keyword")', 3000), 'python not coloured');
+      const colours = await js(`(()=>{const c=document.querySelector('.note-body code.language-python'); const k=c.querySelector('.hljs-keyword'), m=c.querySelector('.hljs-comment'); return [getComputedStyle(c).color, getComputedStyle(k).color, getComputedStyle(m).color];})()`);
+      assert(new Set(colours).size === 3, `token colours: ${colours}`);
+      assert(await js('document.querySelectorAll(".note-body pre")[1].querySelectorAll("span").length === 0'), 'a block without a language was coloured');
+      await clickEval(`document.querySelector('.note-body pre code.language-python')`, 'code block');
+      assert(await waitFor('document.getElementById("block-editor")?.value.startsWith("```python")', 2000), 'editing did not show the source');
+      await press('Escape');
+    });
+
+    // 69. Pasting a web page's HTML gives Markdown; ⇧⌘V (Paste as Plain
+    //     Text) and a paste inside a code block keep the plain text.
+    await step(69, 'pasted HTML becomes Markdown; plain paste stays plain', async () => {
+      const file = path.join(notesDir, 'Yapistir.md');
+      fs.writeFileSync(file, 'Basla\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Yapistir');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Yapistir"', 3000), 'note not in the switcher');
+      await enter();
+      await toSource();
+      const html = '<h2>Liste</h2><ul><li><b>kalın</b> madde</li><li><a href="https://example.com">bağlantı</a></li></ul>';
+      const put = async (h, t) => clipboard.write([new ClipboardItem({ 'text/html': new Blob([h], { type: 'text/html' }), 'text/plain': new Blob([t], { type: 'text/plain' }) })]);
+      await put(html, 'Liste\nkalın madde\nbağlantı');
+      await js(`(()=>{const t=document.querySelector('#note-editor'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); return true;})()`);
+      wc.paste(); await sleep(300);
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === 'Basla\n## Liste\n\n- **kalın** madde\n- [bağlantı](https://example.com)', 3000), `paste: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      wc.send('menu:action', 'paste-plain'); await sleep(400);
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').endsWith('(https://example.com)Liste\nkalın madde\nbağlantı'), 3000), `plain paste: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      // Inside a code block: plain.
+      await js(`(()=>{const t=document.querySelector('#note-editor'); t.value='\`\`\`\\n'; t.dispatchEvent(new Event('input',{bubbles:true})); t.setSelectionRange(4,4); return true;})()`);
+      wc.paste(); await sleep(300);
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === '```\nListe\nkalın madde\nbağlantı', 3000), `code paste: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      await press('E', ['meta']);
+    });
+
+    // 70. Tabs: ⌘Enter in the switcher opens a note in a new tab; ⇧⌘[ ⇧⌘]
+    //     switch, each tab keeps its place; ⌘W closes; a closed tab reopens;
+    //     the tabs are saved; one tab hides the strip.
+    await step(70, 'tabs: open in a new tab, switch, close, reopen', async () => {
+      await press('O', ['meta']); await typeText('Bul'); await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul" && document.getElementById("tab-strip").hidden', 3000), 'one tab should hide the strip');
+      await press('O', ['meta']); await typeText('Kod');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Kod"', 3000), 'Kod not in the switcher');
+      await press('Return', ['meta']);
+      const tabNames = 'JSON.stringify([...document.querySelectorAll("#tab-strip .tab-item")].map(t => (t.classList.contains("active") ? "*" : "") + t.textContent.replace("×", "")))';
+      assert(await waitFor(`${tabNames} === '["Bul","*Kod"]' && document.querySelector(".note-title")?.textContent === "Kod"`, 3000), `tabs: ${await js(tabNames)}`);
+      await press('[', ['meta', 'shift']);
+      assert(await waitFor(`${tabNames} === '["*Bul","Kod"]' && document.querySelector(".note-title")?.textContent === "Bul"`, 3000), `after ⇧⌘[: ${await js(tabNames)}`);
+      // This tab moves on; the other keeps its note.
+      await press('O', ['meta']); await typeText('Gecmis'); await enter();
+      assert(await waitFor(`${tabNames} === '["*Gecmis","Kod"]'`, 3000), `navigate in tab: ${await js(tabNames)}`);
+      await press('[', ['meta']);
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'back within the tab');
+      assert(await js('JSON.parse(localStorage.getItem("mufka-tabs")).tabs.length === 2'), 'tabs not saved');
+      await press('W', ['meta']);
+      assert(await waitFor(`document.getElementById("tab-strip").hidden && document.querySelector(".note-title")?.textContent === "Kod"`, 3000), 'close tab');
+      await press('P', ['meta']); await typeText('reopen closed tab');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Reopen closed tab"', 2000), 'reopen command missing');
+      await enter();
+      assert(await waitFor(`${tabNames} === '["*Bul","Kod"]'`, 3000), `reopen: ${await js(tabNames)}`);
+      await clickEval(`[...document.querySelectorAll('#tab-strip .tab-item')].find(t => !t.classList.contains('active')).querySelector('.tab-close')`, 'close button');
+      assert(await waitFor('document.getElementById("tab-strip").hidden && document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'close by ×');
+    });
+
+    // 71. The right pane: ⌥⌘Enter in the switcher opens a note there; its
+    //     tasks tick in its file; clicking its text swaps the panes and edits.
+    await step(71, 'split: a note to the right, tasks, swap to edit, close', async () => {
+      const tasksFile = path.join(notesDir, 'Gorevler.md');
+      fs.writeFileSync(tasksFile, '- [ ] bir\n- [ ] iki\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Gorevler');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Gorevler"', 3000), 'not in the switcher');
+      await press('Return', ['meta', 'alt']);
+      assert(await waitFor('!document.getElementById("split-pane").hidden && document.querySelector(".split-title")?.textContent === "Gorevler" && document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'not opened to the right');
+      await clickEval(`document.querySelectorAll('.split-col input.task-check')[1]`, 'task in the right pane');
+      assert(await waitFor2(() => fs.readFileSync(tasksFile, 'utf8') === '- [ ] bir\n- [x] iki\n', 3000), `task: ${JSON.stringify(fs.readFileSync(tasksFile, 'utf8'))}`);
+      assert(await js('localStorage.getItem("mufka-split") === "Gorevler.md"'), 'the right pane is not remembered');
+      await clickEval(`[...document.querySelectorAll('.split-col .block')].find(b => b.textContent.includes('bir'))`, 'text in the right pane');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Gorevler" && document.querySelector(".split-title")?.textContent === "Bul" && !!document.getElementById("block-editor")', 3000), 'swap to edit');
+      await press('Escape');
+      await clickSel('.split-close');
+      assert(await waitFor('document.getElementById("split-pane").hidden && localStorage.getItem("mufka-split") === ""', 2000), 'right pane not closed');
+    });
+
+    // 72. Properties: edited in place (text, tags, checkbox), added with ⌘;,
+    //     removed; an alias makes [[Takma]] link to the note.
+    await step(72, 'properties editor and aliases', async () => {
+      const file = path.join(notesDir, 'Ozellik.md');
+      fs.writeFileSync(file, '---\nstatus: aktif\ntags: [bir]\ndone: false\n---\nGovde\n');
+      fs.writeFileSync(path.join(notesDir, 'Baglanti.md'), 'Bak: [[Takma]]\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Ozellik'); await enter();
+      assert(await waitFor('document.querySelectorAll(".note-body .props .prop-row").length === 3', 3000), 'properties not shown');
+      await retype('#prop-note-0-v', 'bitti'); await enter();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('status: bitti'), 3000), `text: ${fs.readFileSync(file, 'utf8')}`);
+      await clickSel('#prop-note-1-v'); await typeText('iki'); await enter();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('tags: [bir, iki]'), 3000), `tags: ${fs.readFileSync(file, 'utf8')}`);
+      assert(await waitFor('document.activeElement?.id === "prop-note-1-v"', 2000), 'focus left the tag field');
+      await clickSel('#prop-note-2-v');
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('done: true'), 3000), `checkbox: ${fs.readFileSync(file, 'utf8')}`);
+      await js('document.activeElement.blur()');
+      await press(';', ['meta']);
+      assert(await waitFor('document.activeElement?.id === "prop-note-new"', 2000), '⌘; did not start a new property');
+      await typeText('aliases'); await enter();
+      assert(await waitFor('document.activeElement?.id === "prop-note-3-v"', 3000), `new value not focused: ${await js('document.activeElement?.id')}`);
+      await typeText('Takma'); await enter();
+      assert(await waitFor2(() => /aliases:\n {2}- Takma\n---\nGovde/.test(fs.readFileSync(file, 'utf8')), 3000), `alias: ${fs.readFileSync(file, 'utf8')}`);
+      await hoverClickEval(`document.querySelector('.note-body .prop-row .prop-del')`, 'remove status');
+      assert(await waitFor2(() => !fs.readFileSync(file, 'utf8').includes('status:'), 3000), 'property not removed');
+      assert(await waitFor('document.querySelectorAll(".note-body .props .prop-row").length === 3', 2000), 'rows after remove');
+      // ⌘Z brings it back.
+      await js('document.activeElement.blur()');
+      await cmdZ();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('status: bitti'), 3000), 'undo did not bring the property back');
+      // The alias resolves.
+      await press('O', ['meta']); await typeText('Baglanti'); await enter();
+      assert(await waitFor('document.querySelector(".note-body a.wikilink")?.className === "wikilink"', 4000), `alias link: ${await js('document.querySelector(".note-body a.wikilink")?.className')}`);
+      await clickSel('.note-body a.wikilink');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Ozellik"', 3000), 'alias link did not open the note');
+    });
+
+    // 73. The "/" menu: "/tas" + Enter starts a task, "/co" a code block with
+    //     the caret inside, "/link" goes on to the note suggestions.
+    await step(73, 'the / menu inserts blocks', async () => {
+      const file = path.join(notesDir, 'Slash.md');
+      fs.writeFileSync(file, 'ilk\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Slash'); await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Slash"', 3000), 'note did not open');
+      await clickSel('.note-body .block-tail'); // a new block after "ilk"
+      await typeText('/tas');
+      assert(await waitFor('document.querySelector("#suggest-list .suggest-item.selected .suggest-label")?.textContent === "Task"', 2000), `menu: ${await js('document.querySelector("#suggest-list")?.textContent')} value=${JSON.stringify(await blockVal())} active=${await js('document.activeElement?.id')}`);
+      await enter();
+      await typeText('yap');
+      assert(await waitFor('document.getElementById("block-editor")?.value === "- [ ] yap"', 2000), `after task: ${JSON.stringify(await blockVal())}`);
+      await press('Escape');
+      await clickSel('.note-body .block-tail');
+      await typeText('/co');
+      assert(await waitFor('document.querySelector("#suggest-list .suggest-item.selected .suggest-label")?.textContent === "Code block"', 2000), 'code block not offered');
+      await enter();
+      await typeText('x = 1');
+      assert(await waitFor('document.getElementById("block-editor")?.value === "```\\nx = 1\\n```"', 2000), `code: ${JSON.stringify(await blockVal())}`);
+      await press('Escape');
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').includes('- [ ] yap') && fs.readFileSync(file, 'utf8').includes('```\nx = 1\n```'), 3000), `saved: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      await clickBlock('yap'); await press('End');
+      await typeText(' /lin');
+      assert(await waitFor('document.querySelector("#suggest-list .suggest-item.selected .suggest-label")?.textContent === "Link to a note"', 2000), 'link item not offered');
+      await enter();
+      assert(await waitFor('document.getElementById("block-editor")?.value.endsWith("yap [[") && !!document.querySelector("#suggest-list .suggest-item")', 2000), `link: ${JSON.stringify(await blockVal())}`);
+      await press('Escape'); await press('Escape');
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);

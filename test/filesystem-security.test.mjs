@@ -30,6 +30,7 @@ function fixture(t) {
   let settings = {};
   const ctx = vm.createContext({ fs, path, np, bm, at, randomUUID, vaultLayout,
     notesRoot: () => root, noteOwnWrite: () => {}, readSettings: () => settings,
+    keepBefore: () => {}, keepDeleted: () => {}, // file recovery (lib/history.mjs has its own tests)
     writeSettings: patch => { settings = { ...settings, ...patch }; },
     isDir: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
     shell: { trashItem: async p => { trashed.push(p); }, openPath: async p => { opened.push(p); return ''; }, showItemInFolder: p => revealed.push(p) },
