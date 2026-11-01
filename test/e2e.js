@@ -1812,6 +1812,57 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval(`[...document.querySelectorAll('.hist-row-deleted')].find(r => r.textContent.includes('Gecmis')).querySelector('button')`, 'restore deleted');
       assert(await waitFor2(() => fs.existsSync(file) && fs.readFileSync(file, 'utf8') === 'ilk hali\n', 3000), 'deleted note not restored');
       await press('Escape');
+      assert(await waitFor('!document.querySelector(".history-dialog")', 2000), 'Esc did not close after a restore');
+    });
+
+    // 66. Find and replace in the note: ⌘F highlights matches in the preview
+    //     (case and Turkish i ignored; one is hidden in a link's address, so
+    //     its block is marked), ⌥⌘F replaces all, ⌘Z undoes it, and the
+    //     source view marks matches behind its text.
+    await step(66, 'find and replace in the note', async () => {
+      const file = path.join(notesDir, 'Bul.md');
+      fs.writeFileSync(file, 'elma armut\n\nbir ELMA daha\n\n[link](https://elma.example)\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Bul');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Bul"', 3000), 'note not in the switcher');
+      await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'note did not open');
+      await press('F', ['meta']);
+      assert(await waitFor('document.activeElement?.id === "find-input"', 2000), 'find field not focused');
+      await typeText('elma');
+      assert(await waitFor('document.querySelector(".find-count")?.textContent === "1 of 3"', 2000), `count: ${await js('document.querySelector(".find-count")?.textContent')}`);
+      assert(await js('CSS.highlights.get("find-match")?.size === 2 && CSS.highlights.get("find-current")?.size === 1'), 'matches not highlighted');
+      await enter(); await enter();
+      assert(await waitFor('document.querySelector(".find-count")?.textContent === "3 of 3" && !!document.querySelector(".block.find-block")', 2000), 'the match in the link address is not marked');
+      await press('F', ['meta', 'alt']);
+      assert(await waitFor('document.querySelector(".find-box.replacing") && document.activeElement?.id === "find-replace-input"', 2000), 'replace field not shown');
+      await typeText('kiraz');
+      await press('Return', ['meta']);
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8') === 'kiraz armut\n\nbir kiraz daha\n\n[link](https://kiraz.example)\n', 3000), `not replaced: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      assert(await waitFor('document.querySelector(".find-count")?.textContent === "No results"', 2000), 'count after replace');
+      await press('Escape');
+      assert(await waitFor('document.getElementById("find-bar").hidden && !CSS.highlights.get("find-match")', 2000), 'Esc did not close');
+      await cmdZ();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').startsWith('elma armut'), 3000), 'undo did not bring the text back');
+      // ⇧⌘F still searches every note.
+      await press('F', ['meta', 'shift']);
+      assert(await waitFor('document.activeElement?.id === "ara-input"', 2000), '⇧⌘F did not open search');
+      // Source view: matches marked behind the text; replace one.
+      await press('O', ['meta']); await typeText('Bul');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Bul"', 3000), 'note not in the switcher');
+      await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'note did not reopen');
+      await press('E', ['meta']);
+      assert(await waitFor('!!document.querySelector("#note-editor")', 2000), 'no source view');
+      await press('F', ['meta', 'alt']);
+      await retype('#find-input', 'elma');
+      assert(await waitFor('document.querySelectorAll("#find-backdrop .find-mark").length === 3 && document.querySelectorAll("#find-backdrop .find-mark.current").length === 1', 2000), 'source matches not marked');
+      await retype('#find-replace-input', 'erik'); await enter();
+      assert(await waitFor2(() => fs.readFileSync(file, 'utf8').startsWith('erik armut\n\nbir ELMA'), 3000), `source replace: ${JSON.stringify(fs.readFileSync(file, 'utf8'))}`);
+      assert(await waitFor('document.querySelector(".find-count")?.textContent === "1 of 2"', 2000), `count after one: ${await js('document.querySelector(".find-count")?.textContent')}`);
+      await press('Escape');
+      assert(await waitFor('!document.getElementById("find-backdrop") && document.activeElement?.id === "note-editor"', 2000), 'source view not restored');
+      await press('E', ['meta']);
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);

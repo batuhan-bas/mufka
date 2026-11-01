@@ -32,6 +32,7 @@ import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
 import { openVersionHistory, openDeletedNotes } from './history-view.js';
+import { createFindBar } from './find-bar.js';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
 import { applyTemplate } from '../lib/template.mjs';
@@ -247,6 +248,7 @@ const toastEl = document.getElementById('toast');
 // A fixed row menu would drift if its anchor scrolls; close it on scroll.
 paneEl.addEventListener('scroll', () => { if (state.menu) closeMenu(); });
 
+let findBar = null; // set below, once its helpers exist
 function render() {
   // Safety net: the click-outside-saves listener must never outlive an edit.
   if (!state.editPlanId) removeOutside();
@@ -256,6 +258,7 @@ function render() {
   state.suppressBlockBlur = true;
   renderSidebar(); renderContent(); renderPaneActions(); renderRightbar(); restoreFocus(); renderMenu();
   state.suppressBlockBlur = false;
+  if (findBar) findBar.refresh();
 }
 
 // The pane top bar's right actions follow what the pane shows: the open note
@@ -496,7 +499,7 @@ function renderSearchField() {
   field.placeholder = 'Search or create a note';
   field.value = state.araQuery;
   field.setAttribute('aria-label', 'Search');
-  field.title = K('Search notes and plans (⌘F). Enter opens the note with this name, or creates it.');
+  field.title = K('Search notes and plans (⇧⌘F). Enter opens the note with this name, or creates it.');
   field.addEventListener('focus', () => ensureNoteCache());
   field.addEventListener('input', () => { state.araQuery = field.value; state.focus = 'ara-input'; refreshSidebar(); });
   field.addEventListener('keydown', (e) => {
@@ -1323,7 +1326,7 @@ document.getElementById('foot-keys').addEventListener('click', () => showShortcu
 
 // Keyboard shortcuts cheat sheet (⌘/, Help menu, sidebar footer).
 const SHORTCUTS = [
-  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Search notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward']]],
+  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Find in this note'], ['⌥⌘F', 'Find and replace in this note'], ['⇧⌘F', 'Search all notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward']]],
   ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo']]],
   ['Window', [['⌘\\', 'Show / hide sidebar'], ['⇧⌘\\', 'Show / hide details (outline, links, tags)'], ['⌘/', 'This list'], ['⌘,', 'Settings']]],
 ];
@@ -1673,7 +1676,7 @@ function commandList() {
     { label: 'Go home (today)', hint: '⌘T', run: goToday },
     { label: 'Show calendar', hint: '⌘1', run: () => setTab('takvim') },
     { label: 'Show notes', hint: '⌘2', run: () => setTab('notlar') },
-    { label: 'Search plans and notes', hint: '⌘F', run: () => setTab('ara') },
+    { label: 'Search plans and notes', hint: '⇧⌘F', run: () => setTab('ara') },
     { label: 'Toggle sidebar', hint: '⌘\\', run: toggleSidebar },
     { label: 'Toggle right sidebar', hint: '⇧⌘\\', run: () => toggleRightbar() },
     { label: 'Show outline', run: () => { state.rightbar.tab = 'outline'; toggleRightbar(true); } },
@@ -1689,6 +1692,8 @@ function commandList() {
     { label: 'Copy built-in templates to the Templates folder', run: copyBuiltinTemplates },
     { label: 'Export note as PDF', when: noteOpen, run: () => runExport('pdf', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
     { label: 'Export note as Markdown', when: noteOpen, run: () => runExport('md', noteTitleOf(state.openNote), () => state.noteContent, saveOpen) },
+    { label: 'Find in this note', hint: '⌘F', when: noteOpen, run: () => findBar.open() },
+    { label: 'Find and replace in this note', hint: '⌥⌘F', when: noteOpen, run: () => findBar.open({ replace: true }) },
     { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
     { label: 'Recover deleted notes', run: openDeletedRecovery },
     { label: 'Show unused attachments', run: showUnusedAttachments },
@@ -3031,6 +3036,35 @@ function openDeletedRecovery() {
   });
 }
 
+// --- find and replace in the note (src/find-bar.js, lib/find.mjs) -------
+const noteShown = () => state.contentView === 'note' && !!state.openNote;
+findBar = createFindBar(document.getElementById('find-bar'), {
+  active: noteShown,
+  src: () => state.noteContent,
+  rel: () => state.openNote,
+  mode: () => state.noteView,
+  blocksRoot: () => contentEl.querySelector('.note-body > .blocks'),
+  sourceArea: () => document.getElementById('note-editor'),
+  scroller: paneEl,
+  prepare: () => { if (state.blockEdit) { flushActiveEditor(); render(); } },
+  replaceSource: (text) => { setSrc('note', text, true); histRecord('note'); render(); },
+  focusMatch: (m) => {
+    if (state.noteView === 'source') {
+      const ta = document.getElementById('note-editor');
+      if (ta) { ta.focus(); ta.setSelectionRange(m.start, m.end); }
+      return;
+    }
+    // Edit the block holding the match, caret after it.
+    const src = state.noteContent;
+    const line = src.slice(0, m.start).split('\n').length - 1;
+    const b = parseBlocks(src).find((x) => x.start <= line && line <= x.end);
+    if (!b) return;
+    const from = src.split('\n').slice(0, b.start).join('\n').length + (b.start ? 1 : 0);
+    startEditBlock('note', b.start, m.end - from);
+  },
+  toast: (t) => showToast(t),
+});
+
 let noteSaveTimer = null;
 let dailySaveTimer = null;
 function setSrc(scope, newSrc, persistNow) {
@@ -4040,6 +4074,7 @@ document.addEventListener('keydown', (e) => {
   // the app's way out (modes, switcher, palette, settings) stays.
   if (e.target && e.target.closest && e.target.closest('.draw-host') && !['1', '2', '3', '4', 'o', 'p', ',', 't', 'n'].includes(k)) return;
   if (k === 'z') {
+    if (findBar.contains(e.target)) return; // the find fields' own undo
     // Whole-document undo/redo for the block editor (overrides native undo).
     const editScope = state.blockEdit ? state.blockEdit.scope
       : (state.contentView === 'note' && state.openNote && state.noteView === 'blocks' ? 'note' : null);
@@ -4056,7 +4091,12 @@ document.addEventListener('keydown', (e) => {
   if (k === '2') { e.preventDefault(); setTab('notlar'); return; }
   if (k === '3') { e.preventDefault(); openTasks(); return; }
   if (k === '4') { e.preventDefault(); openDraw(); return; }
-  if (k === 'f') { e.preventDefault(); setTab('ara'); return; }
+  if (e.code === 'KeyF' || k === 'f') {
+    // ⌘F finds in the open note (⌥⌘F with replace); ⇧⌘F, or ⌘F anywhere else, searches every note.
+    e.preventDefault();
+    if (e.shiftKey || !findBar.open({ replace: e.altKey })) setTab('ara');
+    return;
+  }
   if (k === 't' && e.shiftKey) { e.preventDefault(); if (state.contentView === 'note' && state.openNote) openTemplatePicker(); return; }
   if (k === 't') { e.preventDefault(); goToday(); return; }
   if (k === 'n') { e.preventDefault(); newNote(); return; }

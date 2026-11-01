@@ -243,7 +243,8 @@ On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 | ⌥⌘← / ⌥⌘→ | Previous / next week |
 | ⌘N | New note |
 | ⌘O · ⌘P | Open a note · command palette |
-| ⌘F | Search |
+| ⌘F | Find in the open note (⌥⌘F: find and replace) |
+| ⇧⌘F | Search all notes and plans |
 | ⌘G · ⇧⌘G | Graph · local graph |
 | ⌘E | Edit a note's raw Markdown |
 | ⌘, | Settings (calendar and Wispr Flow connections), also the gear next to the notes folder |

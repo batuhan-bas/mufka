@@ -1204,3 +1204,49 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .hist-plain { padding: 0 10px; white-space: pre-wrap; word-break: break-word; }
 .hist-same, .hist-empty { padding: 8px 10px; color: var(--muted); font-family: var(--font); font-size: 14px; margin: 0; }
 .hist-actions .btn.quiet:first-child { margin-right: auto; }
+
+/* --- find and replace in the note (src/find-bar.js) --- */
+/* A floating box at the pane's top right; sticky under the pane bar, so it
+   stays while the note scrolls. Zero height: it covers nothing below it. */
+.find-bar { position: sticky; top: 44px; z-index: 5; height: 0; flex: 0 0 0; display: flex; justify-content: flex-end; padding-right: 16px; }
+.find-bar[hidden] { display: none; }
+.find-box {
+  margin-top: 4px; height: max-content; display: flex; flex-direction: column; gap: 6px;
+  padding: 6px; background: var(--raised); border: 1px solid var(--line-strong);
+  border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+.find-row { display: flex; align-items: center; gap: 2px; }
+.find-row-replace { display: none; }
+.find-box.replacing .find-row-replace { display: flex; }
+.find-input {
+  width: 220px; padding: 5px 8px; font-size: 13px; color: var(--text);
+  background: var(--ground); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.find-input:focus { outline: none; border-color: var(--accent); }
+.find-box.none #find-input { border-color: var(--danger); }
+.find-count { min-width: 74px; padding: 0 6px; font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.find-box.none .find-count { color: var(--danger); }
+.find-btn {
+  width: 26px; height: 26px; display: inline-grid; place-items: center; padding: 0;
+  font-size: 13px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: var(--radius);
+}
+.find-btn:hover:not(:disabled) { color: var(--text); background: var(--sel); }
+.find-btn:disabled { opacity: 0.4; }
+.find-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--line-strong); background: var(--accent-soft); }
+.find-case { font-size: 12px; font-weight: 600; }
+.find-row-replace .find-input { margin-right: 4px; }
+.find-act { font-size: 12px; }
+.find-act:disabled { opacity: 0.4; }
+::highlight(find-match) { background-color: var(--mark); color: var(--text); }
+::highlight(find-current) { background-color: #e6a23c; color: #1e2025; }
+/* A match hidden in markup (a link's address): the block holding it. */
+.block.find-block { outline: 2px solid #e6a23c; outline-offset: 4px; border-radius: 2px; }
+/* Source view: the marked copy of the text behind the transparent textarea. */
+.find-src-host { position: relative; }
+.find-backdrop {
+  position: absolute; overflow: hidden; pointer-events: none; z-index: 0;
+  white-space: pre-wrap; overflow-wrap: break-word; color: transparent; background: var(--ground);
+}
+.find-backdrop .find-mark { color: transparent; background: var(--mark); border-radius: 2px; }
+.find-backdrop .find-mark.current { background: #e6a23c; }
+.note-editor.finding { position: relative; z-index: 1; background: transparent; }

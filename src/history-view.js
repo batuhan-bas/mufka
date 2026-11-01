@@ -152,6 +152,7 @@ export async function openDeletedNotes(api) {
   box.append(el('div', 'plan-dialog-title', 'Recover deleted notes'));
   box.append(el('p', 'ask-text', 'Notes deleted in the last seven days. They are also in the system Trash until it is emptied.'));
   const items = await api.list();
+  const ok = el('button', 'btn primary', 'Done'); ok.type = 'button'; ok.addEventListener('click', close);
   const list = el('div', 'hist-list hist-list-wide');
   if (!items.length) list.append(el('p', 'hist-empty', 'No deleted notes.'));
   for (const it of items) {
@@ -163,7 +164,13 @@ export async function openDeletedNotes(api) {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       const res = await api.restore(it.rel, it.t);
-      if (res) { row.remove(); if (!list.querySelector('.hist-row')) list.append(el('p', 'hist-empty', 'No deleted notes.')); }
+      if (res) {
+        // Keep the focus in the dialog (on the next note, or Done), so Esc still closes it.
+        const next = row.nextElementSibling || row.previousElementSibling;
+        row.remove();
+        if (!list.querySelector('.hist-row')) list.append(el('p', 'hist-empty', 'No deleted notes.'));
+        ((next && next.querySelector('button')) || ok).focus();
+      }
       else btn.disabled = false;
     });
     row.append(name, meta, btn);
@@ -171,7 +178,6 @@ export async function openDeletedNotes(api) {
   }
   box.append(list);
   const actions = el('div', 'plan-dialog-actions hist-actions');
-  const ok = el('button', 'btn primary', 'Done'); ok.type = 'button'; ok.addEventListener('click', close);
   actions.append(ok);
   box.append(actions);
   (list.querySelector('button') || ok).focus();
