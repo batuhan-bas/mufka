@@ -164,6 +164,10 @@ yet? Home offers to open the Planner.
   about 40 more), on screen and in PDF exports.
 - **Pasting from the web**, Google Docs or Mail gives Markdown: headings, bold,
   links, lists, tasks, tables and code. **⇧⌘V** pastes plain text.
+- **Tabs and two panes.** ⌘-click (or ⌘Enter in ⌘O) opens in a new tab, ⌘W
+  closes it, ⇧⌘[ / ⇧⌘] switch. ⌥⌘-click puts a note in a pane on the right:
+  its links, tasks and queries work there, and clicking its text swaps the
+  panes so you can edit it.
 - **Find in the note** with **⌘F**, and replace with **⌥⌘F**; replacing all is
   one undo step.
 - **Version history** keeps a version of each note every few minutes while you

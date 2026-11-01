@@ -252,6 +252,11 @@ const toastEl = document.getElementById('toast');
 paneEl.addEventListener('scroll', () => { if (state.menu) closeMenu(); });
 
 let findBar = null; // set below, once its helpers exist
+// The right pane (see "the right pane" below).
+const splitEl = document.getElementById('split-pane');
+let split = null; // { rel, text }
+let splitShown = null;
+let splitAsk = 0;
 function render() {
   // Safety net: the click-outside-saves listener must never outlive an edit.
   if (!state.editPlanId) removeOutside();
@@ -262,6 +267,7 @@ function render() {
   renderSidebar(); renderContent(); renderPaneActions(); renderRightbar(); restoreFocus(); renderMenu();
   state.suppressBlockBlur = false;
   syncTabs();
+  renderSplit();
   if (findBar) findBar.refresh();
 }
 
@@ -1444,7 +1450,7 @@ document.getElementById('foot-keys').addEventListener('click', () => showShortcu
 
 // Keyboard shortcuts cheat sheet (⌘/, Help menu, sidebar footer).
 const SHORTCUTS = [
-  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Find in this note'], ['⌥⌘F', 'Find and replace in this note'], ['⇧⌘F', 'Search all notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward'], ['⌘-click', 'Open in a new tab'], ['⌥⌘T', 'New tab'], ['⌘W', 'Close tab'], ['⇧⌘[ / ⇧⌘]', 'Previous / next tab']]],
+  ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Find in this note'], ['⌥⌘F', 'Find and replace in this note'], ['⇧⌘F', 'Search all notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward'], ['⌘-click', 'Open in a new tab'], ['⌥⌘-click', 'Open to the right'], ['⌥⌘T', 'New tab'], ['⌘W', 'Close tab'], ['⇧⌘[ / ⇧⌘]', 'Previous / next tab']]],
   ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo']]],
   ['Window', [['⌘\\', 'Show / hide sidebar'], ['⇧⌘\\', 'Show / hide details (outline, links, tags)'], ['⌘/', 'This list'], ['⌘,', 'Settings']]],
 ];
@@ -1814,6 +1820,9 @@ function commandList() {
     { label: 'Find and replace in this note', hint: '⌥⌘F', when: noteOpen, run: () => findBar.open({ replace: true }) },
     { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
     { label: 'New tab', hint: '⌥⌘T', run: () => newTab() },
+    { label: 'Open this note to the right', when: noteOpen, run: () => openSplit(state.openNote) },
+    { label: 'Swap the two panes', when: () => !!split, run: () => swapSplit() },
+    { label: 'Close the right pane', when: () => !!split, run: () => closeSplit() },
     { label: 'Close tab', hint: '⌘W', when: () => tabs.count > 1, run: () => closeTab() },
     { label: 'Close other tabs', when: () => tabs.count > 1, run: () => { tabs.closeOthers(tabs.active.id); render(); } },
     { label: 'Reopen closed tab', when: () => tabs.canReopen, run: reopenTab },
@@ -2292,6 +2301,7 @@ function noteActionItems(title, getSrc, saveUnsaved) {
     { label: isBookmarked(state.openNote) ? 'Remove bookmark' : 'Bookmark', fn: () => { closeMenu(); toggleBookmark(state.openNote); } },
     { label: 'Open local graph', fn: () => { closeMenu(); openGraph({ local: true }); } },
     { label: 'Insert template…', fn: () => { closeMenu(); openTemplatePicker(); } },
+    { label: 'Open to the right', fn: () => { closeMenu(); openSplit(state.openNote); } },
     { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(); } },
     { label: 'Export…', fn: () => openMenu('menu-note', () => exportSubItems(title, getSrc, saveUnsaved)) },
     { label: 'Delete', fn: () => openMenu('menu-note', () => [
@@ -2675,6 +2685,7 @@ function remapRel(oldRel, newRel) {
   const fix = (r) => (r === oldRel ? newRel : (r && r.startsWith(`${oldRel}/`) ? newRel + r.slice(oldRel.length) : r));
   if (state.openNote) state.openNote = fix(state.openNote);
   tabs.remap(oldRel, newRel);
+  if (split) { split.rel = fix(split.rel); saveSplit(); }
   if (state.selectedFolder != null) state.selectedFolder = fix(state.selectedFolder);
   const next = new Set();
   for (const r of state.expanded) next.add(fix(r));
@@ -3011,6 +3022,8 @@ function noteMenuItems(n) {
     { label: 'Icon…', fn: () => openIconPicker(`n:${n.rel}`, n.rel) },
     { label: 'Colour…', fn: () => openColorPicker(`n:${n.rel}`, n.rel, 'note') },
     { label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-note', rel: n.rel }); } },
+    { label: 'Open in new tab', fn: () => { closeMenu(); openNoteInNewTab(n.rel); } },
+    { label: 'Open to the right', fn: () => { closeMenu(); openSplit(n.rel); } },
     { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(n.rel); } },
     { label: 'Delete', fn: () => { closeMenu(); deleteNoteRel(n.rel); } },
   ];
@@ -3086,6 +3099,8 @@ async function openNote(rel, mode, opts = {}) {
   if (!opts.asText && res && !res.error && isBoard(res.content)) { await openTasks(rel); return; }
   // A drawing opens in Draw.
   if (!opts.asText && res && !res.error && (isDrawingRel(rel) || isDrawingText(res.content))) { await openDraw(rel); return; }
+  // ⌥⌘-click (or ⌥⌘Enter) opens it in the right pane instead.
+  if (takeSplitAsk()) { openSplit(rel, res && !res.error ? res.content : ''); return; }
   navVisit({ view: 'note', rel });
   state.openNote = rel;
   state.noteContent = res && !res.error ? res.content : '';
@@ -3189,6 +3204,135 @@ findBar = createFindBar(document.getElementById('find-bar'), {
   },
   toast: (t) => showToast(t),
 });
+
+// --- the right pane: a second note beside the main one ------------------
+// It shows the note as the preview does: links (they open in this pane),
+// tasks, embeds, queries. Clicking its text swaps the panes and edits there,
+// so either note can be written in; the main pane is the one being edited.
+const askSplit = (e) => { if ((e.metaKey || e.ctrlKey) && e.altKey && (e.type === 'click' || e.key === 'Enter')) splitAsk = Date.now(); };
+document.addEventListener('click', askSplit, true);
+document.addEventListener('keydown', askSplit, true);
+function takeSplitAsk() { const yes = splitAsk && Date.now() - splitAsk < 1500; splitAsk = 0; return !!yes; }
+function saveSplit() { try { localStorage.setItem('mufka-split', split ? split.rel : ''); } catch { /* private window */ } }
+function loadSplit() {
+  let rel = '';
+  try { rel = localStorage.getItem('mufka-split') || ''; } catch { /* none */ }
+  if (rel && state.notesFlat.some((n) => n.rel === rel)) openSplit(rel);
+}
+const splitText = () => (split.rel === state.openNote ? state.noteContent : (state.noteCache.get(split.rel) ?? split.text));
+async function openSplit(rel, text) {
+  if (!rel) return;
+  if (text == null) {
+    const res = rel === state.openNote ? { content: state.noteContent } : await notesApi.read(rel);
+    if (!res || res.error) { showToast('Could not open the note'); return; }
+    text = res.content;
+  }
+  hidePreview();
+  state.noteCache.set(rel, text);
+  split = { rel, text };
+  saveSplit();
+  splitShown = null;
+  renderSplit();
+  splitEl.querySelector('.split-scroll').scrollTop = 0;
+}
+function closeSplit() {
+  split = null; splitShown = null; saveSplit();
+  renderSplit();
+}
+// Swap the panes: the right note becomes the one edited, the main one moves
+// right (when it was a note). editAt: the line of a block to start editing.
+async function swapSplit(editAt = null) {
+  if (!split) return;
+  flushActiveEditor();
+  const target = split.rel;
+  const main = state.contentView === 'note' && state.openNote ? state.openNote : null;
+  if (main && main !== target) { split = { rel: main, text: state.noteContent }; saveSplit(); splitShown = null; } else if (!main) closeSplit();
+  if (main !== target) await openNote(target, 'oku', { keepTab: true });
+  if (editAt != null && state.openNote === target) startEditBlock('note', editAt, 'end');
+}
+async function toggleSplitTask(line) {
+  const rel = split.rel;
+  if (rel === state.openNote) { setSrc('note', toggleTaskLine(state.noteContent, line), true); histRecord('note'); render(); return; }
+  const next = toggleTaskLine(splitText(), line);
+  const w = await notesApi.write(rel, next);
+  if (w && w.error) { showToast(w.error); return; }
+  state.noteCache.set(rel, next);
+  split.text = next;
+  renderSplit();
+}
+function renderSplit() {
+  const valid = split && state.notesFlat.some((n) => n.rel === split.rel);
+  if (split && !valid && state.notesFlat.length) { split = null; saveSplit(); }
+  splitEl.hidden = !split;
+  document.getElementById('app').classList.toggle('split-open', !!split);
+  if (!split) { splitShown = null; return; }
+  const text = splitText();
+  if (splitShown && splitShown.rel === split.rel && splitShown.text === text) return;
+  splitShown = { rel: split.rel, text };
+  const rel = split.rel;
+  const title = splitEl.querySelector('.split-title');
+  title.textContent = noteTitleOf(rel);
+  title.title = rel;
+  const col = splitEl.querySelector('.split-col');
+  const scroller = splitEl.querySelector('.split-scroll');
+  const top = scroller.scrollTop;
+  col.replaceChildren();
+  const dir = folderOf(rel);
+  const attach = (raw) => resolveAttachment(raw, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+  const blocks = parseBlocks(text);
+  // The file name as a title, unless the note starts with the same "# Title".
+  const first = blocks.find((b) => b.type !== 'frontmatter');
+  const firstLine = first ? blockText(text, first).split('\n')[0] : '';
+  if (!(/^#\s/.test(firstLine) && foldTR(firstLine.replace(/^#\s+/, '').trim()) === foldTR(noteTitleOf(rel)))) col.append(elem('h1', 'split-note-title', noteTitleOf(rel)));
+  if (!blocks.length) col.append(hint('This note is empty.'));
+  for (const b of blocks) {
+    const el = elem('div', `block md block-${b.type}`);
+    el.dataset.blockStart = String(b.start);
+    for (const n of renderMarkdown(blockText(text, b), { doc: document, noteExists: wikiExists, attach, refs: text, embedNote, embedStack: [rel], ...noteRenderOptions(rel) })) el.append(n);
+    el.querySelectorAll('a[data-wiki]').forEach((a) => a.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation(); hidePreview();
+      const to = resolveLink(a.getAttribute('data-wiki'), rel, state.notesFlat);
+      if (to) openSplit(to); else openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
+    }));
+    el.querySelectorAll('a[data-external]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); }));
+    el.querySelectorAll('[data-att]').forEach((x) => x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAttachment(x.getAttribute('data-att')); }));
+    el.querySelectorAll('.tag[data-tag]').forEach((t) => t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); }));
+    el.querySelectorAll('input.task-check').forEach((box) => box.addEventListener('change', () => toggleSplitTask(b.start + Number(box.getAttribute('data-line')))));
+    wireDataview(el);
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || e.target.closest('a, input, img:not(.mermaid-img), button, [data-att], summary, .tag')) return;
+      e.preventDefault();
+      swapSplit(b.start);
+    });
+    col.append(el);
+  }
+  attachHoverPreview(col, previewApi);
+  scroller.scrollTop = top;
+}
+splitEl.querySelector('.split-swap').addEventListener('click', () => swapSplit());
+splitEl.querySelector('.split-close').addEventListener('click', () => closeSplit());
+// Drag its left edge to resize (double-click: half and half); remembered.
+(() => {
+  const handle = splitEl.querySelector('.split-resizer');
+  const setW = (w, save) => {
+    const room = document.getElementById('app').clientWidth - document.getElementById('sidebar').offsetWidth - 360;
+    if (w == null) splitEl.style.removeProperty('flex');
+    else splitEl.style.flex = `0 0 ${Math.round(Math.max(280, Math.min(w, room)))}px`;
+    if (save) { try { localStorage.setItem('mufka-split-width', w == null ? '' : String(splitEl.offsetWidth)); } catch { /* ignore */ } }
+  };
+  try { const w = Number(localStorage.getItem('mufka-split-width')); if (w) splitEl.style.flex = `0 0 ${w}px`; } catch { /* none */ }
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX; const startW = splitEl.offsetWidth;
+    const move = (ev) => setW(startW - (ev.clientX - startX), false);
+    const up = () => { handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up); setW(splitEl.offsetWidth, true); };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+  });
+  handle.addEventListener('dblclick', () => setW(null, true));
+})();
+function openNoteInNewTab(rel) { newTab({ view: 'note', rel }); }
 
 let noteSaveTimer = null;
 let dailySaveTimer = null;
@@ -4372,6 +4516,7 @@ async function boot() {
   try { savedTabs = JSON.parse(localStorage.getItem('mufka-tabs') || 'null'); } catch { /* none */ }
   const restored = savedTabs && Array.isArray(savedTabs.tabs) && savedTabs.tabs.length > 1 && tabs.restore(savedTabs, navValid);
   const startAt = restored ? tabs.active.loc : null;
+  loadSplit();
   render();
   if (startAt) await goTo(startAt);
   lastTick = Date.now();

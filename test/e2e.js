@@ -1955,6 +1955,26 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval(`[...document.querySelectorAll('#tab-strip .tab-item')].find(t => !t.classList.contains('active')).querySelector('.tab-close')`, 'close button');
       assert(await waitFor('document.getElementById("tab-strip").hidden && document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'close by ×');
     });
+
+    // 71. The right pane: ⌥⌘Enter in the switcher opens a note there; its
+    //     tasks tick in its file; clicking its text swaps the panes and edits.
+    await step(71, 'split: a note to the right, tasks, swap to edit, close', async () => {
+      const tasksFile = path.join(notesDir, 'Gorevler.md');
+      fs.writeFileSync(tasksFile, '- [ ] bir\n- [ ] iki\n');
+      await sleep(1700);
+      await press('O', ['meta']); await typeText('Gorevler');
+      assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Gorevler"', 3000), 'not in the switcher');
+      await press('Return', ['meta', 'alt']);
+      assert(await waitFor('!document.getElementById("split-pane").hidden && document.querySelector(".split-title")?.textContent === "Gorevler" && document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'not opened to the right');
+      await clickEval(`document.querySelectorAll('.split-col input.task-check')[1]`, 'task in the right pane');
+      assert(await waitFor2(() => fs.readFileSync(tasksFile, 'utf8') === '- [ ] bir\n- [x] iki\n', 3000), `task: ${JSON.stringify(fs.readFileSync(tasksFile, 'utf8'))}`);
+      assert(await js('localStorage.getItem("mufka-split") === "Gorevler.md"'), 'the right pane is not remembered');
+      await clickEval(`[...document.querySelectorAll('.split-col .block')].find(b => b.textContent.includes('bir'))`, 'text in the right pane');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Gorevler" && document.querySelector(".split-title")?.textContent === "Bul" && !!document.getElementById("block-editor")', 3000), 'swap to edit');
+      await press('Escape');
+      await clickSel('.split-close');
+      assert(await waitFor('document.getElementById("split-pane").hidden && localStorage.getItem("mufka-split") === ""', 2000), 'right pane not closed');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }
