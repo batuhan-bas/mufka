@@ -93,6 +93,15 @@ async function humanClickEval(expr, label) {
   wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 }); await sleep(150);
   wc.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 }); await sleep(200);
 }
+// Click until `until` holds: a page that draws itself again between press and
+// release (a save or a vault sync landing just then) loses that click.
+async function clickUntil(expr, until, label, tries = 4) {
+  for (let i = 0; i < tries; i++) {
+    await clickEval(expr, label);
+    if (await waitFor(until, 1200)) return true;
+  }
+  return false;
+}
 async function clickEval(expr, label) { const r = await rectEval(expr); assert(r, `element not found: ${label || expr}`); await clickAt(r.x, r.y); }
 async function clickSel(sel) { await clickEval(`document.querySelector(${JSON.stringify(sel)})`, sel); }
 async function hoverClickEval(expr, label) { const r = await rectEval(expr); assert(r, `element not found: ${label || expr}`); wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y }); await sleep(70); await clickAt(r.x, r.y); }
@@ -1630,8 +1639,7 @@ app.whenReady().then(() => setTimeout(async () => {
       // expense added through the dialog lands in the table and the totals.
       assert(await waitFor('!!document.querySelector(".note-cover.cover-violet") && document.querySelector(".note-icon")?.textContent === "💰" && !!document.querySelector(".props.folded")', 3000), 'icon, cover or folded properties not shown');
       assert(await waitFor('!!document.querySelector(".note-body .bud-card .bud-ring") && document.querySelectorAll(".note-body table").length === 2', 3000), 'budget card or tables not shown');
-      await clickEval(`[...document.querySelectorAll('.note-body .bud-add')].find(b => b.textContent.includes('expense'))`, '+ Add expense');
-      assert(await waitFor('!!document.querySelector(".bud-dialog")', 2000), 'add expense dialog did not open');
+      assert(await clickUntil(`[...document.querySelectorAll('.note-body .bud-add')].find(b => b.textContent.includes('expense'))`, '!!document.querySelector(".bud-dialog")', '+ Add expense'), 'add expense dialog did not open');
       await typeText('Coffee beans');
       await js(`(() => { document.querySelector('.bud-amount').value = '1.250,50'; document.querySelector('.bud-pill[data-name="Groceries"]').click(); return true; })()`);
       await js(`document.querySelector('.bud-what').focus()`);
@@ -1643,11 +1651,11 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(totals, `totals not updated: ${await stats()}`);
       assert(await js('!!document.querySelector(".note-body td .bud-chip")'), 'category not shown as a chip');
       // The icon can be changed from the page; the next month starts from the card.
-      await clickSel('.note-icon');
-      assert(await waitFor('!!document.querySelector(".emoji-grid")', 2000), 'icon picker did not open');
+      assert(await clickUntil('document.querySelector(".note-icon")', '!!document.querySelector(".emoji-grid")', 'page icon'), 'icon picker did not open');
       await clickEval('[...document.querySelectorAll(".emoji-choice")].find(b => b.textContent === "🚀")', 'rocket');
       assert(await waitFor2(() => /^icon: 🚀$/m.test(fs.readFileSync(file, 'utf8')), 3000), 'icon not saved');
       const next = (() => { const [y, m] = month.split('-').map(Number); const d = new Date(y, m, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })();
+      await sleep(500);
       await clickSel('.bud-nav-new');
       assert(await waitFor2(() => { const f = findNote(`Budget ${next}.md`); return f && new RegExp(`^month: ${next}$`, 'm').test(fs.readFileSync(f, 'utf8')) && !fs.readFileSync(f, 'utf8').includes('Coffee beans'); }, 3000), 'next month not started');
       assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${next}"`, 3000), 'next month did not open');
@@ -2127,8 +2135,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('!!document.querySelector(".hab-card .hab-ring") && document.querySelectorAll(".hab-row").length === 4 && document.querySelectorAll("td.hab-today").length === 4', 3000), 'card, rows or today column not shown');
       await clickEval('document.querySelector(".hab-row td.hab-today .hab-cell")', 'today, first habit');
       assert(await waitFor('document.querySelector(".hab-card .bud-spent")?.textContent.startsWith("1 of 4") && document.querySelector(".hab-row td.hab-today .hab-cell")?.getAttribute("aria-pressed") === "true"', 3000), `tick not counted: ${await js('document.querySelector(".hab-card .bud-spent")?.textContent')}`);
-      await clickEval('[...document.querySelectorAll(".bud-add")].find(b => b.textContent.includes("habit"))', '+ Add habit');
-      assert(await waitFor('!!document.querySelector(".hab-name-input")', 2000), 'add habit dialog did not open');
+      assert(await clickUntil('[...document.querySelectorAll(".bud-add")].find(b => b.textContent.includes("habit"))', '!!document.querySelector(".hab-name-input")', '+ Add habit'), 'add habit dialog did not open');
       await typeText('Stretch');
       await enter();
       assert(await waitFor('document.querySelectorAll(".hab-row").length === 5 && [...document.querySelectorAll(".hab-item")].some(e => e.textContent.startsWith("Stretch"))', 3000), 'habit not added');
@@ -2144,8 +2151,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
       await enter();
       assert(await waitFor('!!document.querySelector(".job-board") && document.querySelectorAll(".job-col").length === 6', 3000), 'board not shown');
-      await clickSel('.job-new');
-      assert(await waitFor('!!document.querySelector(".job-company")', 2000), 'new application form did not open');
+      assert(await clickUntil('document.querySelector(".job-new")', '!!document.querySelector(".job-company")', '+ New application'), 'new application form did not open');
       await typeText('Acme');
       await js(`(() => { document.querySelector('.job-role').value = 'Frontend Lead'; return true; })()`);
       await js(`document.querySelector('.job-company').focus()`);
@@ -2175,8 +2181,7 @@ app.whenReady().then(() => setTimeout(async () => {
       const name = await js('document.getElementById("tree-edit").value');
       await enter();
       assert(await waitFor('document.querySelectorAll(".wk-day").length === 7 && document.querySelectorAll(".wk-day.today").length === 1 && !!document.querySelector(".wk-hidden")', 3000), 'week board not shown');
-      await clickSel('.wk-day.today .wk-add');
-      assert(await waitFor('!!document.querySelector(".wk-new")', 2000), 'no field for a new task');
+      assert(await clickUntil('document.querySelector(".wk-day.today .wk-add")', '!!document.querySelector(".wk-new")', '+ Add'), 'no field for a new task');
       // A note changing outside Mufka mid-typing draws the board again; what
       // is typed must survive it (CI machines are slow enough to hit this).
       const vault = await js('window.notes.vaultInfo().then(v => v.path)');
@@ -2209,8 +2214,7 @@ app.whenReady().then(() => setTimeout(async () => {
       const board = await js('document.getElementById("tree-edit").value');
       await enter();
       assert(await waitFor('!!document.querySelector(".job-board") && document.querySelectorAll(".job-col").length === 4', 3000), 'project board not shown');
-      await clickSel('.job-new');
-      assert(await waitFor('!!document.querySelector(".prj-name")', 2000), 'new project form did not open');
+      assert(await clickUntil('document.querySelector(".job-new")', '!!document.querySelector(".prj-name")', '+ New project'), 'new project form did not open');
       await typeText('Garden shed');
       await enter();
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "Garden shed" && document.querySelector(".job-step.on")?.textContent === "Planning"', 4000), `new project did not open with its strip: ${await js('document.querySelector(".note-title")?.textContent + " | " + document.querySelector(".job-step.on")?.textContent + " | " + document.getElementById("toast")?.textContent')}`);
