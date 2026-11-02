@@ -535,7 +535,13 @@ input, textarea, select { font: inherit; color: inherit; }
 .md p { margin: 0 0 14px; }
 .md ul, .md ol { padding-left: 22px; }
 .md li { margin: 3px 0; }
-.md li.task { list-style: none; margin-left: -22px; display: flex; align-items: baseline; gap: 8px; }
+/* The box sits where the bullet would be and the text flows like any list
+   item (not flex: a formatted line would break into one row per piece), so
+   wrapped lines line up under the first. */
+.md li.task { list-style: none; position: relative; }
+.md li.task > .task-check, .md li.task > .dv-task-check { position: absolute; left: -21px; top: calc(0.5lh - 7px); margin: 0; width: 14px; height: 14px; }
+/* [~], [/], [-]…: checked, but softer than a done [x] */
+.md .task-check[data-status] { opacity: .55; }
 .md code { font-family: var(--mono); font-size: 0.9em; background: var(--panel); padding: 1px 5px; border-radius: 4px; }
 .md pre { background: var(--panel); padding: 12px 14px; border-radius: var(--radius); overflow-x: auto; }
 .md pre code { display: block; background: none; padding: 0; }
@@ -562,10 +568,8 @@ input, textarea, select { font: inherit; color: inherit; }
 .md h4 { font-size: 16px; }
 .md h5 { font-size: 15px; }
 .md h6 { font-size: 14px; color: var(--muted); }
-/* Nested lists sit under their item; inside a task the box stays on the first line. */
+/* Nested lists sit under their item. */
 .md li > ul, .md li > ol { margin: 2px 0; }
-.md li.task { flex-wrap: wrap; }
-.md li.task > ul, .md li.task > ol { flex-basis: 100%; }
 .md table { border-collapse: collapse; margin: 1em 0 14px; font-size: 15px; display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
 .md th { background: var(--panel); font-weight: 600; }
@@ -1202,7 +1206,6 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .md .dv-cal-out { opacity: 0.4; }
 .md .dv-cal-num { display: block; color: var(--muted); }
 .md .dv-cal-dot a { color: var(--accent); text-decoration: none; font-size: 10px; }
-.md li.dv-task > .dv-task-text { flex: 1; min-width: 0; }
 .md .dv-js > :last-child { margin-bottom: 0; }
 
 /* --- Mermaid (src/mermaid-view.js) --- */
