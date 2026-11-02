@@ -140,7 +140,7 @@ yet? Home offers to open the Planner.
 ### Draw — sketches and diagrams
 
 - **[Excalidraw](https://excalidraw.com)** in the app: shapes, arrows, pen,
-  text, images and its library, in the dark theme.
+  text, images and its library, in the app's light or dark theme.
 - **Each drawing is a note** in the `Excalidraw` folder, in the format of
   Obsidian's **Excalidraw** plugin, so it opens there too. Changes save as you
   draw.
@@ -175,6 +175,9 @@ yet? Home offers to open the Planner.
 - **Type `/`** at the start of a line for the insert menu: headings, lists, a
   task, quote, callout, code block, table, divider, a link or embed, a diagram,
   a query, today's date, a file or a template. Keep typing to filter.
+- **Light or dark.** Mufka follows your system's appearance, or stays light
+  or dark (Settings → Appearance). Diagrams, code, drawings and the graph
+  follow too.
 - **Find in the note** with **⌘F**, and replace with **⌥⌘F**; replacing all is
   one undo step.
 - **Version history** keeps a version of each note every few minutes while you
@@ -294,6 +297,10 @@ Excalidraw, loaded when Draw opens), built with
 and is shared verbatim by the app and the tests: Dataview in `lib/dataview/`,
 HTML in notes in `lib/html.mjs`, drawings in `lib/drawing.mjs`. Note scripts and
 Mermaid run in `src/sandbox.html`, a hidden sandboxed window (`main.js`).
+The vault's notes are kept by the main process in `lib/vault-cache.mjs` (saved
+under `<userData>/index/`, outside the vault): only changed files are read again,
+and the window receives the changes, not the whole vault. Note version history
+lives under `<userData>/history/`.
 
 ```sh
 npm install              # dependencies, then downloads Electron (pnpm works too)

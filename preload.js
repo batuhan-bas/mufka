@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('planner', {
 contextBridge.exposeInMainWorld('notes', {
   tree: () => ipcRenderer.invoke('notes:tree'),
   all: () => ipcRenderer.invoke('notes:all'),
+  // What changed in the vault since `version` (-1: everything): { version, full, changed, removed }.
+  sync: (version) => ipcRenderer.invoke('notes:sync', version),
   read: (rel) => ipcRenderer.invoke('notes:read', rel),
   write: (rel, content) => ipcRenderer.invoke('notes:write', rel, content),
   create: (parentRel, name) => ipcRenderer.invoke('notes:create', parentRel, name),
@@ -67,6 +69,9 @@ contextBridge.exposeInMainWorld('notes', {
   runDataviewJs: (payload) => ipcRenderer.invoke('dataview:runJs', payload),
   // Draw a ```mermaid diagram (SVG text) in the sandbox window.
   renderMermaid: (code) => ipcRenderer.invoke('mermaid:render', code),
+  // Appearance: 'system' | 'light' | 'dark'.
+  theme: () => ipcRenderer.invoke('theme:get'),
+  setTheme: (choice) => ipcRenderer.invoke('theme:set', choice),
   bookmarks: () => ipcRenderer.invoke('bookmarks:list'),
   treeStyles: () => ipcRenderer.invoke('treestyle:read'),
   saveTreeStyles: (data) => ipcRenderer.invoke('treestyle:write', data),

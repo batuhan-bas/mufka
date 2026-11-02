@@ -12,22 +12,24 @@ export function sceneVersion(elements, files, appState) {
 }
 
 // Mount the editor into `host`. `opts`: { scene, onChange(scene), onLink(url),
-// menu: [{ label, run }] }. Returns { replace(scene), unmount() }.
+// menu: [{ label, run }], theme: 'dark' | 'light' }. Returns { replace(scene),
+// setTheme(theme), unmount() }.
 export function mountDrawing(host, opts) {
   const root = createRoot(host);
   let api = null;
   let shown = opts.scene;
   let last = sceneVersion(shown.elements, shown.files, shown.appState);
+  let theme = opts.theme === 'light' ? 'light' : 'dark';
 
   const render = () => root.render(h(Excalidraw, {
     key: 'scene',
     initialData: {
       elements: shown.elements,
-      appState: { ...shown.appState, theme: 'dark' },
+      appState: { ...shown.appState, theme },
       files: shown.files,
       scrollToContent: !shown.appState || shown.appState.scrollX == null,
     },
-    theme: 'dark',
+    theme,
     langCode: 'en-US',
     autoFocus: true,
     excalidrawAPI: (a) => { api = a; },
@@ -67,15 +69,17 @@ export function mountDrawing(host, opts) {
         api.updateScene({ elements: scene.elements, appState: { viewBackgroundColor: scene.appState.viewBackgroundColor } });
       }
     },
+    // The app's appearance changed.
+    setTheme(t) { theme = t === 'light' ? 'light' : 'dark'; render(); },
     unmount() { root.unmount(); },
   };
 }
 
 // A drawing as SVG text, for a preview in a note (shown as an image).
-export async function drawingSvg(scene) {
+export async function drawingSvg(scene, dark = true) {
   const svg = await exportToSvg({
     elements: (scene.elements || []).filter((e) => !e.isDeleted),
-    appState: { ...scene.appState, exportBackground: true, exportWithDarkMode: true, exportPadding: 16 },
+    appState: { ...scene.appState, exportBackground: true, exportWithDarkMode: dark, exportPadding: 16 },
     files: scene.files || {},
   });
   return new XMLSerializer().serializeToString(svg);

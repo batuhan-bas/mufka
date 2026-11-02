@@ -32,6 +32,9 @@ app.setPath('documents', path.join(tmp, 'Documents'));
 fs.writeFileSync(path.join(tmp, 'planlar.json'), JSON.stringify({ version: 3, items: [
   { id: 'rep1', scope: 'day', key: '2026-01-05', title: 'Vitamin', time: '', endTime: '', done: false, created: 1, recur: { type: 'daily' }, doneDates: {}, exceptions: {} },
 ] }));
+// MUFKA_E2E_THEME=light|dark runs the whole test in that theme (CI machines
+// are light; a dark Mac would otherwise never run it light).
+if (process.env.MUFKA_E2E_THEME) fs.writeFileSync(path.join(tmp, 'settings.json'), JSON.stringify({ theme: process.env.MUFKA_E2E_THEME }));
 process.chdir(path.join(__dirname, '..'));
 
 // Stub ONLY the native save dialog: return a temp path using the suggested name.
@@ -958,7 +961,9 @@ app.whenReady().then(() => setTimeout(async () => {
       const src = '> [!warning] Dikkat **et**\n> govde satiri\n\n> [!faq]- Neden?\n> Cunku.\n\n> duz alinti';
       await setNoteSource(src);
       assert(await waitFor('document.querySelector(".note-body .callout.callout-warning .callout-title")?.textContent === "Dikkat et"', 2500), 'callout title not rendered');
-      assert((await js('getComputedStyle(document.querySelector(".note-body .callout-warning")).borderLeftColor')) === 'rgb(230, 162, 60)', 'callout color not applied');
+      // The warning colour of whichever theme is showing (CI machines are light).
+      const amber = await js('(()=>{const e=document.createElement("i"); e.style.color="var(--c-amber)"; document.body.append(e); const c=getComputedStyle(e).color; e.remove(); return c;})()');
+      assert((await js('getComputedStyle(document.querySelector(".note-body .callout-warning")).borderLeftColor')) === amber, 'callout color not applied');
       assert(await js('!!document.querySelector(".note-body blockquote") && document.querySelectorAll(".note-body .callout").length === 2'), 'plain quote or callout count wrong');
       assert(await js('document.querySelector(".note-body details.callout-question").open === false'), 'folded callout starts open');
       await clickSel('.note-body details.callout-question summary'); await sleep(200);
@@ -2042,6 +2047,44 @@ app.whenReady().then(() => setTimeout(async () => {
       await enter();
       assert(await waitFor('document.getElementById("block-editor")?.value.endsWith("yap [[") && !!document.querySelector("#suggest-list .suggest-item")', 2000), `link: ${JSON.stringify(await blockVal())}`);
       await press('Escape'); await press('Escape');
+    });
+
+    // 74. Appearance: Settings switches light / dark / system; the page's
+    //     colours follow and the choice is saved for the next start.
+    await step(74, 'appearance: light, dark, follow the system', async () => {
+      const settings = path.join(tmp, 'settings.json');
+      const bg = 'getComputedStyle(document.body.closest("html")).getPropertyValue("--ground").trim()';
+      await press(',', ['meta']);
+      const startTheme = process.env.MUFKA_E2E_THEME || 'system';
+      assert(await waitFor(`!!document.querySelector('.theme-seg button[data-theme="${startTheme}"][aria-pressed="true"]')`, 3000), `${startTheme} not chosen at start`);
+      await clickSel('.theme-seg button[data-theme="light"]');
+      assert(await waitFor(`${bg} === "#ffffff"`, 3000), `light: ${await js(bg)}`);
+      assert(await waitFor2(() => JSON.parse(fs.readFileSync(settings, 'utf8')).theme === 'light', 2000), 'light not saved');
+      await clickSel('.theme-seg button[data-theme="dark"]');
+      assert(await waitFor(`${bg} === "#1e2025"`, 3000), `dark: ${await js(bg)}`);
+      await clickSel('.theme-seg button[data-theme="system"]');
+      assert(await waitFor2(() => !('theme' in JSON.parse(fs.readFileSync(settings, 'utf8'))), 2000), 'system should clear the saved choice');
+      await press('Escape');
+    });
+
+    // 75. The vault index: the notes are saved outside the vault for the next
+    //     start; a note changed outside Mufka reaches search and backlinks.
+    await step(75, 'vault index: saved cache, outside changes picked up', async () => {
+      const indexDir = path.join(tmp, 'index');
+      assert(await waitFor2(() => fs.existsSync(indexDir) && fs.readdirSync(indexDir).some((f) => f.endsWith('.json')), 9000), 'no saved index');
+      // One file per notes folder (this run switched folders once).
+      const holdsKod = () => fs.readdirSync(indexDir).filter((f) => f.endsWith('.json'))
+        .some((f) => { try { return JSON.parse(fs.readFileSync(path.join(indexDir, f), 'utf8')).notes.some((n) => n.rel === 'Kod.md' && n.content.includes('def selam')); } catch { return false; } });
+      assert(await waitFor2(holdsKod, 9000), 'the index does not hold the notes');
+      assert(!fs.readdirSync(notesDir).includes('index'), 'index written into the vault');
+      fs.writeFileSync(path.join(notesDir, 'Disarida.md'), 'zebrakelime ve [[Kod]]\n');
+      await sleep(1700);
+      await press('F', ['meta', 'shift']);
+      await typeText('zebrakelime');
+      assert(await waitFor('[...document.querySelectorAll(".ara-result")].some(r => r.textContent.startsWith("Disarida"))', 4000), 'outside note not found by search');
+      await retype('#ara-input', ''); await sleep(200);
+      await press('O', ['meta']); await typeText('Kod'); await enter();
+      assert(await waitFor('[...document.querySelectorAll(".backlink-title")].some(b => b.textContent === "Disarida")', 5000), `backlink not shown: ${await js('document.querySelector(".backlinks")?.textContent')}`);
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);

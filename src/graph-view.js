@@ -133,6 +133,9 @@ export function createGraphView({ loadNotes, onOpen, onTag, onMissing }) {
     view.y = -((minY + maxY) / 2) * view.k;
   }
 
+  // The appearance changed: new colours.
+  if (typeof matchMedia === 'function') matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { COLORS = null; if (root.isConnected) draw(); });
+
   // --- drawing ---
   function draw() {
     COLORS = COLORS || themeColors();

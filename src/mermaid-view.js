@@ -3,8 +3,9 @@
 // Drawn diagrams are remembered by their source.
 const MAX_CACHED = 100;
 
-export function createMermaid({ render }) {
-  const cache = new Map(); // source -> { svg } | { error }
+// theme(): 'dark' | 'light' — a diagram is drawn (and remembered) per theme.
+export function createMermaid({ render, theme = () => 'dark' }) {
+  const cache = new Map(); // theme + source -> { svg } | { error }
 
   function draw(box, code, res) {
     box.replaceChildren();
@@ -31,13 +32,14 @@ export function createMermaid({ render }) {
   function block(code) {
     const box = document.createElement('div');
     box.className = 'mermaid-box';
-    const done = cache.get(code);
+    const key = `${theme()}\n${code}`;
+    const done = cache.get(key);
     if (done) { draw(box, code, done); return box; }
     box.append(Object.assign(document.createElement('p'), { className: 'dv-empty', textContent: 'Drawing…' }));
     Promise.resolve(render(code))
       .then((res) => {
         if (cache.size >= MAX_CACHED) cache.delete(cache.keys().next().value);
-        cache.set(code, res);
+        cache.set(key, res);
         draw(box, code, res);
       })
       .catch((e) => draw(box, code, { error: e && e.message ? e.message : String(e) }));

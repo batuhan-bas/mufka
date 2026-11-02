@@ -596,7 +596,7 @@ let graphView = null;
 function graph() {
   if (!graphView) {
     graphView = createGraphView({
-      loadNotes: () => notesApi.all(),
+      loadNotes: async () => { await rebuildBacklinks(); return state.vaultNotes; },
       onOpen: (rel) => openNote(rel, 'oku', { keepTab: true }),
       onTag: (tag) => searchFor(`#${tag}`),
       onMissing: (title) => openWiki(title),
@@ -1829,6 +1829,9 @@ function commandList() {
     { label: 'Find and replace in this note', hint: '⌥⌘F', when: noteOpen, run: () => findBar.open({ replace: true }) },
     { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
     { label: 'New tab', hint: '⌥⌘T', run: () => newTab() },
+    { label: 'Theme: light', run: () => setTheme('light') },
+    { label: 'Theme: dark', run: () => setTheme('dark') },
+    { label: 'Theme: follow the system', run: () => setTheme('system') },
     { label: 'Open this note to the right', when: noteOpen, run: () => openSplit(state.openNote) },
     { label: 'Add property to this note', hint: '⌘;', when: () => noteOpen() && state.noteView === 'blocks', run: () => startAddProperty('note') },
     { label: 'Swap the two panes', when: () => !!split, run: () => swapSplit() },
@@ -2436,7 +2439,11 @@ const dataview = createDataview({
   wire: wireDataviewContent,
 });
 
-const mermaid = createMermaid({ render: (code) => notesApi.renderMermaid(code) });
+const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+const mermaid = createMermaid({ render: (code) => notesApi.renderMermaid(code), theme: () => (darkQuery.matches ? 'dark' : 'light') });
+// Appearance changed (Settings, or the system's while following it): redraw
+// what has colours of its own — diagrams, drawings' previews, the right pane.
+darkQuery.addEventListener('change', () => { splitShown = null; if (!isEditing()) render(); });
 
 // What renderMarkdown needs for a note at `rel` beyond the basics: Dataview
 // blocks and inline queries, and Mermaid diagrams.
@@ -2546,14 +2553,39 @@ async function refreshAttachList() {
 // Notes' other names (frontmatter "aliases"), so [[alias]] finds them.
 function applyAliases() {
   const by = new Map((state.vaultNotes || []).map((n) => [n.rel, aliasesOf(n.content || '')]));
-  for (const n of state.notesFlat) {
+  // A new list (not changed in place): links are resolved through an index of it (lib/notestree.mjs).
+  state.notesFlat = state.notesFlat.map((n) => {
     const own = n.rel === state.openNote ? aliasesOf(state.noteContent) : by.get(n.rel);
-    n.aliases = own && own.length ? own : undefined;
-  }
+    return { ...n, aliases: own && own.length ? own : undefined };
+  });
+}
+// The vault's notes come from main's cache as changes: what changed since the
+// version this window has (lib/vault-cache.mjs). Nothing changed: the same
+// list, so everything built from it (Dataview's index…) is kept.
+let vaultVersion = -1;
+const vaultByRel = new Map();
+let vaultSync = null;
+function syncVault() {
+  // One at a time: a second call waits for the first and then asks again.
+  vaultSync = (vaultSync || Promise.resolve()).then(async () => {
+    const res = await notesApi.sync(vaultVersion);
+    if (!res || res.error || !Array.isArray(res.changed)) return false;
+    if (res.full) vaultByRel.clear();
+    for (const n of res.changed) {
+      vaultByRel.set(n.rel, n);
+      if (n.rel !== state.openNote) state.noteCache.set(n.rel, n.content);
+    }
+    for (const rel of res.removed) { vaultByRel.delete(rel); state.noteCache.delete(rel); }
+    vaultVersion = res.version;
+    const changed = res.full || res.changed.length > 0 || res.removed.length > 0;
+    if (changed) state.vaultNotes = [...vaultByRel.values()];
+    return changed;
+  }).finally(() => { vaultSync = null; });
+  return vaultSync;
 }
 async function rebuildBacklinks() {
-  const res = await notesApi.all();
-  state.vaultNotes = Array.isArray(res) ? res : [];
+  const changed = await syncVault();
+  if (changed === false && state.backlinks) { applyAliases(); return; }
   state.backlinks = buildBacklinkIndex(state.vaultNotes);
   applyAliases();
 }
@@ -3921,12 +3953,40 @@ function attachToNote(scope, results, afterStart = null) {
 // Notetaker records meetings on any platform; Mufka reads them over MCP.
 
 let settingsLayer = null;
+// --- appearance (main.js sets nativeTheme; styles.css follows it) ---
+const THEME_CHOICES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
+async function setTheme(choice) {
+  const res = await notesApi.setTheme(choice);
+  if (res && res.error) { showToast(res.error); return; }
+  document.querySelectorAll('.theme-seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === choice)));
+}
+function appearanceSection() {
+  const sec = elem('section', 'settings-section');
+  sec.append(elem('h3', 'settings-heading', 'Appearance'));
+  const row = elem('div', 'conn-row theme-row');
+  const tx = elem('div', 'conn-text');
+  tx.append(elem('span', 'conn-name', 'Theme'), elem('span', 'conn-note', `System matches the light or dark appearance set in ${plansApi.isMac ? 'macOS' : 'Windows'}.`));
+  const seg = elem('div', 'theme-seg');
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', 'Theme');
+  for (const [id, label] of THEME_CHOICES) {
+    const b = elem('button', null, label);
+    b.type = 'button'; b.dataset.theme = id; b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', () => setTheme(id));
+    seg.append(b);
+  }
+  notesApi.theme().then((cur) => { seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === (typeof cur === 'string' ? cur : 'system')))); });
+  row.append(tx, seg);
+  sec.append(row);
+  return sec;
+}
 function openSettings() {
   if (settingsLayer) settingsLayer._close();
   const layer = elem('div', 'palette-layer');
   const box = elem('div', 'palette plan-dialog settings-dialog');
   box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Settings');
   box.append(elem('div', 'plan-dialog-title', 'Settings'));
+  box.append(appearanceSection());
   // Calendars: Microsoft (Outlook / Microsoft 365, Teams) and Google.
   const calSection = elem('section', 'settings-section');
   calSection.append(elem('h3', 'settings-heading', 'Calendars'));
@@ -4398,15 +4458,20 @@ async function deleteOpenNote() {
 
 // --- Ara ---
 
-async function ensureNoteCache() {
-  await refreshTree();
-  for (const n of state.notesFlat) {
-    if (!state.noteCache.has(n.rel)) {
-      const res = await notesApi.read(n.rel);
-      state.noteCache.set(n.rel, res && !res.error ? res.content : '');
-    }
+// Every note's text, for search: filled once from the vault (later changes
+// arrive with syncVault). Re-rendering the search field gives it the focus
+// again, which calls this: it must then do nothing, or it would loop.
+let noteCacheFilled = null;
+function ensureNoteCache() {
+  if (!noteCacheFilled) {
+    noteCacheFilled = (async () => {
+      await refreshTree();
+      await rebuildBacklinks();
+      for (const n of state.vaultNotes) if (!state.noteCache.has(n.rel)) state.noteCache.set(n.rel, n.content);
+      if (state.araQuery.trim()) renderSidebar();
+    })().catch(() => { noteCacheFilled = null; });
   }
-  if (state.araQuery.trim()) renderSidebar();
+  return noteCacheFilled;
 }
 
 // Ara lives in the sidebar: the field at the top, then the two result groups.
@@ -4451,7 +4516,9 @@ function renderSearchResults() {
     sideEl.append(elem('div', 'ara-empty', 'No results.'));
     if (plain) sideEl.append(searchHelp());
   }
-  for (const { n, doc } of noteHits) {
+  // A long list is drawn 100 at a time (typing redraws it on every key).
+  if (araShown.query !== q) araShown = { query: q, limit: ARA_PAGE };
+  for (const { n, doc } of noteHits.slice(0, araShown.limit)) {
     const btn = elem('button', 'ara-result');
     btn.append(markedText('div', null, n.title, hitsIn(n.title, terms)));
     const snip = snippetFor(doc, terms);
@@ -4465,7 +4532,15 @@ function renderSearchResults() {
     });
     sideEl.append(btn);
   }
+  if (noteHits.length > araShown.limit) {
+    const more = elem('button', 'ara-more', `Show ${Math.min(ARA_PAGE, noteHits.length - araShown.limit)} more of ${noteHits.length - araShown.limit}`);
+    more.type = 'button';
+    more.addEventListener('click', () => { araShown.limit += ARA_PAGE; state.focus = 'ara-input'; refreshSidebar(); });
+    sideEl.append(more);
+  }
 }
+const ARA_PAGE = 100;
+let araShown = { query: '', limit: ARA_PAGE };
 
 // Text with some ranges in <mark>.
 function markedText(tag, cls, text, hits) {
