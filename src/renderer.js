@@ -2047,6 +2047,7 @@ function sectionWithLink(title, rel, rows) {
   s.append(list);
   return s;
 }
+const todayDraft = { value: '', focused: false };
 function todayFromWeekNotes(date) {
   const out = [];
   const day = (date.getDay() + 6) % 7;
@@ -2066,12 +2067,18 @@ function todayFromWeekNotes(date) {
     const input = document.createElement('input');
     input.className = 'today-add-input'; input.placeholder = '+ Add a task for today';
     input.setAttribute('aria-label', 'Add a task for today to the weekly to-do');
+    // What is typed survives the page being drawn again (a save, a sync).
+    input.value = todayDraft.value;
+    input.addEventListener('input', () => { todayDraft.value = input.value; });
+    input.addEventListener('focus', () => { todayDraft.focused = true; });
+    input.addEventListener('blur', () => setTimeout(() => { if (input.isConnected) todayDraft.focused = false; }, 0));
+    if (todayDraft.focused) setTimeout(() => { if (input.isConnected) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } }, 0);
     input.addEventListener('keydown', async (e) => {
       if (e.key !== 'Enter' || !input.value.trim()) return;
       e.preventDefault();
-      const v = input.value; input.value = '';
+      const v = input.value; input.value = ''; todayDraft.value = '';
+      todayDraft.focused = true;
       await changeNoteText(todo.rel, (text) => addWeekTask(text, day, v));
-      document.querySelector('.today-add-input')?.focus();
     });
     add.append(input);
     rows.push(add);
@@ -2819,6 +2826,7 @@ function weekBlock(rel, src) {
   const week = habitWeek(readProps(src).props, rel ? noteTitleOf(rel) : '');
   const edit = (fn) => changeNoteText(rel, fn);
   return weekBoard(src, {
+    key: rel || '',
     monday: week ? weekMonday(week) : null,
     today: habitToday(rel, src),
     nav: rel ? weekNav(rel, src, WEEK_BLOCK, nextWeekTodoText, 'to-do') : null,

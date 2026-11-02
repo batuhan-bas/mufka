@@ -18,7 +18,11 @@ const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
 // today: Mon = 0 … Sun = 6, or -1. on: { toggle(line), add(day, text),
 // edit(line, text), move(line, day), carry(day), text() } — text() shows the
 // note's days as plain text under the board (showText: they are shown).
-export function weekBoard(src, { monday = null, today = -1, nav = null, showText = false, on }) {
+// Open "+ Add" fields by note and day: { value }.
+const drafts = new Map();
+
+// key: the note, for the drafts.
+export function weekBoard(src, { key = '', monday = null, today = -1, nav = null, showText = false, on }) {
   const sum = weekSummary(src);
   const box = el('div', 'wk-box');
   const head = el('div', 'wk-head');
@@ -75,7 +79,7 @@ export function weekBoard(src, { monday = null, today = -1, nav = null, showText
           words.hidden = false; input.remove();
         };
         input.addEventListener('keydown', (k) => { if (k.key === 'Enter') { k.preventDefault(); finish(true); } if (k.key === 'Escape') { k.preventDefault(); k.stopPropagation(); finish(false); } });
-        input.addEventListener('blur', () => finish(true));
+        input.addEventListener('blur', () => setTimeout(() => { if (input.isConnected) finish(true); }, 0));
         input.addEventListener('mousedown', (m) => m.stopPropagation());
         words.hidden = true;
         row.append(input);
@@ -87,23 +91,44 @@ export function weekBoard(src, { monday = null, today = -1, nav = null, showText
       list.append(row);
     }
     col.append(list);
+    // "+ Add" opens a field. What is typed there is kept as a draft, so a
+    // board drawn again meanwhile (the note saved, the vault synced) shows
+    // the field again with it, still focused, instead of losing it.
     const add = el('button', 'wk-add', '+ Add'); add.type = 'button';
-    add.addEventListener('click', (e) => {
-      stop(e);
+    const draftKey = `${key}|${d.day}`;
+    const openField = (draft) => {
       const input = el('input', 'wk-edit wk-new'); input.placeholder = 'A task'; input.setAttribute('aria-label', `New task for ${NAMES[d.day]}`);
-      const keep = () => { const v = input.value; input.value = ''; return v; };
+      input.value = draft.value;
       let closed = false;
-      const close = () => { if (closed) return; closed = true; if (input.isConnected) input.replaceWith(add); };
+      const close = () => { if (closed) return; closed = true; drafts.delete(draftKey); if (input.isConnected) input.replaceWith(add); };
+      input.addEventListener('input', () => { draft.value = input.value; });
       input.addEventListener('keydown', (k) => {
-        if (k.key === 'Enter') { k.preventDefault(); const v = keep(); if (v.trim()) on.add(d.day, v, true); }
+        if (k.key === 'Enter') { k.preventDefault(); const v = input.value; input.value = ''; draft.value = ''; if (v.trim()) on.add(d.day, v, true); }
         if (k.key === 'Escape') { k.preventDefault(); k.stopPropagation(); close(); }
       });
-      input.addEventListener('blur', () => { if (closed) return; const v = keep(); if (v.trim()) { closed = true; on.add(d.day, v, false); } else close(); });
+      // A blur because the board was drawn again is not the user leaving.
+      input.addEventListener('blur', () => setTimeout(() => {
+        if (closed || !input.isConnected) return;
+        const v = input.value.trim();
+        closed = true; drafts.delete(draftKey);
+        if (v) on.add(d.day, v, false); else input.replaceWith(add);
+      }, 0));
       input.addEventListener('mousedown', (m) => m.stopPropagation());
+      return input;
+    };
+    add.addEventListener('click', (e) => {
+      stop(e);
+      const draft = { value: '' };
+      drafts.set(draftKey, draft);
+      const input = openField(draft);
       add.replaceWith(input);
       input.focus();
     });
-    col.append(add);
+    if (drafts.has(draftKey)) {
+      const input = openField(drafts.get(draftKey));
+      col.append(input);
+      setTimeout(() => { if (input.isConnected) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } }, 0);
+    } else col.append(add);
     const later = days.find((x) => x.day > d.day);
     if (open && later) {
       const carry = el('button', 'wk-carry', `Move ${open} to ${NAMES[later.day].slice(0, 3)} →`); carry.type = 'button';
@@ -130,6 +155,8 @@ export function weekBoard(src, { monday = null, today = -1, nav = null, showText
 // Focus the "new task" field of a day again after the board was drawn anew.
 export function focusNewTask(container, day) {
   const col = container.querySelector(`.wk-day[data-day="${day}"]`);
+  const field = col && col.querySelector('.wk-new');
+  if (field) { field.focus(); return; }
   const add = col && col.querySelector('.wk-add');
   if (add) add.click();
 }

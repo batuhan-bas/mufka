@@ -2177,8 +2177,16 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.querySelectorAll(".wk-day").length === 7 && document.querySelectorAll(".wk-day.today").length === 1 && !!document.querySelector(".wk-hidden")', 3000), 'week board not shown');
       await clickSel('.wk-day.today .wk-add');
       assert(await waitFor('!!document.querySelector(".wk-new")', 2000), 'no field for a new task');
-      await typeText('Water the plants'); await enter();
+      // A note changing outside Mufka mid-typing draws the board again; what
+      // is typed must survive it (CI machines are slow enough to hit this).
       const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      await typeText('Water');
+      const redraws = await js('(window.__wkDraws = 0, new MutationObserver(() => { window.__wkDraws += 1; }).observe(document.querySelector(".wk-box").parentElement, { childList: true }), 0)');
+      fs.writeFileSync(path.join(vault, 'Elsewhere.md'), 'changed outside\n');
+      await sleep(2500);
+      void redraws;
+      assert(await js('document.activeElement?.classList.contains("wk-new") && document.activeElement.value === "Water"'), `typing lost on redraw: ${await js('document.activeElement?.className + " / " + document.querySelector(".wk-new")?.value')}`);
+      await typeText(' the plants'); await enter();
       const findNote = (n) => { const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (e.name.startsWith('.')) continue; const p = path.join(dir, e.name); if (e.isDirectory()) { const r = walk(p); if (r) return r; } else if (e.name === n) return p; } return null; }; return walk(vault); };
       const file = findNote(`${name}.md`);
       const dayName = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][(new Date().getDay() + 6) % 7];
