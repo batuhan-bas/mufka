@@ -70,9 +70,9 @@ function ring(sum, colourOf, money) {
   return box;
 }
 
-// ‹ September 2026 · October 2026 › — the other months' budget notes.
+// ‹ September 2026 · October 2026 › — the notes of the other months (or weeks).
 // nav: { current, prev, next: { label, open } | null, newMonth: { label, create } | null }
-function monthNav(nav) {
+export function periodNav(nav) {
   const bar = el('div', 'bud-nav');
   const step = (item, dir) => {
     const b = el('button', 'bud-nav-step', dir < 0 ? '‹' : '›'); b.type = 'button';
@@ -100,7 +100,7 @@ export function budgetCard(src, code, { onAdd, nav } = {}) {
   const money = moneyFormat(sum.currency);
   const colourOf = categoryColours(src, code);
   const card = el('div', 'bud-card');
-  if (nav) card.append(monthNav(nav));
+  if (nav) card.append(periodNav(nav));
 
   const stats = el('div', 'bud-stats');
   const stat = (label, value, cls) => {

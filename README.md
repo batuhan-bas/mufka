@@ -91,8 +91,12 @@ yet? Home offers to open the Planner.
 - **Budget** pages: add income and expenses with a small form and a card works
   out what is left, with a ring of where the money went. The entries are plain
   Markdown tables, so the file reads the same in Obsidian.
-- **Icon and cover** for any note: `icon: 💰` and `cover: violet` (blue, teal,
-  green, amber, rose, gray) in its properties.
+- **Habit tracker:** a week of habits as a grid; tick a day with one click,
+  today is marked, and a card shows how the week is going against each habit's
+  goal. ‹ › moves between weeks and starts the next one.
+- **Icon and cover** for any note: hover the top of a page to add them, click
+  to change (an emoji; a colour or an image). Kept as `icon:` and `cover:` in
+  its properties.
 - **Dataview**, like Obsidian's plugin: ` ```dataview ` queries (`TABLE`,
   `LIST`, `TASK`, `CALENDAR` with `FROM`, `WHERE`, `SORT`, `GROUP BY`,
   `FLATTEN`, `LIMIT` and its functions) over frontmatter, `key:: value` fields,

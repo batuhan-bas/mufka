@@ -1551,3 +1551,15 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .bud-nav-new { margin-left: auto; font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
 .bud-nav-new:hover { background: var(--hover-soft); color: var(--text); }
 .bud-nav-step:focus-visible, .bud-nav-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* --- habit trackers (src/habits-view.js) --- */
+.hab-item.met { --bc: var(--c-green); }
+.hab-item:not(.met) { --bc: var(--accent); }
+.md .hab-row td:not(:first-child) { text-align: center; }
+.md th.hab-today, .md td.hab-today { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.md th.hab-today { color: var(--accent); }
+.hab-cell { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--line-strong); background: none; cursor: pointer; padding: 0; vertical-align: middle; display: inline-grid; place-items: center; transition: background .1s, border-color .1s; }
+.hab-cell:hover { border-color: var(--c-green); }
+.hab-cell.done { background: var(--c-green); border-color: var(--c-green); }
+.hab-cell.done::after { content: ""; width: 9px; height: 5px; border-left: 2px solid var(--on-green); border-bottom: 2px solid var(--on-green); transform: translateY(-1px) rotate(-45deg); }
+.hab-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hab-goals .bud-pill[aria-checked="true"] { outline: 1.5px solid var(--accent); }

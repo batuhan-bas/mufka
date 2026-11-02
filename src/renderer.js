@@ -26,6 +26,8 @@ import { renderTasks, tasksEditing, tasksAnnounce } from './tasks.js';
 import { createDataview } from './dataview-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
+import { habitsCard, decorateHabitTable, addHabitButton, openHabitDialog } from './habits-view.js';
+import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
@@ -2457,6 +2459,7 @@ function noteRenderOptions(rel) {
       ...dv.blocks,
       mermaid: (src) => mermaid.block(src),
       budget: (code, _meta, { src }) => budgetCard(src, code, { onAdd: rel ? (kind) => addBudgetEntry(rel, kind) : null, nav: rel ? budgetNav(rel, src) : null }),
+      habits: (_code, _meta, { src }) => habitsCard(src, { today: habitToday(rel, src), nav: rel ? habitNav(rel, src) : null, onAdd: rel ? () => addHabitEntry(rel) : null }),
     },
     embedDrawing,
   };
@@ -2520,27 +2523,97 @@ async function addBudgetEntry(rel, kind) {
   const cur = await currentText(rel);
   if (!cur) return;
   const code = budgetCode(cur.text) || '';
-  openAddDialog({ kind, categories: categoryChoices(cur.text, code), currency: budgetSettings(code).currency, colourOf: categoryColours(cur.text, code) }, async (entry) => {
-    const now = await currentText(rel);
-    if (!now) return;
-    const next = addBudgetRow(now.text, kind, entry);
-    if (now.scope) {
-      setSrc(now.scope, next, true);
-      histRecord(now.scope);
-      render();
-      return;
-    }
-    const w = await notesApi.write(rel, next);
-    if (w && w.error) { showToast('Could not add the entry'); return; }
-    state.noteCache.delete(rel);
-    render();
+  openAddDialog({ kind, categories: categoryChoices(cur.text, code), currency: budgetSettings(code).currency, colourOf: categoryColours(cur.text, code) }, (entry) => {
+    changeNoteText(rel, (text) => addBudgetRow(text, kind, entry));
   });
+}
+
+// Change a note's text with edit(text) → text: the open note or day through
+// the editor (one undo step), any other straight in its file.
+async function changeNoteText(rel, edit) {
+  const now = await currentText(rel);
+  if (!now) return;
+  const next = edit(now.text);
+  if (next === now.text) return;
+  if (now.scope) {
+    setSrc(now.scope, next, true);
+    histRecord(now.scope);
+    render();
+    return;
+  }
+  const w = await notesApi.write(rel, next);
+  if (w && w.error) { showToast('Could not save the note'); return; }
+  state.noteCache.delete(rel);
+  render();
+}
+
+// --- habit trackers (lib/habits.mjs, src/habits-view.js) ---
+const HABITS_BLOCK = /^```habits[^\S\n]*$/m;
+const weekLabel = (week) => {
+  const m = weekMonday(week);
+  if (!m) return week;
+  const e = new Date(m); e.setDate(m.getDate() + 6);
+  const f = (d, o) => d.toLocaleDateString(undefined, o);
+  return `Week ${Number(week.split('-W')[1])} · ${f(m, { day: 'numeric', month: 'short' })} – ${f(e, { day: 'numeric', month: 'short' })}`;
+};
+// Mon = 0 … Sun = 6 when the note is this week's, else -1.
+function habitToday(rel, src) {
+  const week = habitWeek(readProps(src).props, rel ? noteTitleOf(rel) : '');
+  const now = new Date();
+  return week && week === weekKey(now) ? (now.getDay() + 6) % 7 : -1;
+}
+function habitNav(rel, src) {
+  const week = habitWeek(readProps(src).props, noteTitleOf(rel));
+  if (!week) return null;
+  const weeks = new Map();
+  for (const n of state.vaultNotes) {
+    if (n.rel === rel || !HABITS_BLOCK.test(n.content)) continue;
+    const w = habitWeek(readProps(n.content).props, noteTitleOf(n.rel));
+    if (w && !weeks.has(w)) weeks.set(w, n.rel);
+  }
+  const sorted = [...weeks.keys()].sort();
+  const prev = sorted.filter((w) => w < week).pop();
+  const next = sorted.find((w) => w > week);
+  return {
+    current: weekLabel(week),
+    prev: prev ? { label: weekLabel(prev), open: () => openNote(weeks.get(prev)) } : null,
+    next: next ? { label: weekLabel(next), open: () => openNote(weeks.get(next)) } : null,
+    newMonth: next ? null : { label: `week ${Number(shiftWeek(week, 1).split('-W')[1])}`, create: () => newHabitWeek(rel, week) },
+  };
+}
+async function newHabitWeek(rel, week) {
+  flushActiveEditor();
+  const cur = await currentText(rel);
+  if (!cur) return;
+  const next = shiftWeek(week, 1);
+  const [y, w] = week.split('-W'); const [ny, nw] = next.split('-W');
+  const title = noteTitleOf(rel);
+  const name = title.includes(`${y} Week ${Number(w)}`) ? title.replace(`${y} Week ${Number(w)}`, `${ny} Week ${Number(nw)}`)
+    : title.includes(week) ? title.replace(week, next) : `${ny} Week ${Number(nw)} habits`;
+  const res = await notesApi.create(folderOf(rel), name);
+  if (!res || !res.rel) { showToast('Could not create next week'); return; }
+  await notesApi.write(res.rel, nextWeekText(cur.text, next));
+  await refreshTree();
+  await rebuildBacklinks();
+  await openNote(res.rel);
+}
+async function addHabitEntry(rel) {
+  flushActiveEditor();
+  openHabitDialog((h) => changeNoteText(rel, (text) => addHabit(text, h)));
 }
 
 // The income and expenses tables of a budget note: coloured categories and an
 // "+ Add" button under each. b: the table's block.
 function decorateBudgetBlock(el, rel, src, b) {
   if (b.type !== 'table') return;
+  if (HABITS_BLOCK.test(src)) {
+    const t = habitTable(src);
+    if (t && t.start === b.start) {
+      decorateHabitTable(el, t, { today: habitToday(rel, src), onToggle: (line, day) => changeNoteText(rel, (text) => toggleHabit(text, line, day)) });
+      el.append(addHabitButton(() => addHabitEntry(rel)));
+      return;
+    }
+  }
   const code = budgetCode(src);
   if (code == null) return;
   const t = budgetTables(src);

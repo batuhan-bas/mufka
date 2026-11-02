@@ -2112,6 +2112,27 @@ app.whenReady().then(() => setTimeout(async () => {
       await press('O', ['meta']); await typeText('Kod'); await enter();
       assert(await waitFor('[...document.querySelectorAll(".backlink-title")].some(b => b.textContent === "Disarida")', 5000), `backlink not shown: ${await js('document.querySelector(".backlinks")?.textContent')}`);
     });
+
+    // 76. The habit tracker template: this week's grid, today marked; ticking
+    //     a day writes an x into the table and the card counts it; a habit is
+    //     added through its dialog.
+    await step(76, 'habit tracker: tick today, add a habit', async () => {
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      await typeText('Habit tracker'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      const name = await js('document.getElementById("tree-edit").value');
+      await enter();
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === ${JSON.stringify(name)}`, 3000), 'habit note did not open');
+      assert(await waitFor('!!document.querySelector(".hab-card .hab-ring") && document.querySelectorAll(".hab-row").length === 4 && document.querySelectorAll("td.hab-today").length === 4', 3000), 'card, rows or today column not shown');
+      await clickEval('document.querySelector(".hab-row td.hab-today .hab-cell")', 'today, first habit');
+      assert(await waitFor('document.querySelector(".hab-card .bud-spent")?.textContent.startsWith("1 of 4") && document.querySelector(".hab-row td.hab-today .hab-cell")?.getAttribute("aria-pressed") === "true"', 3000), `tick not counted: ${await js('document.querySelector(".hab-card .bud-spent")?.textContent')}`);
+      await clickEval('[...document.querySelectorAll(".bud-add")].find(b => b.textContent.includes("habit"))', '+ Add habit');
+      assert(await waitFor('!!document.querySelector(".hab-name-input")', 2000), 'add habit dialog did not open');
+      await typeText('Stretch');
+      await enter();
+      assert(await waitFor('document.querySelectorAll(".hab-row").length === 5 && [...document.querySelectorAll(".hab-item")].some(e => e.textContent.startsWith("Stretch"))', 3000), 'habit not added');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }
