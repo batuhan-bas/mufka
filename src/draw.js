@@ -31,6 +31,11 @@ function loadApp() {
   return appModule;
 }
 
+// Light or dark, as the rest of the app (Settings → Appearance).
+const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+const prefersDark = () => !darkQuery || darkQuery.matches;
+if (darkQuery) darkQuery.addEventListener('change', () => { if (live && live.handle && live.handle.setTheme) live.handle.setTheme(prefersDark() ? 'dark' : 'light'); });
+
 // live: the mounted drawing — { rel, host, handle, text, timer, pending }.
 let live = null;
 
@@ -89,6 +94,7 @@ export function renderDraw(container, api) {
       if (live !== mine) return;
       mine.handle = mod.mountDrawing(host, {
         scene: parseDrawing(api.text),
+        theme: prefersDark() ? 'dark' : 'light',
         menu: api.menu,
         onLink: api.openLink,
         onChange: (scene) => {
@@ -114,7 +120,7 @@ export function drawingPreview(text, onOpen) {
   box.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onOpen(); });
   box.addEventListener('mousedown', (e) => e.stopPropagation());
   loadApp()
-    .then((mod) => mod.drawingSvg(parseDrawing(text)))
+    .then((mod) => mod.drawingSvg(parseDrawing(text), prefersDark()))
     .then((svg) => {
       const img = document.createElement('img');
       img.className = 'draw-embed-img';

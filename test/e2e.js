@@ -2043,6 +2043,23 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.getElementById("block-editor")?.value.endsWith("yap [[") && !!document.querySelector("#suggest-list .suggest-item")', 2000), `link: ${JSON.stringify(await blockVal())}`);
       await press('Escape'); await press('Escape');
     });
+
+    // 74. Appearance: Settings switches light / dark / system; the page's
+    //     colours follow and the choice is saved for the next start.
+    await step(74, 'appearance: light, dark, follow the system', async () => {
+      const settings = path.join(tmp, 'settings.json');
+      const bg = 'getComputedStyle(document.body.closest("html")).getPropertyValue("--ground").trim()';
+      await press(',', ['meta']);
+      assert(await waitFor('!!document.querySelector(".theme-seg button[data-theme=\\"system\\"][aria-pressed=\\"true\\"]")', 3000), 'System not chosen by default');
+      await clickSel('.theme-seg button[data-theme="light"]');
+      assert(await waitFor(`${bg} === "#ffffff"`, 3000), `light: ${await js(bg)}`);
+      assert(await waitFor2(() => JSON.parse(fs.readFileSync(settings, 'utf8')).theme === 'light', 2000), 'light not saved');
+      await clickSel('.theme-seg button[data-theme="dark"]');
+      assert(await waitFor(`${bg} === "#1e2025"`, 3000), `dark: ${await js(bg)}`);
+      await clickSel('.theme-seg button[data-theme="system"]');
+      assert(await waitFor2(() => !('theme' in JSON.parse(fs.readFileSync(settings, 'utf8'))), 2000), 'system should clear the saved choice');
+      await press('Escape');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

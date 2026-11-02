@@ -67,6 +67,9 @@ contextBridge.exposeInMainWorld('notes', {
   runDataviewJs: (payload) => ipcRenderer.invoke('dataview:runJs', payload),
   // Draw a ```mermaid diagram (SVG text) in the sandbox window.
   renderMermaid: (code) => ipcRenderer.invoke('mermaid:render', code),
+  // Appearance: 'system' | 'light' | 'dark'.
+  theme: () => ipcRenderer.invoke('theme:get'),
+  setTheme: (choice) => ipcRenderer.invoke('theme:set', choice),
   bookmarks: () => ipcRenderer.invoke('bookmarks:list'),
   treeStyles: () => ipcRenderer.invoke('treestyle:read'),
   saveTreeStyles: (data) => ipcRenderer.invoke('treestyle:write', data),

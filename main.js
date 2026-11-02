@@ -100,12 +100,29 @@ function writeFileAtomic(file, text) {
 }
 
 // --- settings -------------------------------------------------------------
-// <userData>/settings.json: { vaultPath? }. Unknown keys are kept.
+// <userData>/settings.json: { vaultPath?, theme? }. Unknown keys are kept.
 
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 function readSettings() {
   try { return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) || {}; } catch { return {}; }
 }
+// --- appearance: 'system' (default) follows macOS / Windows, or 'light' / 'dark'.
+// nativeTheme drives the page's prefers-color-scheme, so the CSS switches its
+// colour tokens by itself; the window background and the Windows title bar
+// buttons follow here.
+const THEMES = ['system', 'light', 'dark'];
+const themeChoice = () => (THEMES.includes(readSettings().theme) ? readSettings().theme : 'system');
+const CHROME = { dark: { bg: '#1e2025', fg: '#e4e6ea' }, light: { bg: '#ffffff', fg: '#1f2329' } };
+const chrome = () => CHROME[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
+function applyChrome() {
+  const c = chrome();
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!appRenderers.has(w.webContents.id)) continue;
+    w.setBackgroundColor(c.bg);
+    if (process.platform !== 'darwin' && w.setTitleBarOverlay) w.setTitleBarOverlay({ color: c.bg, symbolColor: c.fg, height: 44 });
+  }
+}
+
 function writeSettings(patch) {
   const next = { ...readSettings(), ...patch };
   for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
@@ -788,7 +805,7 @@ function renderMermaid(code) {
     const win = dvjs.win;
     let timer;
     const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), MERMAID_TIMEOUT_MS); });
-    const res = await Promise.race([win.webContents.executeJavaScript(`window.__mermaid(${JSON.stringify(src)})`), timeout]).finally(() => clearTimeout(timer));
+    const res = await Promise.race([win.webContents.executeJavaScript(`window.__mermaid(${JSON.stringify(src)}, ${nativeTheme.shouldUseDarkColors})`), timeout]).finally(() => clearTimeout(timer));
     if (res === 'timeout') { dvjsStop(); return { error: 'The diagram took too long to draw' }; }
     return res && typeof res === 'object' ? { svg: typeof res.svg === 'string' ? res.svg : undefined, error: res.error ? String(res.error) : undefined } : { error: 'The diagram could not be drawn' };
   });
@@ -1585,8 +1602,8 @@ function createWindow() {
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 15 } }
       // Windows: the same bar, with the system's minimise/maximise/close on its right.
-      : { titleBarStyle: 'hidden', titleBarOverlay: { color: '#1e2025', symbolColor: '#e4e6ea', height: 44 } }),
-    backgroundColor: '#1e2025',
+      : { titleBarStyle: 'hidden', titleBarOverlay: { color: chrome().bg, symbolColor: chrome().fg, height: 44 } }),
+    backgroundColor: chrome().bg,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -1705,6 +1722,13 @@ ipcMain.handle('notes:tree', wrap(() => walkVault()));
 ipcMain.handle('notes:all', wrap(() => collectNotes()));
 ipcMain.handle('dataview:runJs', wrap((payload) => runDataviewJs(payload)));
 ipcMain.handle('mermaid:render', wrap((code) => renderMermaid(code)));
+ipcMain.handle('theme:get', wrap(() => themeChoice()));
+ipcMain.handle('theme:set', wrap((choice) => {
+  if (!THEMES.includes(choice)) throw new Error('Unknown theme');
+  writeSettings({ theme: choice === 'system' ? undefined : choice });
+  nativeTheme.themeSource = choice;
+  return choice;
+}));
 ipcMain.handle('notes:read', wrap((rel) => readNoteRel(rel)));
 ipcMain.handle('notes:write', wrap((rel, content) => writeNoteRel(rel, content)));
 ipcMain.handle('notes:create', wrap((parentRel, name) => createNote(parentRel, name)));
@@ -1782,9 +1806,9 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 app.whenReady().then(() => {
-  // The UI is dark-only; force the native chrome (title bar, menus) to match
-  // regardless of the system appearance.
-  nativeTheme.themeSource = 'dark';
+  // Light, dark or the system's (Settings → Appearance).
+  nativeTheme.themeSource = themeChoice();
+  nativeTheme.on('updated', applyChrome);
   // Expired note versions go a little after start-up (file recovery).
   setTimeout(() => { try { history().prune(); } catch { /* best effort */ } }, 15000);
   // Windows shows notifications only for an app with an id (the installer's).

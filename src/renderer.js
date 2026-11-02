@@ -1829,6 +1829,9 @@ function commandList() {
     { label: 'Find and replace in this note', hint: '⌥⌘F', when: noteOpen, run: () => findBar.open({ replace: true }) },
     { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
     { label: 'New tab', hint: '⌥⌘T', run: () => newTab() },
+    { label: 'Theme: light', run: () => setTheme('light') },
+    { label: 'Theme: dark', run: () => setTheme('dark') },
+    { label: 'Theme: follow the system', run: () => setTheme('system') },
     { label: 'Open this note to the right', when: noteOpen, run: () => openSplit(state.openNote) },
     { label: 'Add property to this note', hint: '⌘;', when: () => noteOpen() && state.noteView === 'blocks', run: () => startAddProperty('note') },
     { label: 'Swap the two panes', when: () => !!split, run: () => swapSplit() },
@@ -2436,7 +2439,11 @@ const dataview = createDataview({
   wire: wireDataviewContent,
 });
 
-const mermaid = createMermaid({ render: (code) => notesApi.renderMermaid(code) });
+const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+const mermaid = createMermaid({ render: (code) => notesApi.renderMermaid(code), theme: () => (darkQuery.matches ? 'dark' : 'light') });
+// Appearance changed (Settings, or the system's while following it): redraw
+// what has colours of its own — diagrams, drawings' previews, the right pane.
+darkQuery.addEventListener('change', () => { splitShown = null; if (!isEditing()) render(); });
 
 // What renderMarkdown needs for a note at `rel` beyond the basics: Dataview
 // blocks and inline queries, and Mermaid diagrams.
@@ -3921,12 +3928,40 @@ function attachToNote(scope, results, afterStart = null) {
 // Notetaker records meetings on any platform; Mufka reads them over MCP.
 
 let settingsLayer = null;
+// --- appearance (main.js sets nativeTheme; styles.css follows it) ---
+const THEME_CHOICES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
+async function setTheme(choice) {
+  const res = await notesApi.setTheme(choice);
+  if (res && res.error) { showToast(res.error); return; }
+  document.querySelectorAll('.theme-seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === choice)));
+}
+function appearanceSection() {
+  const sec = elem('section', 'settings-section');
+  sec.append(elem('h3', 'settings-heading', 'Appearance'));
+  const row = elem('div', 'conn-row theme-row');
+  const tx = elem('div', 'conn-text');
+  tx.append(elem('span', 'conn-name', 'Theme'), elem('span', 'conn-note', `System matches the light or dark appearance set in ${plansApi.isMac ? 'macOS' : 'Windows'}.`));
+  const seg = elem('div', 'theme-seg');
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', 'Theme');
+  for (const [id, label] of THEME_CHOICES) {
+    const b = elem('button', null, label);
+    b.type = 'button'; b.dataset.theme = id; b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', () => setTheme(id));
+    seg.append(b);
+  }
+  notesApi.theme().then((cur) => { seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === (typeof cur === 'string' ? cur : 'system')))); });
+  row.append(tx, seg);
+  sec.append(row);
+  return sec;
+}
 function openSettings() {
   if (settingsLayer) settingsLayer._close();
   const layer = elem('div', 'palette-layer');
   const box = elem('div', 'palette plan-dialog settings-dialog');
   box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Settings');
   box.append(elem('div', 'plan-dialog-title', 'Settings'));
+  box.append(appearanceSection());
   // Calendars: Microsoft (Outlook / Microsoft 365, Teams) and Google.
   const calSection = elem('section', 'settings-section');
   calSection.append(elem('h3', 'settings-heading', 'Calendars'));
