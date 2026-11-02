@@ -26,102 +26,139 @@ function stageClass(stage, stages) {
   return i <= 0 ? 'job-s-0' : `job-s-${Math.min(i, 3)}`;
 }
 
+// Steps to click through: the stages in order, past ones done, and an
+// aside one (Rejected, On hold) at the end. classOf(stage) gives the colour.
+export function stageSteps({ stages, aside, current, classOf, onStage }) {
+  const steps = el('div', 'job-steps');
+  steps.setAttribute('role', 'radiogroup'); steps.setAttribute('aria-label', 'Stage');
+  const off = same(current, aside);
+  const at = stages.findIndex((s) => same(s, current));
+  const step = (s, cls) => {
+    const on = same(s, current) && (s === aside || !off);
+    const b = el('button', `job-step ${classOf(s)}${cls}${on ? ' on' : ''}`);
+    b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(on));
+    b.append(el('span', 'job-step-dot'), el('span', 'job-step-name', s));
+    b.addEventListener('click', () => onStage(s));
+    return b;
+  };
+  stages.forEach((s, i) => steps.append(step(s, !off && i < at ? ' past' : '')));
+  if (aside) steps.append(step(aside, ' job-reject'));
+  return steps;
+}
+
+// Facts under the steps: [label, value] pairs (empty ones left out) and
+// extra elements.
+export function factsRow(pairs, extra = []) {
+  const facts = el('div', 'job-facts');
+  for (const [label, value, cls] of pairs) {
+    if (!value) continue;
+    const f = el('span', `job-fact${cls ? ` ${cls}` : ''}`);
+    f.append(el('span', 'job-fact-label', label), document.createTextNode(value));
+    facts.append(f);
+  }
+  for (const x of extra) if (x) facts.append(x);
+  return facts;
+}
+
 // The strip under an application's title. onStage(stage); onLink().
 export function jobStrip(job, { stages, onStage, onLink }) {
   const box = el('div', 'job-strip');
-  const steps = el('div', 'job-steps');
-  steps.setAttribute('role', 'radiogroup'); steps.setAttribute('aria-label', 'Stage');
-  const at = stages.findIndex((s) => same(s, job.status));
-  const rejected = same(job.status, REJECTED);
-  stages.forEach((s, i) => {
-    const b = el('button', `job-step ${stageClass(s, stages)}${!rejected && i < at ? ' past' : ''}${!rejected && i === at ? ' on' : ''}`);
-    b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(!rejected && i === at));
-    b.append(el('span', 'job-step-dot'), el('span', 'job-step-name', s));
-    b.addEventListener('click', () => onStage(s));
-    steps.append(b);
-  });
-  const rej = el('button', `job-step job-s-rejected job-reject${rejected ? ' on' : ''}`);
-  rej.type = 'button'; rej.setAttribute('role', 'radio'); rej.setAttribute('aria-checked', String(rejected));
-  rej.append(el('span', 'job-step-dot'), el('span', 'job-step-name', REJECTED));
-  rej.addEventListener('click', () => onStage(REJECTED));
-  steps.append(rej);
-  box.append(steps);
-
-  const facts = el('div', 'job-facts');
-  const fact = (label, value) => { if (!value) return; const f = el('span', 'job-fact'); f.append(el('span', 'job-fact-label', label), document.createTextNode(value)); facts.append(f); };
-  fact('Company', job.company);
-  fact('Role', job.role);
-  fact('Where', job.location);
-  fact('Pay', job.salary);
-  if (job.applied) fact('Applied', `${job.applied}${ago(job.applied) ? ` · ${ago(job.applied)}` : ''}`);
+  box.append(stageSteps({ stages, aside: REJECTED, current: job.status, classOf: (s) => stageClass(s, stages), onStage }));
+  let link = null;
   if (job.link && /^https?:\/\//i.test(job.link)) {
-    const a = el('button', 'job-link', 'Open the posting ↗'); a.type = 'button';
-    a.addEventListener('click', () => onLink(job.link));
-    facts.append(a);
+    link = el('button', 'job-link', 'Open the posting ↗'); link.type = 'button';
+    link.addEventListener('click', () => onLink(job.link));
   }
+  const facts = factsRow([['Company', job.company], ['Role', job.role], ['Where', job.location], ['Pay', job.salary],
+    ['Applied', job.applied ? `${job.applied}${ago(job.applied) ? ` · ${ago(job.applied)}` : ''}` : '']], [link]);
   if (facts.children.length) box.append(facts);
   return box;
 }
 
-// The board. onOpen(rel), onMove(rel, stage), onNew().
-export function jobsBoard(jobs, { stages, onOpen, onMove, onNew }) {
+// A board of notes by stage: the numbers and a "+ New" button above,
+// a column per stage with cards to open and drag.
+//   columns: [{ stage, cls, items: [{ rel, … }] }]; stats: [{ label, value, cls }]
+//   card(item) → the card's content; current(item) → its stage
+//   onOpen(rel), onMove(rel, stage), onNew(); newLabel, empty: texts
+export function stageBoard({ columns, stats, card, current, newLabel, empty, onOpen, onMove, onNew }) {
   const box = el('div', 'job-board-box');
-  const st = jobStats(jobs, stages);
   const head = el('div', 'job-head');
-  const stats = el('div', 'job-stats');
-  const stat = (label, value, cls = '') => { const s = el('div', `job-stat ${cls}`); s.append(el('div', 'job-stat-value', String(value)), el('div', 'job-stat-label', label)); stats.append(s); };
-  stat('Applications', st.total);
-  stat('Active', st.active);
-  stat('Interviewing', st.interviewing, 'job-s-2');
-  stat('Offers', st.offers, 'job-s-offer');
-  stat('Heard back', `${Math.round(st.responseRate * 100)}%`);
-  head.append(stats);
-  const add = el('button', 'btn primary job-new', '+ New application'); add.type = 'button';
+  const row = el('div', 'job-stats');
+  for (const st of stats) { const x = el('div', `job-stat ${st.cls || ''}`); x.append(el('div', 'job-stat-value', String(st.value)), el('div', 'job-stat-label', st.label)); row.append(x); }
+  head.append(row);
+  const add = el('button', 'btn primary job-new', newLabel); add.type = 'button';
   add.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onNew(); });
   head.append(add);
   box.append(head);
-
   const board = el('div', 'job-board');
-  for (const col of jobColumns(jobs, stages)) {
-    if (!col.jobs.length && !stages.some((s) => same(s, col.stage)) && !same(col.stage, REJECTED)) continue;
-    const c = el('div', `job-col ${stageClass(col.stage, stages)}`);
+  const all = columns.flatMap((c) => c.items);
+  for (const col of columns) {
+    const c = el('div', `job-col ${col.cls}`);
     c.dataset.stage = col.stage;
     const h = el('div', 'job-col-head');
-    h.append(el('span', 'job-step-dot'), el('span', 'job-col-name', col.stage), el('span', 'job-col-count', String(col.jobs.length)));
+    h.append(el('span', 'job-step-dot'), el('span', 'job-col-name', col.stage), el('span', 'job-col-count', String(col.items.length)));
     c.append(h);
     const list = el('div', 'job-cards');
-    for (const j of col.jobs) {
-      const card = el('button', 'job-card'); card.type = 'button';
-      card.draggable = true;
-      card.dataset.rel = j.rel;
-      card.append(el('div', 'job-card-company', j.company || j.rel.replace(/^.*\//, '').replace(/\.md$/i, '')));
-      if (j.role) card.append(el('div', 'job-card-role', j.role));
-      const meta = el('div', 'job-card-meta');
-      if (j.location) meta.append(el('span', 'job-chip', j.location));
-      if (ago(j.applied)) meta.append(el('span', 'job-card-ago', ago(j.applied)));
-      if (meta.children.length) card.append(meta);
-      card.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onOpen(j.rel); });
-      card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-mufka-job', j.rel); e.dataTransfer.effectAllowed = 'move'; card.classList.add('dragging'); });
-      card.addEventListener('dragend', () => card.classList.remove('dragging'));
-      list.append(card);
+    for (const it of col.items) {
+      const b = el('button', 'job-card'); b.type = 'button';
+      b.draggable = true;
+      b.dataset.rel = it.rel;
+      b.append(...card(it));
+      b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onOpen(it.rel); });
+      b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-mufka-card', it.rel); e.dataTransfer.effectAllowed = 'move'; b.classList.add('dragging'); });
+      b.addEventListener('dragend', () => b.classList.remove('dragging'));
+      list.append(b);
     }
-    if (!col.jobs.length) list.append(el('div', 'job-empty', 'Nothing here'));
+    if (!col.items.length) list.append(el('div', 'job-empty', 'Nothing here'));
     c.append(list);
-    c.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-mufka-job')) { e.preventDefault(); c.classList.add('drop'); } });
+    c.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-mufka-card')) { e.preventDefault(); c.classList.add('drop'); } });
     c.addEventListener('dragleave', (e) => { if (!c.contains(e.relatedTarget)) c.classList.remove('drop'); });
     c.addEventListener('drop', (e) => {
-      const rel = e.dataTransfer.getData('text/x-mufka-job');
+      const rel = e.dataTransfer.getData('text/x-mufka-card');
       c.classList.remove('drop');
       if (!rel) return;
       e.preventDefault(); e.stopPropagation();
-      const job = jobs.find((x) => x.rel === rel);
-      if (job && !same(job.status, col.stage)) onMove(rel, col.stage);
+      const it = all.find((x) => x.rel === rel);
+      if (it && !same(current(it), col.stage)) onMove(rel, col.stage);
     });
     board.append(c);
   }
   box.append(board);
-  if (!jobs.length) box.append(el('p', 'bud-empty', 'No applications yet. Add one, or give any note company: and status: properties.'));
+  if (!all.length) box.append(el('p', 'bud-empty', empty));
   return box;
+}
+
+export const noteName = (rel) => rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+
+// The board of applications. onOpen(rel), onMove(rel, stage), onNew().
+export function jobsBoard(jobs, { stages, onOpen, onMove, onNew }) {
+  const st = jobStats(jobs, stages);
+  const columns = jobColumns(jobs, stages)
+    .filter((col) => col.jobs.length || stages.some((s) => same(s, col.stage)) || same(col.stage, REJECTED))
+    .map((col) => ({ stage: col.stage, cls: stageClass(col.stage, stages), items: col.jobs }));
+  return stageBoard({
+    columns,
+    stats: [
+      { label: 'Applications', value: st.total },
+      { label: 'Active', value: st.active },
+      { label: 'Interviewing', value: st.interviewing, cls: 'job-s-2' },
+      { label: 'Offers', value: st.offers, cls: 'job-s-offer' },
+      { label: 'Heard back', value: `${Math.round(st.responseRate * 100)}%` },
+    ],
+    card: (j) => {
+      const out = [el('div', 'job-card-company', j.company || noteName(j.rel))];
+      if (j.role) out.push(el('div', 'job-card-role', j.role));
+      const meta = el('div', 'job-card-meta');
+      if (j.location) meta.append(el('span', 'job-chip', j.location));
+      if (ago(j.applied)) meta.append(el('span', 'job-card-ago', ago(j.applied)));
+      if (meta.children.length) out.push(meta);
+      return out;
+    },
+    current: (j) => j.status,
+    newLabel: '+ New application',
+    empty: 'No applications yet. Add one, or give any note company: and status: properties.',
+    onOpen, onMove, onNew,
+  });
 }
 
 const today = () => {

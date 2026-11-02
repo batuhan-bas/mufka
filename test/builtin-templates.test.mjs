@@ -6,9 +6,9 @@ import { sanitizeTitle } from '../lib/notespath.mjs';
 
 const date = new Date(2026, 9, 17, 9, 5); // Saturday 17 October 2026, 09:05
 
-test('ten built-in templates, each with a unique id and name', () => {
-  assert.deepEqual(BUILTIN_TEMPLATES.map((t) => t.id), ['daily', 'meeting', 'project', 'book', 'habits', 'budget', 'travel', 'todo', 'jobs', 'job']);
-  assert.equal(new Set(BUILTIN_TEMPLATES.map((t) => t.name)).size, 10);
+test('eleven built-in templates, each with a unique id and name', () => {
+  assert.deepEqual(BUILTIN_TEMPLATES.map((t) => t.id), ['daily', 'meeting', 'project', 'projects', 'book', 'habits', 'budget', 'travel', 'todo', 'jobs', 'job']);
+  assert.equal(new Set(BUILTIN_TEMPLATES.map((t) => t.name)).size, 11);
 });
 
 test('every template fills completely: frontmatter, sections, no title of its own (the note name is the title)', () => {
@@ -36,7 +36,7 @@ test('templates in the vault come first and take the place of a built-in one by 
   const list = templateChoices([{ rel: 'Templates/Book notes.md', title: 'Book notes' }, { rel: 'Templates/Mine.md', title: 'Mine' }]);
   assert.deepEqual(list.slice(0, 2), [{ kind: 'vault', rel: 'Templates/Book notes.md', name: 'Book notes' }, { kind: 'vault', rel: 'Templates/Mine.md', name: 'Mine' }]);
   assert.equal(list.filter((c) => c.name === 'Book notes').length, 1);
-  assert.equal(list.length, 2 + 9);
+  assert.equal(list.length, 2 + 10);
 });
 
 test('every checklist line is a real checkbox (no empty "- [ ]")', async () => {

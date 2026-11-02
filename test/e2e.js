@@ -2189,6 +2189,36 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('.wk-as-text');
       assert(await waitFor('!document.querySelector(".wk-hidden") && document.querySelectorAll(".note-body h2").length >= 7', 3000), 'days not shown as text');
     });
+
+    // 79. Projects: the board from its template; a new project opens with its
+    //     strip; ticking a task moves its progress; its stage changes with a
+    //     click and the board shows it there.
+    await step(79, 'projects: board, new project, progress, stage', async () => {
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      await typeText('Project board'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      const board = await js('document.getElementById("tree-edit").value');
+      await enter();
+      assert(await waitFor('!!document.querySelector(".job-board") && document.querySelectorAll(".job-col").length === 4', 3000), 'project board not shown');
+      await clickSel('.job-new');
+      assert(await waitFor('!!document.querySelector(".prj-name")', 2000), 'new project form did not open');
+      await typeText('Garden shed');
+      await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Garden shed" && document.querySelector(".job-step.on")?.textContent === "Planning"', 4000), `new project did not open with its strip: ${await js('document.querySelector(".note-title")?.textContent + " | " + document.querySelector(".job-step.on")?.textContent + " | " + document.getElementById("toast")?.textContent')}`);
+      assert(await waitFor('document.querySelector(".prj-progress-text")?.textContent === "0/4"', 2000), `progress: ${await js('document.querySelector(".prj-progress-text")?.textContent')}`);
+      await clickEval('document.querySelector(".note-body input.task-check")', 'first task');
+      assert(await waitFor('document.querySelector(".prj-progress-text")?.textContent === "1/4"', 3000), 'progress did not move');
+      // The tick saves and draws the page again; click once it has settled.
+      await sleep(600);
+      for (let i = 0; i < 3 && !(await js('document.querySelector(".job-step.on")?.textContent === "Active"')); i++) {
+        await clickEval('[...document.querySelectorAll(".job-step")].find(b => b.textContent === "Active")', 'Active');
+        await waitFor('document.querySelector(".job-step.on")?.textContent === "Active"', 1500);
+      }
+      assert(await js('document.querySelector(".job-step.on")?.textContent === "Active"'), 'stage did not change');
+      await press('O', ['meta']); await typeText(board); await enter();
+      assert(await waitFor('[...document.querySelectorAll(".job-col")].find(c => c.dataset.stage === "Active")?.textContent.includes("Garden shed")', 4000), 'board does not show the project as active');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

@@ -1655,3 +1655,17 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .wk-add:hover, .wk-carry:hover { background: var(--hover-soft); color: var(--text); }
 .wk-carry { font-size: 12px; margin-top: auto; }
 .wk-check:focus-visible, .wk-text:focus-visible, .wk-add:focus-visible, .wk-carry:focus-visible, .wk-as-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* --- projects (src/projects-view.js) --- */
+.prj-progress { display: inline-flex; align-items: center; gap: 8px; }
+.prj-bar { width: 120px; height: 6px; }
+.prj-bar i { background: var(--c-green); }
+.prj-progress.small { display: flex; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.prj-progress.small .prj-bar { flex: 1; width: auto; height: 5px; }
+.prj-progress-text { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+.prj-fact-progress { display: inline-flex; align-items: center; gap: 0; }
+.prj-pct { margin-left: 8px; font-size: 13px; }
+.prj-due.late { color: var(--today); }
+.prj-due.soon { color: var(--c-amber); }
+.prj-due-chip { padding: 0 7px; border-radius: 9px; background: var(--sel); color: var(--text); white-space: nowrap; }
+.prj-due-chip.soon { background: color-mix(in srgb, var(--c-amber) 18%, transparent); color: var(--c-amber); }
+.prj-due-chip.late { background: color-mix(in srgb, var(--today) 18%, transparent); color: var(--today); }
