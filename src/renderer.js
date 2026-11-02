@@ -2160,7 +2160,8 @@ function planMenuItems(p) {
 
 const menuLayer = document.getElementById('menu-layer');
 
-function openMenu(anchorKey, buildItems) { state.menu = { anchorKey, buildItems }; renderMenu(); }
+// align: 'right' (the menu's right edge under the anchor's) or 'left'.
+function openMenu(anchorKey, buildItems, { align = 'right' } = {}) { state.menu = { anchorKey, buildItems, align }; renderMenu(); }
 function closeMenu() { if (state.menu) { state.menu = null; renderMenu(); } }
 
 function menuItem(label, onActivate) {
@@ -2195,9 +2196,9 @@ function renderMenu() {
   const r = anchor.getBoundingClientRect();
   const mw = menu.offsetWidth; const mh = menu.offsetHeight;
   let top = r.bottom + 4; if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
-  let left = r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+  let left = state.menu.align === 'left' ? r.left : r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
   menu.style.top = `${top}px`; menu.style.left = `${left}px`;
-  (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice') || menu.querySelector('button, input'))?.focus();
+  (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice, .cover-choice.on') || menu.querySelector('button, input'))?.focus();
 }
 
 let outsideHandler = null;
@@ -4127,6 +4128,7 @@ const PAGE_EMOJI = ['📝', '📌', '⭐', '💡', '🎯', '🚀', '📅', '✅'
 function openPageIconPicker(key) {
   openMenu(key, () => {
     const box = pickerBox('Icon');
+    box.classList.add('emoji-picker');
     const grid = elem('div', 'emoji-grid');
     for (const e of PAGE_EMOJI) {
       const b = elem('button', 'emoji-choice', e); b.type = 'button'; b.setAttribute('aria-label', e);
@@ -4154,15 +4156,18 @@ function openPageIconPicker(key) {
       box.append(remove);
     }
     return [{ el: box }];
-  });
+  }, { align: 'left' });
 }
 function openCoverPicker(key) {
   openMenu(key, () => {
     const box = pickerBox('Cover');
+    box.classList.add('cover-picker');
     const grid = elem('div', 'cover-choices');
+    const now = noteLook(state.noteContent).cover;
     for (const c of COVERS) {
-      const b = elem('button', `cover-choice cover-${c}`); b.type = 'button';
-      b.title = c[0].toUpperCase() + c.slice(1); b.setAttribute('aria-label', b.title);
+      const on = Boolean(now && now.gradient === c);
+      const b = elem('button', `cover-choice cover-${c}${on ? ' on' : ''}`); b.type = 'button';
+      b.title = c[0].toUpperCase() + c.slice(1); b.setAttribute('aria-label', b.title); b.setAttribute('aria-pressed', String(on));
       b.addEventListener('click', () => setNoteProp('cover', c));
       grid.append(b);
     }

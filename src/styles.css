@@ -1417,12 +1417,15 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .page-add { font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
 .page-add:hover { background: var(--hover-soft); color: var(--text); }
 .page-add:focus-visible, .note-icon:focus-visible, .cover-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.emoji-grid { display: grid; grid-template-columns: repeat(10, 30px); gap: 2px; }
+.style-picker.emoji-picker { width: auto; }
+.style-picker.cover-picker { width: auto; }
+.emoji-grid { display: grid; grid-template-columns: repeat(10, 30px); gap: 2px; margin-bottom: 6px; }
+.emoji-picker .emoji-row { margin-top: 2px; }
 .emoji-choice { width: 30px; height: 30px; font-size: 19px; line-height: 1; border: 0; border-radius: 6px; background: none; cursor: pointer; padding: 0; }
 .emoji-choice:hover, .emoji-choice:focus-visible { background: var(--sel); outline: none; }
 .cover-choices { display: grid; grid-template-columns: repeat(4, 64px); gap: 6px; }
 .cover-choice { width: 64px; height: 36px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; padding: 0; }
-.cover-choice:hover, .cover-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cover-choice:hover, .cover-choice:focus-visible, .cover-choice.on { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cover-violet { background: linear-gradient(120deg, #2e3a63 0%, #3a2f63 55%, #24484a 100%); }
 .cover-blue { background: linear-gradient(120deg, #1f3557 0%, #23476b 60%, #1e3a4f 100%); }
 .cover-teal { background: linear-gradient(120deg, #1b4442 0%, #1f5550 55%, #24425c 100%); }
