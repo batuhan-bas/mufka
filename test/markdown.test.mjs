@@ -169,6 +169,27 @@ test('toggleTaskLine flips only the given line', () => {
   assert.equal(toggleTaskLine(src, 5), src); // out of range, unchanged
 });
 
+test('a box with another character ([~], [/], [-]) is a checked task, as in Obsidian', () => {
+  const [p] = render('- [~] waiting **here**\n- [/] half\n- [x] done\n- [ab] not a task\n- [] nor this');
+  const boxes = findAll(p, 'input');
+  assert.equal(boxes.length, 3);
+  assert.deepEqual(boxes.map((b) => b.getAttribute('checked')), ['checked', 'checked', 'checked']);
+  assert.deepEqual(boxes.map((b) => b.getAttribute('data-status')), ['~', '/', undefined]);
+  assert.deepEqual(boxes.map((b) => b.getAttribute('data-line')), ['0', '1', '2']);
+  const items = findAll(p, 'li');
+  assert.equal(items[0].textContent, 'waiting here');
+  assert.equal(items[1].textContent, 'half');
+  assert.equal(items[3].textContent, '[ab] not a task');
+  assert.equal(items[4].textContent, '[] nor this');
+});
+
+test('toggleTaskLine unchecks any other state', () => {
+  assert.equal(toggleTaskLine('- [~] a', 0), '- [ ] a');
+  assert.equal(toggleTaskLine('> 1. [/] a', 0), '> 1. [ ] a');
+  assert.equal(toggleTaskLine('- [ab] a', 0), '- [ab] a');
+  assert.equal(toggleTaskLine('- [~]a', 0), '- [~]a');
+});
+
 // --- Obsidian-vault syntax (the census of a real vault: frontmatter 91% of
 // notes, nested lists 58%, tables 46%, tags 31%) ---
 
