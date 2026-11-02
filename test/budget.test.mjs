@@ -104,3 +104,19 @@ test('addBudgetRow adds the table when there is none', () => {
   assert.equal(out, '# Budget\n\n## Expenses\n| Date | What | Category | Amount |\n|---|---|---|---:|\n| d | w | c | 5 |\n');
   assert.equal(budgetSummary(out, '').expenses, 5);
 });
+
+test('months: shift, read and start the next one', async () => {
+  const { shiftMonth, budgetMonth, nextMonthText } = await import('../lib/budget.mjs');
+  assert.equal(shiftMonth('2026-12', 1), '2027-01');
+  assert.equal(shiftMonth('2026-01', -1), '2025-12');
+  assert.equal(shiftMonth('nope', 1), null);
+  assert.equal(budgetMonth([{ key: 'month', value: '2026-10' }], 'x'), '2026-10');
+  assert.equal(budgetMonth([], 'Budget 2026-09'), '2026-09');
+  assert.equal(budgetMonth([], 'Budget'), null);
+  const next = nextMonthText(`---\ntype: budget\nmonth: 2026-10\n---\n${NOTE.split('---\n').slice(2).join('---\n')}`, '2026-11');
+  assert.match(next, /^month: 2026-11$/m);
+  const t = budgetTables(next);
+  assert.equal(t.income.rows.length + t.expenses.rows.length, 0);
+  assert.match(next, /\| Date \| What \| Category \| Amount \|\n\|---\|---\|---\|---:\|\n\n## Notes/);
+  assert.match(next, /categories: Rent, Groceries, Transport/);
+});

@@ -70,13 +70,37 @@ function ring(sum, colourOf, money) {
   return box;
 }
 
+// ‹ September 2026 · October 2026 › — the other months' budget notes.
+// nav: { current, prev, next: { label, open } | null, newMonth: { label, create } | null }
+function monthNav(nav) {
+  const bar = el('div', 'bud-nav');
+  const step = (item, dir) => {
+    const b = el('button', 'bud-nav-step', dir < 0 ? '‹' : '›'); b.type = 'button';
+    if (item) {
+      const label = item.label || '';
+      b.title = item.create ? `Start ${label}` : label;
+      b.setAttribute('aria-label', item.create ? `Start ${label}` : `Open ${label}`);
+      b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); (item.create || item.open)(); });
+    } else { b.disabled = true; b.setAttribute('aria-label', dir < 0 ? 'No earlier month' : 'No later month'); }
+    return b;
+  };
+  bar.append(step(nav.prev, -1), el('span', 'bud-nav-month', nav.current), step(nav.next || nav.newMonth, 1));
+  if (!nav.next && nav.newMonth) {
+    const start = el('button', 'bud-nav-new', `+ Start ${nav.newMonth.label}`); start.type = 'button';
+    start.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); nav.newMonth.create(); });
+    bar.append(start);
+  }
+  return bar;
+}
+
 // The card. onAdd(kind) is offered when a table is still missing (otherwise
 // the "+ Add" buttons sit under the tables).
-export function budgetCard(src, code, { onAdd } = {}) {
+export function budgetCard(src, code, { onAdd, nav } = {}) {
   const sum = budgetSummary(src, code);
   const money = moneyFormat(sum.currency);
   const colourOf = categoryColours(src, code);
   const card = el('div', 'bud-card');
+  if (nav) card.append(monthNav(nav));
 
   const stats = el('div', 'bud-stats');
   const stat = (label, value, cls) => {

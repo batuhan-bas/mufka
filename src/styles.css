@@ -1397,10 +1397,32 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .props-count { font-weight: 500; font-size: 11px; color: var(--muted); background: var(--sel); border-radius: 8px; padding: 0 6px; }
 .props.folded { border-color: transparent; padding: 0; }
 .props.folded .props-head { padding: 0 2px; }
-/* A page's cover and icon (properties cover: and icon:) */
-.note-cover { height: 120px; border-radius: 10px; margin: 4px 0 0; }
-.note-icon { font-size: 52px; line-height: 1; margin: 0 0 10px; }
-.has-cover .note-icon { margin-top: -30px; margin-left: 14px; position: relative; }
+/* A page's cover and icon (properties cover: and icon:). The cover spans the
+   whole content area, not just the text column: 100cqw of .content. */
+.content { container-type: inline-size; }
+/* 100cqw counts a classic scrollbar too: clip the few pixels it hangs over. */
+.content:has(.page-head.has-cover) { overflow-x: hidden; }
+.page-head { position: relative; }
+.note-cover { position: relative; width: 100cqw; margin-left: calc(50% - 50cqw); margin-top: -8px; height: clamp(140px, 24vh, 230px); background-size: cover; background-position: center; }
+.cover-actions { position: absolute; right: max(16px, calc(50cqw - 330px + 48px)); bottom: 12px; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
+.note-cover:hover .cover-actions, .cover-actions:focus-within { opacity: 1; }
+.cover-btn { font: inherit; font-size: 12px; color: var(--text); background: color-mix(in srgb, var(--ground) 82%, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; cursor: pointer; backdrop-filter: blur(6px); }
+.cover-btn:hover { background: var(--ground); }
+.note-icon { display: block; font: inherit; font-size: 60px; line-height: 1; padding: 4px; margin: 14px 0 6px -4px; border: 0; border-radius: 8px; background: none; cursor: pointer; }
+.note-icon:hover { background: var(--hover-soft); }
+.has-cover .note-icon { margin-top: -42px; position: relative; }
+.page-adds { display: flex; gap: 2px; height: 28px; align-items: center; margin: 6px 0 0 -8px; opacity: 0; transition: opacity .12s; }
+.has-cover .page-adds { margin-top: 10px; }
+.note-pane:hover .page-adds, .page-adds:focus-within { opacity: 1; }
+.page-add { font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.page-add:hover { background: var(--hover-soft); color: var(--text); }
+.page-add:focus-visible, .note-icon:focus-visible, .cover-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.emoji-grid { display: grid; grid-template-columns: repeat(10, 30px); gap: 2px; }
+.emoji-choice { width: 30px; height: 30px; font-size: 19px; line-height: 1; border: 0; border-radius: 6px; background: none; cursor: pointer; padding: 0; }
+.emoji-choice:hover, .emoji-choice:focus-visible { background: var(--sel); outline: none; }
+.cover-choices { display: grid; grid-template-columns: repeat(4, 64px); gap: 6px; }
+.cover-choice { width: 64px; height: 36px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; padding: 0; }
+.cover-choice:hover, .cover-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cover-violet { background: linear-gradient(120deg, #2e3a63 0%, #3a2f63 55%, #24484a 100%); }
 .cover-blue { background: linear-gradient(120deg, #1f3557 0%, #23476b 60%, #1e3a4f 100%); }
 .cover-teal { background: linear-gradient(120deg, #1b4442 0%, #1f5550 55%, #24425c 100%); }
@@ -1520,3 +1542,12 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
   .bud-body { flex-direction: column; align-items: stretch; }
   .bud-ring { align-self: center; }
 }
+/* ‹ month › on a budget card */
+.bud-nav { display: flex; align-items: center; gap: 4px; margin: -6px 0 -4px; }
+.bud-nav-step { width: 26px; height: 26px; font: inherit; font-size: 17px; line-height: 1; color: var(--muted); background: none; border: 0; border-radius: 6px; cursor: pointer; }
+.bud-nav-step:hover:not(:disabled) { background: var(--hover-soft); color: var(--text); }
+.bud-nav-step:disabled { opacity: .35; cursor: default; }
+.bud-nav-month { font-weight: 600; font-size: 14px; padding: 0 4px; }
+.bud-nav-new { margin-left: auto; font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.bud-nav-new:hover { background: var(--hover-soft); color: var(--text); }
+.bud-nav-step:focus-visible, .bud-nav-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

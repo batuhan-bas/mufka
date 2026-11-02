@@ -1642,6 +1642,17 @@ app.whenReady().then(() => setTimeout(async () => {
       for (let t = 0; t < 30 && !totals; t++) { const v = await stats(); totals = v[1].replace(/\D/g, '') === '12505' && v[2].startsWith('−'); if (!totals) await sleep(100); }
       assert(totals, `totals not updated: ${await stats()}`);
       assert(await js('!!document.querySelector(".note-body td .bud-chip")'), 'category not shown as a chip');
+      // The icon can be changed from the page; the next month starts from the card.
+      await clickSel('.note-icon');
+      assert(await waitFor('!!document.querySelector(".emoji-grid")', 2000), 'icon picker did not open');
+      await clickEval('[...document.querySelectorAll(".emoji-choice")].find(b => b.textContent === "🚀")', 'rocket');
+      assert(await waitFor2(() => /^icon: 🚀$/m.test(fs.readFileSync(file, 'utf8')), 3000), 'icon not saved');
+      const next = (() => { const [y, m] = month.split('-').map(Number); const d = new Date(y, m, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })();
+      await clickSel('.bud-nav-new');
+      assert(await waitFor2(() => { const f = findNote(`Budget ${next}.md`); return f && new RegExp(`^month: ${next}$`, 'm').test(fs.readFileSync(f, 'utf8')) && !fs.readFileSync(f, 'utf8').includes('Coffee beans'); }, 3000), 'next month not started');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${next}"`, 3000), 'next month did not open');
+      await clickEval('document.querySelector(".bud-nav-step")', 'previous month');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${month}"`, 3000), 'previous month did not open');
       // Copy them into the Templates folder, change one: it wins over the built-in.
       await press('P', ['meta']); await typeText('Copy built-in templates'); await enter();
       const tdir = path.join(vault, 'Templates');

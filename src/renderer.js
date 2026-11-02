@@ -26,7 +26,7 @@ import { renderTasks, tasksEditing, tasksAnnounce } from './tasks.js';
 import { createDataview } from './dataview-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
-import { budgetTables, budgetSettings, categoryChoices, addBudgetRow } from '../lib/budget.mjs';
+import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs';
@@ -2456,7 +2456,7 @@ function noteRenderOptions(rel) {
     blocks: {
       ...dv.blocks,
       mermaid: (src) => mermaid.block(src),
-      budget: (code, _meta, { src }) => budgetCard(src, code, { onAdd: rel ? (kind) => addBudgetEntry(rel, kind) : null }),
+      budget: (code, _meta, { src }) => budgetCard(src, code, { onAdd: rel ? (kind) => addBudgetEntry(rel, kind) : null, nav: rel ? budgetNav(rel, src) : null }),
     },
     embedDrawing,
   };
@@ -2474,6 +2474,44 @@ async function currentText(rel) {
   if (state.dailyNote.key && rel === dailyRel(state.dailyNote.key) && state.dailyNote.content != null) return { text: state.dailyNote.content, scope: 'daily' };
   const res = await notesApi.read(rel);
   return res && !res.error ? { text: res.content, scope: null } : null;
+}
+
+// The budget notes of the vault by month, for the card's ‹ month › switch.
+function budgetNav(rel, src) {
+  const month = budgetMonth(readProps(src).props, noteTitleOf(rel));
+  if (!month) return null;
+  const months = new Map();
+  for (const n of state.vaultNotes) {
+    if (n.rel === rel || !BUDGET_BLOCK.test(n.content)) continue;
+    const m = budgetMonth(readProps(n.content).props, noteTitleOf(n.rel));
+    if (m && !months.has(m)) months.set(m, n.rel);
+  }
+  const sorted = [...months.keys()].sort();
+  const prev = sorted.filter((m) => m < month).pop();
+  const next = sorted.find((m) => m > month);
+  const label = (m) => { const [y, mo] = m.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); };
+  return {
+    current: label(month),
+    prev: prev ? { label: label(prev), open: () => openNote(months.get(prev)) } : null,
+    next: next ? { label: label(next), open: () => openNote(months.get(next)) } : null,
+    newMonth: next ? null : { label: label(shiftMonth(month, 1)), create: () => newBudgetMonth(rel, month) },
+  };
+}
+
+// The next month's budget note, next to this one, with the same settings.
+async function newBudgetMonth(rel, month) {
+  flushActiveEditor();
+  const cur = await currentText(rel);
+  if (!cur) return;
+  const nextMonth = shiftMonth(month, 1);
+  const title = noteTitleOf(rel);
+  const name = title.includes(month) ? title.replace(month, nextMonth) : `Budget ${nextMonth}`;
+  const res = await notesApi.create(folderOf(rel), name);
+  if (!res || !res.rel) { showToast('Could not create the next month'); return; }
+  await notesApi.write(res.rel, nextMonthText(cur.text, nextMonth));
+  await refreshTree();
+  await rebuildBacklinks();
+  await openNote(res.rel);
 }
 
 // "+ Add income / expense": the dialog, then a new row in the note's table.
@@ -3899,9 +3937,7 @@ function renderBlockEditor(container, scope) {
 function renderNotePane() {
   if (!state.openNote) { contentEl.append(hint('Choose a note, or create one with "New note".')); return; }
   const pane = elem('div', 'note-pane');
-  const look = noteLook(state.noteContent);
-  if (look.cover) { pane.classList.add('has-cover'); pane.append(elem('div', `note-cover cover-${look.cover}`)); }
-  if (look.icon) { pane.classList.add('has-icon'); pane.append(elem('div', 'note-icon', look.icon)); }
+  pane.append(pageHead());
 
   // The folder path is in the toolbar title. The inline title is the file
   // name (click to rename); it steps aside when the note already starts with
@@ -3933,19 +3969,144 @@ function renderNotePane() {
   contentEl.append(pane);
 }
 
-// A note's icon and cover, from its properties (as Obsidian's Banners and
-// Iconize plugins keep them): icon: 💰, cover: violet.
+// A note's icon and cover, from its properties: icon: 💰, and cover: a colour
+// (violet, blue…) or an image in the vault ("[[beach.jpg]]", as Obsidian's
+// Banners plugin keeps one). cover: { gradient } | { image: raw } | null.
 const COVERS = ['violet', 'blue', 'teal', 'green', 'amber', 'rose', 'gray'];
 function noteLook(src) {
   const r = readProps(src);
-  const out = { icon: '', cover: '' };
+  const out = { icon: '', cover: null };
   if (!r.props) return out;
   for (const p of r.props) {
     const k = String(p.key).toLowerCase();
     if (k === 'icon' && typeof p.value === 'string') out.icon = cleanEmoji(p.value);
-    if ((k === 'cover' || k === 'banner') && typeof p.value === 'string' && COVERS.includes(p.value.trim().toLowerCase())) out.cover = p.value.trim().toLowerCase();
+    if ((k === 'cover' || k === 'banner') && typeof p.value === 'string' && p.value.trim()) {
+      const v = p.value.trim();
+      out.cover = COVERS.includes(v.toLowerCase()) ? { gradient: v.toLowerCase() } : { image: v.replace(/^!?\[\[|\]\]$/g, '').split('|')[0] };
+    }
   }
   return out;
+}
+
+// Set (or with null, remove) a property of the open note; one undo step.
+function setNoteProp(key, value) {
+  closeMenu();
+  flushActiveEditor();
+  let next;
+  try { next = value == null ? deleteProp(state.noteContent, key) : setProp(state.noteContent, key, value); } catch (e) { showToast(`Could not change the properties: ${e.message}`); return; }
+  setSrc('note', next, true);
+  histRecord('note');
+  render();
+}
+
+// The top of a page: its cover across the whole width, its icon, and "Add
+// icon" / "Add cover" for a page that has none yet (shown on hover).
+function pageHead() {
+  const look = noteLook(state.noteContent);
+  const head = elem('div', 'page-head');
+  if (look.cover) {
+    head.classList.add('has-cover');
+    const cover = elem('div', 'note-cover');
+    if (look.cover.gradient) cover.classList.add(`cover-${look.cover.gradient}`);
+    else {
+      const att = attachResolverFor('note')(look.cover.image);
+      if (att.url && att.isImage) cover.style.backgroundImage = `url("${att.url}")`;
+      else cover.classList.add('cover-gray', 'cover-missing');
+    }
+    const acts = elem('div', 'cover-actions');
+    const change = elem('button', 'cover-btn', 'Change cover'); change.type = 'button';
+    change.dataset.menuAnchor = 'page-cover';
+    change.addEventListener('click', () => openCoverPicker('page-cover'));
+    const remove = elem('button', 'cover-btn', 'Remove'); remove.type = 'button';
+    remove.addEventListener('click', () => setNoteProp('cover', null));
+    acts.append(change, remove);
+    cover.append(acts);
+    head.append(cover);
+  }
+  if (look.icon) {
+    head.classList.add('has-icon');
+    const ic = elem('button', 'note-icon', look.icon); ic.type = 'button';
+    ic.title = 'Change icon'; ic.setAttribute('aria-label', `Icon ${look.icon}, change`);
+    ic.dataset.menuAnchor = 'page-icon';
+    ic.addEventListener('click', () => openPageIconPicker('page-icon'));
+    head.append(ic);
+  }
+  const adds = elem('div', 'page-adds');
+  if (!look.icon) {
+    const b = elem('button', 'page-add', '☺ Add icon'); b.type = 'button';
+    b.dataset.menuAnchor = 'page-icon-add';
+    b.addEventListener('click', () => openPageIconPicker('page-icon-add'));
+    adds.append(b);
+  }
+  if (!look.cover) {
+    const b = elem('button', 'page-add', '▭ Add cover'); b.type = 'button';
+    b.addEventListener('click', () => setNoteProp('cover', COVERS[Math.floor(Math.random() * COVERS.length)]));
+    adds.append(b);
+  }
+  if (adds.children.length) head.append(adds);
+  return head;
+}
+
+const PAGE_EMOJI = ['📝', '📌', '⭐', '💡', '🎯', '🚀', '📅', '✅', '📚', '📖', '✏️', '🧠', '💼', '💰', '💸', '📈',
+  '📊', '🧾', '🏠', '🍳', '☕', '🛒', '✈️', '🌍', '🏖️', '🎒', '🏋️', '🧘', '❤️', '🌱', '🌸', '🎨',
+  '🎵', '🎬', '🎮', '📷', '💻', '🛠️', '⚙️', '🔬', '🐛', '🧩', '🗂️', '📦', '🎉', '🔥', '✨', '🌙',
+  '☀️', '👥', '🤝', '💬', '📣', '🔒', '🎓', '🩺', '🐾', '🍀', '🧳', '🗺️'];
+function openPageIconPicker(key) {
+  openMenu(key, () => {
+    const box = pickerBox('Icon');
+    const grid = elem('div', 'emoji-grid');
+    for (const e of PAGE_EMOJI) {
+      const b = elem('button', 'emoji-choice', e); b.type = 'button'; b.setAttribute('aria-label', e);
+      b.addEventListener('click', () => setNoteProp('icon', e));
+      grid.append(b);
+    }
+    box.append(grid);
+    const row = elem('div', 'emoji-row');
+    const input = document.createElement('input');
+    input.className = 'emoji-input'; input.placeholder = 'Or type any emoji'; input.maxLength = 16;
+    input.setAttribute('aria-label', 'Emoji');
+    const use = elem('button', 'btn quiet', 'Use'); use.type = 'button';
+    const apply = () => {
+      const e = cleanEmoji(input.value);
+      if (!e) { input.select(); showToast('Type one emoji, for example 🍲'); return; }
+      setNoteProp('icon', e);
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+    use.addEventListener('click', apply);
+    row.append(input, use);
+    box.append(row);
+    if (noteLook(state.noteContent).icon) {
+      const remove = elem('button', 'btn quiet style-reset', 'Remove icon'); remove.type = 'button';
+      remove.addEventListener('click', () => setNoteProp('icon', null));
+      box.append(remove);
+    }
+    return [{ el: box }];
+  });
+}
+function openCoverPicker(key) {
+  openMenu(key, () => {
+    const box = pickerBox('Cover');
+    const grid = elem('div', 'cover-choices');
+    for (const c of COVERS) {
+      const b = elem('button', `cover-choice cover-${c}`); b.type = 'button';
+      b.title = c[0].toUpperCase() + c.slice(1); b.setAttribute('aria-label', b.title);
+      b.addEventListener('click', () => setNoteProp('cover', c));
+      grid.append(b);
+    }
+    box.append(grid);
+    const img = elem('button', 'btn quiet style-reset', 'Image from a file…'); img.type = 'button';
+    img.addEventListener('click', async () => {
+      closeMenu();
+      const res = await notesApi.attachPick(attachDirFor('note'));
+      if (!res || res.canceled) { if (res && res.error) showToast(res.error); return; }
+      const pic = (res.files || []).find((f) => f && f.rel && f.isImage);
+      if (!pic) { showToast('Choose an image (PNG, JPG, GIF, WebP…)'); return; }
+      await refreshAttachList();
+      setNoteProp('cover', `[[${pic.rel}]]`);
+    });
+    box.append(img);
+    return [{ el: box }];
+  });
 }
 
 // Toggle between the live-preview block editor and the raw-source textarea.
