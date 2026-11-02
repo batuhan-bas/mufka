@@ -127,7 +127,9 @@ export function weekBoard(src, { key = '', monday = null, today = -1, nav = null
     if (drafts.has(draftKey)) {
       const input = openField(drafts.get(draftKey));
       col.append(input);
-      setTimeout(() => { if (input.isConnected) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } }, 0);
+      // Right after this drawing, before the next key press is handled (a
+      // timer would let typed keys land nowhere first).
+      queueMicrotask(() => { if (input.isConnected) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } });
     } else col.append(add);
     const later = days.find((x) => x.day > d.day);
     if (open && later) {

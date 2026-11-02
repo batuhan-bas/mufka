@@ -2072,7 +2072,7 @@ function todayFromWeekNotes(date) {
     input.addEventListener('input', () => { todayDraft.value = input.value; });
     input.addEventListener('focus', () => { todayDraft.focused = true; });
     input.addEventListener('blur', () => setTimeout(() => { if (input.isConnected) todayDraft.focused = false; }, 0));
-    if (todayDraft.focused) setTimeout(() => { if (input.isConnected) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } }, 0);
+    if (todayDraft.focused) queueMicrotask(() => { if (input.isConnected) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } });
     input.addEventListener('keydown', async (e) => {
       if (e.key !== 'Enter' || !input.value.trim()) return;
       e.preventDefault();
