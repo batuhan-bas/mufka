@@ -70,3 +70,9 @@ test('nextWeekTodoText: same days, open tasks carried to Monday', () => {
   assert.match(out, /## Tuesday\nGym day\./);
   assert.equal(weekSummary(nextWeekTodoText(NOTE, '2026-W46', { carry: false })).total, 0);
 });
+
+test('the review starts empty next week', () => {
+  const note = `${NOTE}\n## Review\n- **What went well:** shipped it\n- **What to change:**\n`;
+  const out = nextWeekTodoText(note, '2026-W46');
+  assert.match(out, /- \*\*What went well:\*\*\n- \*\*What to change:\*\*\n/);
+});

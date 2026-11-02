@@ -84,9 +84,9 @@ yet? Home offers to open the Planner.
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
-- **Templates:** start a note from one of twelve — daily note, meeting notes,
-  weekly review, project, book notes, recipe, habit tracker, budget, travel
-  plan, weekly to-do, job search and job application — or from your own `Templates` folder (Obsidian-compatible). Copy the
+- **Templates:** start a note from one of ten — daily note, meeting notes,
+  project, book notes, habit tracker, budget, travel plan, weekly to-do (with a
+  review of the week), job search and job application — or from your own `Templates` folder (Obsidian-compatible). Copy the
   built-in ones there to make them yours.
 - **Budget** pages: add income and expenses with a small form and a card works
   out what is left, with a ring of where the money went. The entries are plain

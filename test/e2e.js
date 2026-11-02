@@ -1613,7 +1613,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
       assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
       const shown = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-label')].map(e => e.textContent)`);
-      for (const n of ['Daily note', 'Meeting notes', 'Weekly review', 'Project', 'Book notes', 'Recipe', 'Habit tracker', 'Budget', 'Travel plan']) assert(shown.includes(n), `${n} missing from ${JSON.stringify(shown)}`);
+      for (const n of ['Daily note', 'Meeting notes', 'Project', 'Book notes', 'Habit tracker', 'Budget', 'Travel plan', 'Weekly to-do', 'Job search', 'Job application']) assert(shown.includes(n), `${n} missing from ${JSON.stringify(shown)}`);
       await typeText('Budget'); await enter();
       assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
       const d = new Date();
@@ -1656,19 +1656,19 @@ app.whenReady().then(() => setTimeout(async () => {
       // Copy them into the Templates folder, change one: it wins over the built-in.
       await press('P', ['meta']); await typeText('Copy built-in templates'); await enter();
       const tdir = path.join(vault, 'Templates');
-      assert(await waitFor2(() => ['Daily note', 'Budget', 'Travel plan', 'Recipe'].every((n) => fs.existsSync(path.join(tdir, `${n}.md`))), 3000), `templates not copied: ${fs.existsSync(tdir) ? fs.readdirSync(tdir) : 'no folder'}`);
+      assert(await waitFor2(() => ['Daily note', 'Budget', 'Travel plan', 'Book notes'].every((n) => fs.existsSync(path.join(tdir, `${n}.md`))), 3000), `templates not copied: ${fs.existsSync(tdir) ? fs.readdirSync(tdir) : 'no folder'}`);
       assert(fs.readFileSync(path.join(tdir, 'Budget.md'), 'utf8').includes('{{date:YYYY-MM}}'), 'copied template is filled, should stay a template');
-      fs.writeFileSync(path.join(tdir, 'Recipe.md'), '# {{title}}\n\nMine');
+      fs.writeFileSync(path.join(tdir, 'Book notes.md'), '# {{title}}\n\nMine');
       await sleep(900);
       await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
       assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open again');
-      const recipes = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-item')].filter(e => e.querySelector('.palette-label')?.textContent === 'Recipe').map(e => e.textContent)`);
-      assert(recipes.length === 1 && !recipes[0].includes('Built-in'), `Recipe should come from the vault once: ${JSON.stringify(recipes)}`);
-      await typeText('Recipe'); await enter();
-      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field for the recipe');
-      await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Pilav'; return true; })()`);
+      const recipes = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-item')].filter(e => e.querySelector('.palette-label')?.textContent === 'Book notes').map(e => e.textContent)`);
+      assert(recipes.length === 1 && !recipes[0].includes('Built-in'), `Book notes should come from the vault once: ${JSON.stringify(recipes)}`);
+      await typeText('Book notes'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field for the book');
+      await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Dune'; return true; })()`);
       await enter();
-      assert(await waitFor2(() => { const f = findNote('Pilav.md'); return f && fs.readFileSync(f, 'utf8') === '# Pilav\n\nMine'; }, 3000), 'the changed template was not used');
+      assert(await waitFor2(() => { const f = findNote('Dune.md'); return f && fs.readFileSync(f, 'utf8') === '# Dune\n\nMine'; }, 3000), 'the changed template was not used');
     });
 
     // 60. Found by hand on Windows: right after making a note (empty, so it
