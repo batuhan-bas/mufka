@@ -32,6 +32,9 @@ app.setPath('documents', path.join(tmp, 'Documents'));
 fs.writeFileSync(path.join(tmp, 'planlar.json'), JSON.stringify({ version: 3, items: [
   { id: 'rep1', scope: 'day', key: '2026-01-05', title: 'Vitamin', time: '', endTime: '', done: false, created: 1, recur: { type: 'daily' }, doneDates: {}, exceptions: {} },
 ] }));
+// MUFKA_E2E_THEME=light|dark runs the whole test in that theme (CI machines
+// are light; a dark Mac would otherwise never run it light).
+if (process.env.MUFKA_E2E_THEME) fs.writeFileSync(path.join(tmp, 'settings.json'), JSON.stringify({ theme: process.env.MUFKA_E2E_THEME }));
 process.chdir(path.join(__dirname, '..'));
 
 // Stub ONLY the native save dialog: return a temp path using the suggested name.
@@ -958,7 +961,9 @@ app.whenReady().then(() => setTimeout(async () => {
       const src = '> [!warning] Dikkat **et**\n> govde satiri\n\n> [!faq]- Neden?\n> Cunku.\n\n> duz alinti';
       await setNoteSource(src);
       assert(await waitFor('document.querySelector(".note-body .callout.callout-warning .callout-title")?.textContent === "Dikkat et"', 2500), 'callout title not rendered');
-      assert((await js('getComputedStyle(document.querySelector(".note-body .callout-warning")).borderLeftColor')) === 'rgb(230, 162, 60)', 'callout color not applied');
+      // The warning colour of whichever theme is showing (CI machines are light).
+      const amber = await js('(()=>{const e=document.createElement("i"); e.style.color="var(--c-amber)"; document.body.append(e); const c=getComputedStyle(e).color; e.remove(); return c;})()');
+      assert((await js('getComputedStyle(document.querySelector(".note-body .callout-warning")).borderLeftColor')) === amber, 'callout color not applied');
       assert(await js('!!document.querySelector(".note-body blockquote") && document.querySelectorAll(".note-body .callout").length === 2'), 'plain quote or callout count wrong');
       assert(await js('document.querySelector(".note-body details.callout-question").open === false'), 'folded callout starts open');
       await clickSel('.note-body details.callout-question summary'); await sleep(200);
@@ -2050,7 +2055,8 @@ app.whenReady().then(() => setTimeout(async () => {
       const settings = path.join(tmp, 'settings.json');
       const bg = 'getComputedStyle(document.body.closest("html")).getPropertyValue("--ground").trim()';
       await press(',', ['meta']);
-      assert(await waitFor('!!document.querySelector(".theme-seg button[data-theme=\\"system\\"][aria-pressed=\\"true\\"]")', 3000), 'System not chosen by default');
+      const startTheme = process.env.MUFKA_E2E_THEME || 'system';
+      assert(await waitFor(`!!document.querySelector('.theme-seg button[data-theme="${startTheme}"][aria-pressed="true"]')`, 3000), `${startTheme} not chosen at start`);
       await clickSel('.theme-seg button[data-theme="light"]');
       assert(await waitFor(`${bg} === "#ffffff"`, 3000), `light: ${await js(bg)}`);
       assert(await waitFor2(() => JSON.parse(fs.readFileSync(settings, 'utf8')).theme === 'light', 2000), 'light not saved');
