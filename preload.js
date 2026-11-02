@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('planner', {
 contextBridge.exposeInMainWorld('notes', {
   tree: () => ipcRenderer.invoke('notes:tree'),
   all: () => ipcRenderer.invoke('notes:all'),
+  // What changed in the vault since `version` (-1: everything): { version, full, changed, removed }.
+  sync: (version) => ipcRenderer.invoke('notes:sync', version),
   read: (rel) => ipcRenderer.invoke('notes:read', rel),
   write: (rel, content) => ipcRenderer.invoke('notes:write', rel, content),
   create: (parentRel, name) => ipcRenderer.invoke('notes:create', parentRel, name),

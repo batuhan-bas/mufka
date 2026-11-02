@@ -2060,6 +2060,26 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => !('theme' in JSON.parse(fs.readFileSync(settings, 'utf8'))), 2000), 'system should clear the saved choice');
       await press('Escape');
     });
+
+    // 75. The vault index: the notes are saved outside the vault for the next
+    //     start; a note changed outside Mufka reaches search and backlinks.
+    await step(75, 'vault index: saved cache, outside changes picked up', async () => {
+      const indexDir = path.join(tmp, 'index');
+      assert(await waitFor2(() => fs.existsSync(indexDir) && fs.readdirSync(indexDir).some((f) => f.endsWith('.json')), 9000), 'no saved index');
+      // One file per notes folder (this run switched folders once).
+      const holdsKod = () => fs.readdirSync(indexDir).filter((f) => f.endsWith('.json'))
+        .some((f) => { try { return JSON.parse(fs.readFileSync(path.join(indexDir, f), 'utf8')).notes.some((n) => n.rel === 'Kod.md' && n.content.includes('def selam')); } catch { return false; } });
+      assert(await waitFor2(holdsKod, 9000), 'the index does not hold the notes');
+      assert(!fs.readdirSync(notesDir).includes('index'), 'index written into the vault');
+      fs.writeFileSync(path.join(notesDir, 'Disarida.md'), 'zebrakelime ve [[Kod]]\n');
+      await sleep(1700);
+      await press('F', ['meta', 'shift']);
+      await typeText('zebrakelime');
+      assert(await waitFor('[...document.querySelectorAll(".ara-result")].some(r => r.textContent.startsWith("Disarida"))', 4000), 'outside note not found by search');
+      await retype('#ara-input', ''); await sleep(200);
+      await press('O', ['meta']); await typeText('Kod'); await enter();
+      assert(await waitFor('[...document.querySelectorAll(".backlink-title")].some(b => b.textContent === "Disarida")', 5000), `backlink not shown: ${await js('document.querySelector(".backlinks")?.textContent')}`);
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

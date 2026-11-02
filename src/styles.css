@@ -1425,3 +1425,5 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .theme-seg button + button { border-left: 1px solid var(--line-strong); }
 .theme-seg button:hover { color: var(--text); }
 .theme-seg button[aria-pressed="true"] { background: var(--accent-fill); color: var(--on-accent); }
+.ara-more { display: block; width: calc(100% - 16px); margin: 6px 8px 12px; padding: 7px; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: transparent; color: var(--muted); font-size: 13px; }
+.ara-more:hover { color: var(--text); border-color: var(--accent); }

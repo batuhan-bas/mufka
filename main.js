@@ -19,6 +19,7 @@ import * as ts from './lib/treestyle.mjs';
 import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
 import { createHistory } from './lib/history.mjs';
+import { createVaultCache } from './lib/vault-cache.mjs';
 import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
 import * as cal from './lib/calendar.mjs';
@@ -536,7 +537,7 @@ function walkVault() {
       if (e.isDirectory()) { folders.push({ rel: childRel }); walk(childAbs, childRel); }
       else if (e.isFile() && e.name.toLowerCase().endsWith('.md')) {
         let st; try { st = fs.statSync(childAbs); } catch { continue; }
-        notes.push({ rel: childRel, mtime: st.mtimeMs });
+        notes.push({ rel: childRel, mtime: st.mtimeMs, ctime: st.birthtimeMs || st.ctimeMs, size: st.size });
       }
     }
   };
@@ -578,17 +579,47 @@ function createFolder(parentRel, name) {
 
 // Read every note's current content (keyed by its pre-change rel), so links can
 // be resolved against the vault as it is BEFORE a rename/move.
-function collectNotes() {
-  const { notes } = walkVault();
-  const out = [];
-  for (const n of notes) {
-    try {
-      const abs = safeAbs(n.rel);
-      const st = fs.statSync(abs);
-      out.push({ rel: n.rel, content: fs.readFileSync(abs, 'utf8'), mtime: st.mtimeMs, ctime: st.birthtimeMs || st.ctimeMs, size: st.size });
-    } catch { /* skip unreadable */ }
+// The vault's notes with their text (lib/vault-cache.mjs): only notes whose
+// time or size changed are read again; the cache is saved under
+// <userData>/index/ a few seconds after a change and at quit, and loaded at
+// start, so a large vault is not read file by file each time.
+let vcache = null;
+let vcacheRoot = null;
+let vcacheTimer = null;
+function vaultCache() {
+  const root = notesRoot();
+  if (!vcache || vcacheRoot !== root) {
+    saveVaultCache();
+    const id = crypto.createHash('sha1').update(root).digest('hex').slice(0, 16);
+    vcache = createVaultCache({
+      file: path.join(app.getPath('userData'), 'index', `${id}.json`),
+      // Read only paths that really are in the vault (no symlink out of it).
+      read: (abs) => fs.readFileSync(checkedVaultPath(abs), 'utf8'),
+    });
+    vcache.load();
+    vcacheRoot = root;
   }
-  return out;
+  return vcache;
+}
+function saveVaultCache() {
+  clearTimeout(vcacheTimer); vcacheTimer = null;
+  try { if (vcache) vcache.save(); } catch { /* a cache: best effort */ }
+}
+// Bring the cache up to date with the files; returns what changed after `since`.
+function syncVault(since = -1) {
+  const { notes } = walkVault();
+  const c = vaultCache();
+  // walkVault never follows a symlink, so these paths are in the vault; the
+  // real-path check runs in read(), for the files that are read.
+  const root = notesRoot();
+  const listing = notes.map((n) => ({ ...n, abs: np.vaultPath(root, n.rel) }));
+  const { read, removed } = c.refresh(listing);
+  if ((read || removed) && !vcacheTimer) vcacheTimer = setTimeout(saveVaultCache, 5000);
+  return c.since(since);
+}
+function collectNotes() {
+  syncVault();
+  return vaultCache().all();
 }
 
 // After `oldRel` became `newRel`, rewrite inbound links across the vault and
@@ -1720,6 +1751,7 @@ function wrap(fn) {
 }
 ipcMain.handle('notes:tree', wrap(() => walkVault()));
 ipcMain.handle('notes:all', wrap(() => collectNotes()));
+ipcMain.handle('notes:sync', wrap((since) => syncVault(Number.isFinite(since) ? since : -1)));
 ipcMain.handle('dataview:runJs', wrap((payload) => runDataviewJs(payload)));
 ipcMain.handle('mermaid:render', wrap((code) => renderMermaid(code)));
 ipcMain.handle('theme:get', wrap(() => themeChoice()));
@@ -1804,6 +1836,8 @@ app.on('web-contents-created', (_event, contents) => {
     return { action: 'deny' };
   });
 });
+
+app.on('will-quit', saveVaultCache);
 
 app.whenReady().then(() => {
   // Light, dark or the system's (Settings → Appearance).

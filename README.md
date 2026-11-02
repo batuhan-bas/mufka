@@ -297,6 +297,10 @@ Excalidraw, loaded when Draw opens), built with
 and is shared verbatim by the app and the tests: Dataview in `lib/dataview/`,
 HTML in notes in `lib/html.mjs`, drawings in `lib/drawing.mjs`. Note scripts and
 Mermaid run in `src/sandbox.html`, a hidden sandboxed window (`main.js`).
+The vault's notes are kept by the main process in `lib/vault-cache.mjs` (saved
+under `<userData>/index/`, outside the vault): only changed files are read again,
+and the window receives the changes, not the whole vault. Note version history
+lives under `<userData>/history/`.
 
 ```sh
 npm install              # dependencies, then downloads Electron (pnpm works too)
