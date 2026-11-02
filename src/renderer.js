@@ -2605,7 +2605,7 @@ function budgetNav(rel, src) {
   if (!month) return null;
   const months = new Map();
   for (const n of state.vaultNotes) {
-    if (n.rel === rel || !BUDGET_BLOCK.test(n.content)) continue;
+    if (n.rel === rel || isTemplateNote(n.rel) || !BUDGET_BLOCK.test(n.content)) continue;
     const m = budgetMonth(readProps(n.content).props, noteTitleOf(n.rel));
     if (m && !months.has(m)) months.set(m, n.rel);
   }
@@ -2690,6 +2690,7 @@ const isTemplateNote = (rel) => Boolean(state.layout.templates && rel.startsWith
 // The stages: the first ```jobs block's in the vault, else the usual ones.
 function jobStages() {
   for (const n of state.vaultNotes) {
+    if (isTemplateNote(n.rel)) continue;
     const m = JOBS_BLOCK.exec(n.rel === state.openNote ? state.noteContent : n.content);
     if (m) return jobsSettings(m[1]).stages;
   }
@@ -2779,7 +2780,7 @@ function weekNav(rel, src, blockRe, nextText, fallbackName) {
   if (!week) return null;
   const weeks = new Map();
   for (const n of state.vaultNotes) {
-    if (n.rel === rel || !blockRe.test(n.content)) continue;
+    if (n.rel === rel || isTemplateNote(n.rel) || !blockRe.test(n.content)) continue;
     const w = habitWeek(readProps(n.content).props, noteTitleOf(n.rel));
     if (w && !weeks.has(w)) weeks.set(w, n.rel);
   }
