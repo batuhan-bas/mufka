@@ -27,6 +27,8 @@ import { createDataview } from './dataview-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
 import { habitsCard, decorateHabitTable, addHabitButton, openHabitDialog } from './habits-view.js';
+import { jobStrip, jobsBoard, openJobDialog } from './jobs-view.js';
+import { jobOf, jobsSettings, mayBeJob, jobNoteName, setJobStatus, DEFAULT_STAGES } from '../lib/jobs.mjs';
 import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
@@ -2461,6 +2463,7 @@ function noteRenderOptions(rel) {
       mermaid: (src) => mermaid.block(src),
       budget: (code, _meta, { src }) => budgetCard(src, code, { onAdd: rel ? (kind) => addBudgetEntry(rel, kind) : null, nav: rel ? budgetNav(rel, src) : null }),
       habits: (_code, _meta, { src }) => habitsCard(src, { today: habitToday(rel, src), nav: rel ? habitNav(rel, src) : null, onAdd: rel ? () => addHabitEntry(rel) : null }),
+      jobs: (code, _meta, { src }) => jobsBlock(rel, code, src),
     },
     embedDrawing,
   };
@@ -2545,7 +2548,70 @@ async function changeNoteText(rel, edit) {
   const w = await notesApi.write(rel, next);
   if (w && w.error) { showToast('Could not save the note'); return; }
   state.noteCache.delete(rel);
+  await rebuildBacklinks(); // boards and cards read the vault's notes
   render();
+}
+
+// --- job search (lib/jobs.mjs, src/jobs-view.js) ---
+const JOBS_BLOCK = /^```jobs[^\S\n]*\n([\s\S]*?)^```/m;
+// The applications in the vault, the open note as it is in the editor; not
+// the templates they are made from.
+function vaultJobs() {
+  const out = [];
+  const templates = state.layout.templates ? `${state.layout.templates}/` : null;
+  for (const n of state.vaultNotes) {
+    if (templates && n.rel.startsWith(templates)) continue;
+    const text = n.rel === state.openNote ? state.noteContent : n.content;
+    if (!mayBeJob(text)) continue;
+    const j = jobOf(n.rel, text);
+    if (j) out.push(j);
+  }
+  return out;
+}
+// The stages: the first ```jobs block's in the vault, else the usual ones.
+function jobStages() {
+  for (const n of state.vaultNotes) {
+    const m = JOBS_BLOCK.exec(n.rel === state.openNote ? state.noteContent : n.content);
+    if (m) return jobsSettings(m[1]).stages;
+  }
+  return DEFAULT_STAGES;
+}
+function jobsBlock(rel, code, _src) {
+  const settings = jobsSettings(code);
+  return jobsBoard(vaultJobs(), {
+    stages: settings.stages,
+    onOpen: (to) => openNote(to),
+    onMove: (to, stage) => changeNoteText(to, (text) => setJobStatus(text, stage, setProp)),
+    onNew: () => openJobDialog((job) => newJobApplication(rel, settings, job)),
+  });
+}
+// A new application note: from the block's template (a vault template by
+// name, else the built-in "Job application"), with the form's answers.
+async function newJobApplication(hubRel, settings, job) {
+  const folder = settings.folder || (hubRel ? folderOf(hubRel) : '');
+  if (folder && !state.treeFolders.includes(folder)) {
+    const made = await notesApi.createFolder(folderOf(folder), folder.slice(folder.lastIndexOf('/') + 1));
+    if (!made || made.error) { showToast(`Could not make the ${folder} folder`); return; }
+  }
+  const name = jobNoteName(job);
+  const res = await notesApi.create(folder, name);
+  if (!res || !res.rel) { showToast('Could not create the application'); return; }
+  const wanted = (settings.template || 'Job application').toLowerCase();
+  const choice = allTemplates().find((c) => c.name.toLowerCase() === wanted) || allTemplates().find((c) => c.kind === 'builtin' && c.id === 'job');
+  let text = choice ? fillTemplate(await templateText(choice), noteTitleOf(res.rel)) : '';
+  try {
+    text = setProp(text, 'company', job.company);
+    text = setProp(text, 'role', job.role);
+    text = setProp(text, 'status', settings.stages[0]);
+    text = setProp(text, 'application_date', job.applied);
+    if (job.location) text = setProp(text, 'location', job.location);
+    if (job.link) text = setProp(text, 'link', job.link);
+  } catch { /* a template with broken properties: keep its text */ }
+  await notesApi.write(res.rel, text);
+  await refreshTree();
+  await rebuildBacklinks();
+  render();
+  showToast(`Added ${name}`);
 }
 
 // --- habit trackers (lib/habits.mjs, src/habits-view.js) ---
@@ -3731,11 +3797,12 @@ function propertiesBlock(scope, b) {
   box.setAttribute('role', 'group');
   box.setAttribute('aria-label', 'Properties');
   const head = elem('div', 'props-head');
-  // Folded: just the heading. A page with an icon or cover starts folded, so it
-  // opens on its content; the choice is kept per note for the session.
+  // Folded: just the heading. A page with an icon or cover (or a job
+  // application, whose strip shows them) starts folded, so it opens on its
+  // content; the choice is kept per note for the session.
   const rel = scope === 'note' ? state.openNote : dailyRel(state.dailyNote.key);
   const look = noteLook(src);
-  const folded = !info.error && state.propAdding !== scope && (propsFold.has(rel) ? propsFold.get(rel) : Boolean(look.icon || look.cover));
+  const folded = !info.error && state.propAdding !== scope && (propsFold.has(rel) ? propsFold.get(rel) : Boolean(look.icon || look.cover || (scope === 'note' && jobOf(rel, src))));
   const title = elem('button', 'props-title', 'Properties'); title.type = 'button';
   title.setAttribute('aria-expanded', String(!folded));
   if (folded && info.props) title.append(elem('span', 'props-count', String(info.props.length)));
@@ -4025,6 +4092,14 @@ function renderNotePane() {
   if (state.noteView === 'blocks' && foldTR(firstLine.replace(/^#\s+/, '').trim()) === foldTR(noteTitleOf(state.openNote)) && /^#\s/.test(firstLine)) header.classList.add('dup');
   header.append(h);
   pane.append(header);
+  const job = state.layout.templates && state.openNote.startsWith(`${state.layout.templates}/`) ? null : jobOf(state.openNote, state.noteContent);
+  if (job) {
+    pane.append(jobStrip(job, {
+      stages: jobStages(),
+      onStage: (stage) => changeNoteText(state.openNote, (text) => setJobStatus(text, stage, setProp)),
+      onLink: (url) => notesApi.openExternal(url),
+    }));
+  }
 
   if (state.noteView === 'source') {
     const ta = document.createElement('textarea');

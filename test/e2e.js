@@ -2133,6 +2133,36 @@ app.whenReady().then(() => setTimeout(async () => {
       await enter();
       assert(await waitFor('document.querySelectorAll(".hab-row").length === 5 && [...document.querySelectorAll(".hab-item")].some(e => e.textContent.startsWith("Stretch"))', 3000), 'habit not added');
     });
+
+    // 77. Job search: the board from its template; a new application from the
+    //     form lands in the first column; dragging a card moves its status;
+    //     the application's strip moves it with one click.
+    await step(77, 'job search: board, new application, drag, stage strip', async () => {
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      await typeText('Job search'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      await enter();
+      assert(await waitFor('!!document.querySelector(".job-board") && document.querySelectorAll(".job-col").length === 6', 3000), 'board not shown');
+      await clickSel('.job-new');
+      assert(await waitFor('!!document.querySelector(".job-company")', 2000), 'new application form did not open');
+      await typeText('Acme');
+      await js(`(() => { document.querySelector('.job-role').value = 'Frontend Lead'; return true; })()`);
+      await js(`document.querySelector('.job-company').focus()`);
+      await enter();
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      const findNote = (name) => { const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (e.name.startsWith('.')) continue; const p = path.join(dir, e.name); if (e.isDirectory()) { const r = walk(p); if (r) return r; } else if (e.name === name) return p; } return null; }; return walk(vault); };
+      let file = null;
+      assert(await waitFor2(() => (file = findNote('Acme – Frontend Lead.md')) && /^status: Applied$/m.test(fs.readFileSync(file, 'utf8')), 4000), 'application note not made');
+      assert(await waitFor('[...document.querySelectorAll(".job-col")][0].querySelectorAll(".job-card").length === 1', 4000), `card not in Applied: ${await js('[...document.querySelectorAll(".job-col")].map(c => c.dataset.stage + ":" + c.querySelectorAll(".job-card").length).join(" ") + " | " + document.querySelector(".note-title")?.textContent + " | " + document.querySelectorAll(".job-board").length')} ${file}`);
+      await js(`(() => { const card = document.querySelector('.job-card'); const col = [...document.querySelectorAll('.job-col')].find(c => c.dataset.stage === 'Technical'); const dt = new DataTransfer(); card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt })); col.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt })); col.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })); return true; })()`);
+      assert(await waitFor2(() => /^status: Technical$/m.test(fs.readFileSync(file, 'utf8')), 4000), 'drag did not move the status');
+      assert(await waitFor('[...document.querySelectorAll(".job-col")].find(c => c.dataset.stage === "Technical").querySelectorAll(".job-card").length === 1', 4000), 'card did not move');
+      await clickSel('.job-card');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Acme – Frontend Lead" && document.querySelector(".job-step.on")?.textContent === "Technical" && !!document.querySelector(".props.folded")', 3000), 'application strip not shown');
+      await clickEval('[...document.querySelectorAll(".job-step")].find(b => b.textContent === "Offer")', 'Offer');
+      assert(await waitFor2(() => /^status: Offer$/m.test(fs.readFileSync(file, 'utf8')), 3000), 'strip did not move the status');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }
