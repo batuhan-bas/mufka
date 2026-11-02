@@ -1669,3 +1669,17 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .prj-due-chip { padding: 0 7px; border-radius: 9px; background: var(--sel); color: var(--text); white-space: nowrap; }
 .prj-due-chip.soon { background: color-mix(in srgb, var(--c-amber) 18%, transparent); color: var(--c-amber); }
 .prj-due-chip.late { background: color-mix(in srgb, var(--today) 18%, transparent); color: var(--today); }
+/* --- the day page: mood, and the week's to-do and habits for the day --- */
+.mood-picker { display: inline-flex; gap: 2px; }
+.mood { font-size: 17px; line-height: 1; width: 30px; height: 28px; border: 0; border-radius: 6px; background: none; cursor: pointer; opacity: .45; filter: grayscale(.6); transition: opacity .1s, filter .1s, background .1s; padding: 0; }
+.mood:hover { opacity: .9; filter: none; background: var(--hover-soft); }
+.mood.on { opacity: 1; filter: none; background: var(--accent-soft); }
+.mood:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.today-open { font-size: 12px; color: var(--muted); }
+.today-habit { display: flex; align-items: center; gap: 10px; }
+.today-habit-count { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.today-habit-count.met { color: var(--c-green); }
+.today-task .plan-title { flex: 1; }
+.today-add-input { width: 100%; font: inherit; font-size: 14px; color: var(--text); background: none; border: 0; border-bottom: 1px dashed transparent; padding: 4px 2px; }
+.today-add-input::placeholder { color: var(--muted); }
+.today-add-input:focus { outline: none; border-bottom-color: var(--accent); }

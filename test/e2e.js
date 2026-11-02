@@ -2219,6 +2219,23 @@ app.whenReady().then(() => setTimeout(async () => {
       await press('O', ['meta']); await typeText(board); await enter();
       assert(await waitFor('[...document.querySelectorAll(".job-col")].find(c => c.dataset.stage === "Active")?.textContent.includes("Garden shed")', 4000), 'board does not show the project as active');
     });
+
+    // 80. Today: this week's to-do and habit notes (made in steps 76 and 78)
+    //     show the day's part; a task added there lands under today's
+    //     heading; the daily note can start from its template and take a mood.
+    await step(80, "today: the week's to-do and habits, daily template, mood", async () => {
+      await press('T', ['meta']);
+      assert(await waitFor('[...document.querySelectorAll(".section-title")].map(e => e.textContent).join("|").includes("This week\'s to-do") && !!document.querySelector(".today-habit .hab-cell")', 4000), `today does not show the week's notes: ${await js('[...document.querySelectorAll(".section-title")].map(e => e.textContent).join("|")')}`);
+      await clickSel('.today-add-input');
+      await typeText('Call the plumber'); await enter();
+      assert(await waitFor('[...document.querySelectorAll(".today-task")].some(t => t.textContent === "Call the plumber")', 3000), 'task not added for today');
+      if (await js('!!document.querySelector(".daily-from-template")')) {
+        await clickSel('.daily-from-template');
+        assert(await waitFor('[...document.querySelectorAll(".daily-note h2")].some(h => h.textContent === "Top 3")', 3000), 'daily note not made from the template');
+      }
+      await clickEval('[...document.querySelectorAll(".mood")].find(b => b.title === "Good")', 'Good');
+      assert(await waitFor('document.querySelector(".mood.on")?.title === "Good"', 3000), 'mood not set');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

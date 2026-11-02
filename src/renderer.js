@@ -1956,6 +1956,9 @@ function renderDayPage() {
     col.append(more);
   }
 
+  // The day's part of this week's to-do and habit tracker notes.
+  for (const sec of todayFromWeekNotes(date)) col.append(sec);
+
   // Günün notu.
   col.append(renderDailyNoteSection(date));
 
@@ -2002,6 +2005,94 @@ function emptyDayCard(date) {
   b.addEventListener('click', () => openPlanner(date));
   c.append(b);
   return c;
+}
+
+// How the day felt: mood: in the daily note's properties, one click to set
+// (again to clear).
+const MOODS = [['😞', 'Bad'], ['🙁', 'Low'], ['😐', 'Okay'], ['🙂', 'Good'], ['😄', 'Great']];
+function moodPicker(key, src) {
+  const r = readProps(src);
+  const p = r.props && r.props.find((x) => String(x.key).toLowerCase() === 'mood');
+  const now = p && p.value != null ? String(p.value).trim() : '';
+  const box = elem('div', 'mood-picker');
+  box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', 'Mood');
+  for (const [e, label] of MOODS) {
+    const b = elem('button', `mood${now === e ? ' on' : ''}`, e); b.type = 'button';
+    b.title = label; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(now === e)); b.setAttribute('aria-label', label);
+    b.addEventListener('click', () => changeNoteText(dailyRel(key), (text) => (now === e ? deleteProp(text, 'mood') : setProp(text, 'mood', e))));
+    box.append(b);
+  }
+  return box;
+}
+
+// --- the day page's view of the week's notes ---
+// This week's weekly to-do and habit tracker notes, when there are such:
+// the day's tasks to tick and add to, and its habits to tick.
+function weekNoteFor(date, blockRe) {
+  const wk = weekKey(date);
+  return vaultItems((t) => blockRe.test(t), (rel, text) => (habitWeek(readProps(text).props, noteTitleOf(rel)) === wk ? { rel, text } : null))[0] || null;
+}
+function sectionWithLink(title, rel, rows) {
+  const s = elem('section', 'section today-from');
+  const head = elem('div', 'section-head');
+  head.append(elem('h2', 'section-title', title));
+  const open = elem('button', 'btn quiet today-open', noteTitleOf(rel)); open.type = 'button';
+  open.title = 'Open the note';
+  open.addEventListener('click', () => openNote(rel));
+  const acts = elem('div', 'head-actions'); acts.append(open);
+  head.append(acts);
+  s.append(head);
+  const list = elem('ul', 'plan-list');
+  for (const r of rows) list.append(r);
+  s.append(list);
+  return s;
+}
+function todayFromWeekNotes(date) {
+  const out = [];
+  const day = (date.getDay() + 6) % 7;
+  const todo = weekNoteFor(date, WEEK_BLOCK);
+  const d = todo && weekDays(todo.text).find((x) => x.day === day);
+  if (d) {
+    const rows = d.tasks.map((t) => {
+      const li = elem('li', `plan-row agenda-row today-task${t.done ? ' done' : ''}`);
+      const check = document.createElement('input');
+      check.type = 'checkbox'; check.className = 'check'; check.checked = t.done;
+      check.setAttribute('aria-label', `Done: ${t.text}`);
+      check.addEventListener('change', () => changeNoteText(todo.rel, (text) => toggleTaskLine(text, t.line)));
+      li.append(check, elem('span', 'plan-title', t.text));
+      return li;
+    });
+    const add = elem('li', 'plan-row today-add');
+    const input = document.createElement('input');
+    input.className = 'today-add-input'; input.placeholder = '+ Add a task for today';
+    input.setAttribute('aria-label', 'Add a task for today to the weekly to-do');
+    input.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter' || !input.value.trim()) return;
+      e.preventDefault();
+      const v = input.value; input.value = '';
+      await changeNoteText(todo.rel, (text) => addWeekTask(text, day, v));
+      document.querySelector('.today-add-input')?.focus();
+    });
+    add.append(input);
+    rows.push(add);
+    out.push(sectionWithLink("This week's to-do", todo.rel, rows));
+  }
+  const hab = weekNoteFor(date, HABITS_BLOCK);
+  const t = hab && habitTable(hab.text);
+  if (t && t.rows.length && t.dayCols[day] !== -1) {
+    const rows = t.rows.map((r) => {
+      const li = elem('li', 'plan-row today-habit');
+      const done = r.days[day];
+      const b = elem('button', `hab-cell${done ? ' done' : ''}`); b.type = 'button';
+      b.setAttribute('aria-pressed', String(Boolean(done))); b.setAttribute('aria-label', `${r.name}, today`);
+      b.addEventListener('click', () => changeNoteText(hab.rel, (text) => toggleHabit(text, r.line, day)));
+      const n = r.days.filter(Boolean).length;
+      li.append(b, elem('span', 'plan-title', r.name), elem('span', `today-habit-count${n >= r.goal ? ' met' : ''}`, `${n}/${r.goal} this week`));
+      return li;
+    });
+    out.push(sectionWithLink('Habits', hab.rel, rows));
+  }
+  return out;
 }
 
 function section(titleText, children) {
@@ -2242,8 +2333,27 @@ function renderDailyNoteSection(date) {
       render();
     });
     actions.append(add);
+    // No daily template in the vault's settings: offer Mufka's (or the
+    // vault's copy of it).
+    if (!state.layout.dailyTemplate) {
+      const tpl = elem('button', 'btn quiet daily-from-template', 'From template');
+      tpl.title = 'Start the day from the Daily note template';
+      tpl.addEventListener('click', async () => {
+        const choice = allTemplates().find((c) => c.name.toLowerCase() === 'daily note');
+        const day = parseDayKey(key); const now = new Date();
+        day.setHours(now.getHours(), now.getMinutes());
+        const text = choice ? fillTemplate(await templateText(choice), key, day) : '';
+        await notesApi.writeDaily(key, text);
+        state.dailyNote = { key, content: text };
+        state.dailyDates.add(key);
+        histReset('daily');
+        render();
+      });
+      actions.append(tpl);
+    }
     return s;
   }
+  header.insertBefore(moodPicker(key, state.dailyNote.content || ''), actions);
 
   // Several sections share the day page, so the daily note keeps its copy icon
   // and "⋯" menu on its own label line (right-aligned to the text column).

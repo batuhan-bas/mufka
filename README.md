@@ -94,6 +94,10 @@ yet? Home offers to open the Planner.
 - **Habit tracker:** a week of habits as a grid; tick a day with one click,
   today is marked, and a card shows how the week is going against each habit's
   goal. ‹ › moves between weeks and starts the next one.
+- **Today** gathers the day: its plans and calendar events, the day's part of
+  this week's to-do and habit tracker notes (tick and add there), and the
+  daily note with a mood to pick; a new daily note can start from the Daily
+  note template.
 - **Projects:** a project note shows its status (Planning, Active, Done or on
   hold, one click to change), how much of its checklist is done and when it is
   due; a project board shows them all by status, with what is late.
