@@ -93,6 +93,15 @@ async function humanClickEval(expr, label) {
   wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 }); await sleep(150);
   wc.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 }); await sleep(200);
 }
+// Click until `until` holds: a page that draws itself again between press and
+// release (a save or a vault sync landing just then) loses that click.
+async function clickUntil(expr, until, label, tries = 4) {
+  for (let i = 0; i < tries; i++) {
+    await clickEval(expr, label);
+    if (await waitFor(until, 1200)) return true;
+  }
+  return false;
+}
 async function clickEval(expr, label) { const r = await rectEval(expr); assert(r, `element not found: ${label || expr}`); await clickAt(r.x, r.y); }
 async function clickSel(sel) { await clickEval(`document.querySelector(${JSON.stringify(sel)})`, sel); }
 async function hoverClickEval(expr, label) { const r = await rectEval(expr); assert(r, `element not found: ${label || expr}`); wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y }); await sleep(70); await clickAt(r.x, r.y); }
@@ -1604,8 +1613,8 @@ app.whenReady().then(() => setTimeout(async () => {
     });
 
     // 59. Templates that come with Mufka: the sidebar button lists them; a
-    //     budget note is named for the month, filled, and shows its tables and
-    //     checklists. Copied into the Templates folder they become editable,
+    //     budget note is named for the month, filled, and shows its card; an
+    //     expense added through its dialog goes into the table and the totals. Copied into the Templates folder they become editable,
     //     and a changed one takes the built-in one's place.
     await step(59, 'built-in templates: new note from one, copy and override', async () => {
       await clickSel('#mode-notes');
@@ -1613,7 +1622,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
       assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
       const shown = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-label')].map(e => e.textContent)`);
-      for (const n of ['Daily note', 'Meeting notes', 'Weekly review', 'Project', 'Book notes', 'Recipe', 'Habit tracker', 'Budget', 'Travel plan']) assert(shown.includes(n), `${n} missing from ${JSON.stringify(shown)}`);
+      for (const n of ['Daily note', 'Meeting notes', 'Project', 'Book notes', 'Habit tracker', 'Budget', 'Travel plan', 'Weekly to-do', 'Job search', 'Job application']) assert(shown.includes(n), `${n} missing from ${JSON.stringify(shown)}`);
       await typeText('Budget'); await enter();
       assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
       const d = new Date();
@@ -1626,23 +1635,48 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => (file = findNote(`Budget ${month}.md`)) && fs.readFileSync(file, 'utf8').includes('## Expenses'), 3000), 'budget note not made from the template');
       assert(!fs.readFileSync(file, 'utf8').includes('{{'), 'template variables left in the note');
       assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${month}"`, 3000), 'budget note did not open');
-      assert(await waitFor('document.querySelectorAll(".note-body table").length >= 4 && document.querySelectorAll(".note-body input[type=checkbox]").length >= 4 && !!document.querySelector(".note-body .callout")', 3000), 'tables, checklists or callout not shown');
+      // The budget page: icon and cover, folded properties, the card, and an
+      // expense added through the dialog lands in the table and the totals.
+      assert(await waitFor('!!document.querySelector(".note-cover.cover-violet") && document.querySelector(".note-icon")?.textContent === "💰" && !!document.querySelector(".props.folded")', 3000), 'icon, cover or folded properties not shown');
+      assert(await waitFor('!!document.querySelector(".note-body .bud-card .bud-ring") && document.querySelectorAll(".note-body table").length === 2', 3000), 'budget card or tables not shown');
+      assert(await clickUntil(`[...document.querySelectorAll('.note-body .bud-add')].find(b => b.textContent.includes('expense'))`, '!!document.querySelector(".bud-dialog")', '+ Add expense'), 'add expense dialog did not open');
+      await typeText('Coffee beans');
+      await js(`(() => { document.querySelector('.bud-amount').value = '1.250,50'; document.querySelector('.bud-pill[data-name="Groceries"]').click(); return true; })()`);
+      await js(`document.querySelector('.bud-what').focus()`);
+      await enter();
+      assert(await waitFor2(() => /\| Coffee beans \| Groceries \| 1250\.5 \|/.test(fs.readFileSync(file, 'utf8')), 3000), `expense row not added: ${fs.readFileSync(file, 'utf8').split('## Expenses')[1]}`);
+      const stats = () => js('[...document.querySelectorAll(".bud-stat-value")].map(e => e.textContent)');
+      let totals = false;
+      for (let t = 0; t < 30 && !totals; t++) { const v = await stats(); totals = v[1].replace(/\D/g, '') === '12505' && v[2].startsWith('−'); if (!totals) await sleep(100); }
+      assert(totals, `totals not updated: ${await stats()}`);
+      assert(await js('!!document.querySelector(".note-body td .bud-chip")'), 'category not shown as a chip');
+      // The icon can be changed from the page; the next month starts from the card.
+      assert(await clickUntil('document.querySelector(".note-icon")', '!!document.querySelector(".emoji-grid")', 'page icon'), 'icon picker did not open');
+      await clickEval('[...document.querySelectorAll(".emoji-choice")].find(b => b.textContent === "🚀")', 'rocket');
+      assert(await waitFor2(() => /^icon: 🚀$/m.test(fs.readFileSync(file, 'utf8')), 3000), 'icon not saved');
+      const next = (() => { const [y, m] = month.split('-').map(Number); const d = new Date(y, m, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })();
+      await sleep(500);
+      await clickSel('.bud-nav-new');
+      assert(await waitFor2(() => { const f = findNote(`Budget ${next}.md`); return f && new RegExp(`^month: ${next}$`, 'm').test(fs.readFileSync(f, 'utf8')) && !fs.readFileSync(f, 'utf8').includes('Coffee beans'); }, 3000), 'next month not started');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${next}"`, 3000), 'next month did not open');
+      await clickEval('document.querySelector(".bud-nav-step")', 'previous month');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${month}"`, 3000), 'previous month did not open');
       // Copy them into the Templates folder, change one: it wins over the built-in.
       await press('P', ['meta']); await typeText('Copy built-in templates'); await enter();
       const tdir = path.join(vault, 'Templates');
-      assert(await waitFor2(() => ['Daily note', 'Budget', 'Travel plan', 'Recipe'].every((n) => fs.existsSync(path.join(tdir, `${n}.md`))), 3000), `templates not copied: ${fs.existsSync(tdir) ? fs.readdirSync(tdir) : 'no folder'}`);
+      assert(await waitFor2(() => ['Daily note', 'Budget', 'Travel plan', 'Book notes'].every((n) => fs.existsSync(path.join(tdir, `${n}.md`))), 3000), `templates not copied: ${fs.existsSync(tdir) ? fs.readdirSync(tdir) : 'no folder'}`);
       assert(fs.readFileSync(path.join(tdir, 'Budget.md'), 'utf8').includes('{{date:YYYY-MM}}'), 'copied template is filled, should stay a template');
-      fs.writeFileSync(path.join(tdir, 'Recipe.md'), '# {{title}}\n\nMine');
+      fs.writeFileSync(path.join(tdir, 'Book notes.md'), '# {{title}}\n\nMine');
       await sleep(900);
       await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
       assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open again');
-      const recipes = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-item')].filter(e => e.querySelector('.palette-label')?.textContent === 'Recipe').map(e => e.textContent)`);
-      assert(recipes.length === 1 && !recipes[0].includes('Built-in'), `Recipe should come from the vault once: ${JSON.stringify(recipes)}`);
-      await typeText('Recipe'); await enter();
-      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field for the recipe');
-      await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Pilav'; return true; })()`);
+      const recipes = await js(`[...document.querySelectorAll('.palette-new-from-template .palette-item')].filter(e => e.querySelector('.palette-label')?.textContent === 'Book notes').map(e => e.textContent)`);
+      assert(recipes.length === 1 && !recipes[0].includes('Built-in'), `Book notes should come from the vault once: ${JSON.stringify(recipes)}`);
+      await typeText('Book notes'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field for the book');
+      await js(`(() => { const i = document.getElementById('tree-edit'); i.value = 'Dune'; return true; })()`);
       await enter();
-      assert(await waitFor2(() => { const f = findNote('Pilav.md'); return f && fs.readFileSync(f, 'utf8') === '# Pilav\n\nMine'; }, 3000), 'the changed template was not used');
+      assert(await waitFor2(() => { const f = findNote('Dune.md'); return f && fs.readFileSync(f, 'utf8') === '# Dune\n\nMine'; }, 3000), 'the changed template was not used');
     });
 
     // 60. Found by hand on Windows: right after making a note (empty, so it
@@ -2085,6 +2119,134 @@ app.whenReady().then(() => setTimeout(async () => {
       await retype('#ara-input', ''); await sleep(200);
       await press('O', ['meta']); await typeText('Kod'); await enter();
       assert(await waitFor('[...document.querySelectorAll(".backlink-title")].some(b => b.textContent === "Disarida")', 5000), `backlink not shown: ${await js('document.querySelector(".backlinks")?.textContent')}`);
+    });
+
+    // 76. The habit tracker template: this week's grid, today marked; ticking
+    //     a day writes an x into the table and the card counts it; a habit is
+    //     added through its dialog.
+    await step(76, 'habit tracker: tick today, add a habit', async () => {
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      await typeText('Habit tracker'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      const name = await js('document.getElementById("tree-edit").value');
+      await enter();
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === ${JSON.stringify(name)}`, 3000), 'habit note did not open');
+      assert(await waitFor('!!document.querySelector(".hab-card .hab-ring") && document.querySelectorAll(".hab-row").length === 4 && document.querySelectorAll("td.hab-today").length === 4', 3000), 'card, rows or today column not shown');
+      await clickEval('document.querySelector(".hab-row td.hab-today .hab-cell")', 'today, first habit');
+      assert(await waitFor('document.querySelector(".hab-card .bud-spent")?.textContent.startsWith("1 of 4") && document.querySelector(".hab-row td.hab-today .hab-cell")?.getAttribute("aria-pressed") === "true"', 3000), `tick not counted: ${await js('document.querySelector(".hab-card .bud-spent")?.textContent')}`);
+      assert(await clickUntil('[...document.querySelectorAll(".bud-add")].find(b => b.textContent.includes("habit"))', '!!document.querySelector(".hab-name-input")', '+ Add habit'), 'add habit dialog did not open');
+      await typeText('Stretch');
+      await enter();
+      assert(await waitFor('document.querySelectorAll(".hab-row").length === 5 && [...document.querySelectorAll(".hab-item")].some(e => e.textContent.startsWith("Stretch"))', 3000), 'habit not added');
+    });
+
+    // 77. Job search: the board from its template; a new application from the
+    //     form lands in the first column; dragging a card moves its status;
+    //     the application's strip moves it with one click.
+    await step(77, 'job search: board, new application, drag, stage strip', async () => {
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      await typeText('Job search'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      await enter();
+      assert(await waitFor('!!document.querySelector(".job-board") && document.querySelectorAll(".job-col").length === 6', 3000), 'board not shown');
+      assert(await clickUntil('document.querySelector(".job-new")', '!!document.querySelector(".job-company")', '+ New application'), 'new application form did not open');
+      await typeText('Acme');
+      await js(`(() => { document.querySelector('.job-role').value = 'Frontend Lead'; return true; })()`);
+      await js(`document.querySelector('.job-company').focus()`);
+      await enter();
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      const findNote = (name) => { const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (e.name.startsWith('.')) continue; const p = path.join(dir, e.name); if (e.isDirectory()) { const r = walk(p); if (r) return r; } else if (e.name === name) return p; } return null; }; return walk(vault); };
+      let file = null;
+      assert(await waitFor2(() => (file = findNote('Acme – Frontend Lead.md')) && /^status: Applied$/m.test(fs.readFileSync(file, 'utf8')), 4000), 'application note not made');
+      assert(await waitFor('[...document.querySelectorAll(".job-col")][0].querySelectorAll(".job-card").length === 1', 4000), `card not in Applied: ${await js('[...document.querySelectorAll(".job-col")].map(c => c.dataset.stage + ":" + c.querySelectorAll(".job-card").length).join(" ") + " | " + document.querySelector(".note-title")?.textContent + " | " + document.querySelectorAll(".job-board").length')} ${file}`);
+      await js(`(() => { const card = document.querySelector('.job-card'); const col = [...document.querySelectorAll('.job-col')].find(c => c.dataset.stage === 'Technical'); const dt = new DataTransfer(); card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt })); col.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt })); col.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })); return true; })()`);
+      assert(await waitFor2(() => /^status: Technical$/m.test(fs.readFileSync(file, 'utf8')), 4000), 'drag did not move the status');
+      assert(await waitFor('[...document.querySelectorAll(".job-col")].find(c => c.dataset.stage === "Technical").querySelectorAll(".job-card").length === 1', 4000), 'card did not move');
+      await clickSel('.job-card');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Acme – Frontend Lead" && document.querySelector(".job-step.on")?.textContent === "Technical" && !!document.querySelector(".props.folded")', 3000), 'application strip not shown');
+      await clickEval('[...document.querySelectorAll(".job-step")].find(b => b.textContent === "Offer")', 'Offer');
+      assert(await waitFor2(() => /^status: Offer$/m.test(fs.readFileSync(file, 'utf8')), 3000), 'strip did not move the status');
+    });
+
+    // 78. Weekly to-do: seven days as columns (their text hidden), today
+    //     marked; a task added to today goes under its heading; ticking it
+    //     writes [x]; "Show as text" brings the headings back.
+    await step(78, 'weekly to-do: add and tick a task, show as text', async () => {
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      await typeText('Weekly to-do'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      const name = await js('document.getElementById("tree-edit").value');
+      await enter();
+      assert(await waitFor('document.querySelectorAll(".wk-day").length === 7 && document.querySelectorAll(".wk-day.today").length === 1 && !!document.querySelector(".wk-hidden")', 3000), 'week board not shown');
+      assert(await clickUntil('document.querySelector(".wk-day.today .wk-add")', '!!document.querySelector(".wk-new")', '+ Add'), 'no field for a new task');
+      // A note changing outside Mufka mid-typing draws the board again; what
+      // is typed must survive it (CI machines are slow enough to hit this).
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      await typeText('Water');
+      const redraws = await js('(window.__wkDraws = 0, new MutationObserver(() => { window.__wkDraws += 1; }).observe(document.querySelector(".wk-box").parentElement, { childList: true }), 0)');
+      fs.writeFileSync(path.join(vault, 'Elsewhere.md'), 'changed outside\n');
+      await sleep(2500);
+      void redraws;
+      assert(await js('document.activeElement?.classList.contains("wk-new") && document.activeElement.value === "Water"'), `typing lost on redraw: ${await js('document.activeElement?.className + " / " + document.querySelector(".wk-new")?.value')}`);
+      await typeText(' the plants'); await enter();
+      const findNote = (n) => { const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (e.name.startsWith('.')) continue; const p = path.join(dir, e.name); if (e.isDirectory()) { const r = walk(p); if (r) return r; } else if (e.name === n) return p; } return null; }; return walk(vault); };
+      const file = findNote(`${name}.md`);
+      const dayName = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][(new Date().getDay() + 6) % 7];
+      assert(await waitFor2(() => new RegExp(`## ${dayName}\\n(?:- \\[.\\] .*\\n)*- \\[ \\] Water the plants`).test(fs.readFileSync(file, 'utf8')), 3000), `task not under ${dayName}: ${fs.readFileSync(file, 'utf8')}`);
+      await press('Escape');
+      await clickEval('[...document.querySelectorAll(".wk-day.today .wk-task")].find(t => t.textContent === "Water the plants").querySelector(".wk-check")', 'tick');
+      assert(await waitFor2(() => /- \[x\] Water the plants/.test(fs.readFileSync(file, 'utf8')), 3000), 'tick not saved');
+      await clickSel('.wk-as-text');
+      assert(await waitFor('!document.querySelector(".wk-hidden") && document.querySelectorAll(".note-body h2").length >= 7', 3000), 'days not shown as text');
+    });
+
+    // 79. Projects: the board from its template; a new project opens with its
+    //     strip; ticking a task moves its progress; its stage changes with a
+    //     click and the board shows it there.
+    await step(79, 'projects: board, new project, progress, stage', async () => {
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      await typeText('Project board'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      const board = await js('document.getElementById("tree-edit").value');
+      await enter();
+      assert(await waitFor('!!document.querySelector(".job-board") && document.querySelectorAll(".job-col").length === 4', 3000), 'project board not shown');
+      assert(await clickUntil('document.querySelector(".job-new")', '!!document.querySelector(".prj-name")', '+ New project'), 'new project form did not open');
+      await typeText('Garden shed');
+      await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Garden shed" && document.querySelector(".job-step.on")?.textContent === "Planning"', 4000), `new project did not open with its strip: ${await js('document.querySelector(".note-title")?.textContent + " | " + document.querySelector(".job-step.on")?.textContent + " | " + document.getElementById("toast")?.textContent')}`);
+      assert(await waitFor('document.querySelector(".prj-progress-text")?.textContent === "0/4"', 2000), `progress: ${await js('document.querySelector(".prj-progress-text")?.textContent')}`);
+      await clickEval('document.querySelector(".note-body input.task-check")', 'first task');
+      assert(await waitFor('document.querySelector(".prj-progress-text")?.textContent === "1/4"', 3000), 'progress did not move');
+      // The tick saves and draws the page again; click once it has settled.
+      await sleep(600);
+      for (let i = 0; i < 3 && !(await js('document.querySelector(".job-step.on")?.textContent === "Active"')); i++) {
+        await clickEval('[...document.querySelectorAll(".job-step")].find(b => b.textContent === "Active")', 'Active');
+        await waitFor('document.querySelector(".job-step.on")?.textContent === "Active"', 1500);
+      }
+      assert(await js('document.querySelector(".job-step.on")?.textContent === "Active"'), 'stage did not change');
+      await press('O', ['meta']); await typeText(board); await enter();
+      assert(await waitFor('[...document.querySelectorAll(".job-col")].find(c => c.dataset.stage === "Active")?.textContent.includes("Garden shed")', 4000), 'board does not show the project as active');
+    });
+
+    // 80. Today: this week's to-do and habit notes (made in steps 76 and 78)
+    //     show the day's part; a task added there lands under today's
+    //     heading; the daily note can start from its template and take a mood.
+    await step(80, "today: the week's to-do and habits, daily template, mood", async () => {
+      await press('T', ['meta']);
+      assert(await waitFor('[...document.querySelectorAll(".section-title")].map(e => e.textContent).join("|").includes("This week\'s to-do") && !!document.querySelector(".today-habit .hab-cell")', 4000), `today does not show the week's notes: ${await js('[...document.querySelectorAll(".section-title")].map(e => e.textContent).join("|")')}`);
+      await clickSel('.today-add-input');
+      await typeText('Call the plumber'); await enter();
+      assert(await waitFor('[...document.querySelectorAll(".today-task")].some(t => t.textContent === "Call the plumber")', 3000), 'task not added for today');
+      if (await js('!!document.querySelector(".daily-from-template")')) {
+        await clickSel('.daily-from-template');
+        assert(await waitFor('[...document.querySelectorAll(".daily-note h2")].some(h => h.textContent === "Top 3")', 3000), 'daily note not made from the template');
+      }
+      await clickEval('[...document.querySelectorAll(".mood")].find(b => b.title === "Good")', 'Good');
+      assert(await waitFor('document.querySelector(".mood.on")?.title === "Good"', 3000), 'mood not set');
     });
   } catch (e) {
     failedStep = (e && e.message) || String(e);

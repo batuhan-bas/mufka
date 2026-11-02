@@ -25,6 +25,16 @@ import { renderPlanner, plannerFocus, announce } from './planner.js';
 import { renderTasks, tasksEditing, tasksAnnounce } from './tasks.js';
 import { createDataview } from './dataview-view.js';
 import { createMermaid } from './mermaid-view.js';
+import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
+import { habitsCard, decorateHabitTable, addHabitButton, openHabitDialog } from './habits-view.js';
+import { jobStrip, jobsBoard, openJobDialog } from './jobs-view.js';
+import { weekBoard, focusNewTask } from './weekly-view.js';
+import { projectStrip, projectsBoard, openProjectDialog } from './projects-view.js';
+import { projectOf, projectsSettings, mayBeProject } from '../lib/projects.mjs';
+import { weekDays, addWeekTask, editWeekTask, moveWeekTask, moveOpenToNextDay, nextWeekTodoText } from '../lib/weekly.mjs';
+import { jobOf, jobsSettings, mayBeJob, jobNoteName, setJobStatus, DEFAULT_STAGES } from '../lib/jobs.mjs';
+import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
+import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs';
@@ -1946,6 +1956,9 @@ function renderDayPage() {
     col.append(more);
   }
 
+  // The day's part of this week's to-do and habit tracker notes.
+  for (const sec of todayFromWeekNotes(date)) col.append(sec);
+
   // Günün notu.
   col.append(renderDailyNoteSection(date));
 
@@ -1992,6 +2005,101 @@ function emptyDayCard(date) {
   b.addEventListener('click', () => openPlanner(date));
   c.append(b);
   return c;
+}
+
+// How the day felt: mood: in the daily note's properties, one click to set
+// (again to clear).
+const MOODS = [['😞', 'Bad'], ['🙁', 'Low'], ['😐', 'Okay'], ['🙂', 'Good'], ['😄', 'Great']];
+function moodPicker(key, src) {
+  const r = readProps(src);
+  const p = r.props && r.props.find((x) => String(x.key).toLowerCase() === 'mood');
+  const now = p && p.value != null ? String(p.value).trim() : '';
+  const box = elem('div', 'mood-picker');
+  box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', 'Mood');
+  for (const [e, label] of MOODS) {
+    const b = elem('button', `mood${now === e ? ' on' : ''}`, e); b.type = 'button';
+    b.title = label; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(now === e)); b.setAttribute('aria-label', label);
+    b.addEventListener('click', () => changeNoteText(dailyRel(key), (text) => (now === e ? deleteProp(text, 'mood') : setProp(text, 'mood', e))));
+    box.append(b);
+  }
+  return box;
+}
+
+// --- the day page's view of the week's notes ---
+// This week's weekly to-do and habit tracker notes, when there are such:
+// the day's tasks to tick and add to, and its habits to tick.
+function weekNoteFor(date, blockRe) {
+  const wk = weekKey(date);
+  return vaultItems((t) => blockRe.test(t), (rel, text) => (habitWeek(readProps(text).props, noteTitleOf(rel)) === wk ? { rel, text } : null))[0] || null;
+}
+function sectionWithLink(title, rel, rows) {
+  const s = elem('section', 'section today-from');
+  const head = elem('div', 'section-head');
+  head.append(elem('h2', 'section-title', title));
+  const open = elem('button', 'btn quiet today-open', noteTitleOf(rel)); open.type = 'button';
+  open.title = 'Open the note';
+  open.addEventListener('click', () => openNote(rel));
+  const acts = elem('div', 'head-actions'); acts.append(open);
+  head.append(acts);
+  s.append(head);
+  const list = elem('ul', 'plan-list');
+  for (const r of rows) list.append(r);
+  s.append(list);
+  return s;
+}
+const todayDraft = { value: '', focused: false };
+function todayFromWeekNotes(date) {
+  const out = [];
+  const day = (date.getDay() + 6) % 7;
+  const todo = weekNoteFor(date, WEEK_BLOCK);
+  const d = todo && weekDays(todo.text).find((x) => x.day === day);
+  if (d) {
+    const rows = d.tasks.map((t) => {
+      const li = elem('li', `plan-row agenda-row today-task${t.done ? ' done' : ''}`);
+      const check = document.createElement('input');
+      check.type = 'checkbox'; check.className = 'check'; check.checked = t.done;
+      check.setAttribute('aria-label', `Done: ${t.text}`);
+      check.addEventListener('change', () => changeNoteText(todo.rel, (text) => toggleTaskLine(text, t.line)));
+      li.append(check, elem('span', 'plan-title', t.text));
+      return li;
+    });
+    const add = elem('li', 'plan-row today-add');
+    const input = document.createElement('input');
+    input.className = 'today-add-input'; input.placeholder = '+ Add a task for today';
+    input.setAttribute('aria-label', 'Add a task for today to the weekly to-do');
+    // What is typed survives the page being drawn again (a save, a sync).
+    input.value = todayDraft.value;
+    input.addEventListener('input', () => { todayDraft.value = input.value; });
+    input.addEventListener('focus', () => { todayDraft.focused = true; });
+    input.addEventListener('blur', () => setTimeout(() => { if (input.isConnected) todayDraft.focused = false; }, 0));
+    if (todayDraft.focused) queueMicrotask(() => { if (input.isConnected) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } });
+    input.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter' || !input.value.trim()) return;
+      e.preventDefault();
+      const v = input.value; input.value = ''; todayDraft.value = '';
+      todayDraft.focused = true;
+      await changeNoteText(todo.rel, (text) => addWeekTask(text, day, v));
+    });
+    add.append(input);
+    rows.push(add);
+    out.push(sectionWithLink("This week's to-do", todo.rel, rows));
+  }
+  const hab = weekNoteFor(date, HABITS_BLOCK);
+  const t = hab && habitTable(hab.text);
+  if (t && t.rows.length && t.dayCols[day] !== -1) {
+    const rows = t.rows.map((r) => {
+      const li = elem('li', 'plan-row today-habit');
+      const done = r.days[day];
+      const b = elem('button', `hab-cell${done ? ' done' : ''}`); b.type = 'button';
+      b.setAttribute('aria-pressed', String(Boolean(done))); b.setAttribute('aria-label', `${r.name}, today`);
+      b.addEventListener('click', () => changeNoteText(hab.rel, (text) => toggleHabit(text, r.line, day)));
+      const n = r.days.filter(Boolean).length;
+      li.append(b, elem('span', 'plan-title', r.name), elem('span', `today-habit-count${n >= r.goal ? ' met' : ''}`, `${n}/${r.goal} this week`));
+      return li;
+    });
+    out.push(sectionWithLink('Habits', hab.rel, rows));
+  }
+  return out;
 }
 
 function section(titleText, children) {
@@ -2156,7 +2264,8 @@ function planMenuItems(p) {
 
 const menuLayer = document.getElementById('menu-layer');
 
-function openMenu(anchorKey, buildItems) { state.menu = { anchorKey, buildItems }; renderMenu(); }
+// align: 'right' (the menu's right edge under the anchor's) or 'left'.
+function openMenu(anchorKey, buildItems, { align = 'right' } = {}) { state.menu = { anchorKey, buildItems, align }; renderMenu(); }
 function closeMenu() { if (state.menu) { state.menu = null; renderMenu(); } }
 
 function menuItem(label, onActivate) {
@@ -2191,9 +2300,9 @@ function renderMenu() {
   const r = anchor.getBoundingClientRect();
   const mw = menu.offsetWidth; const mh = menu.offsetHeight;
   let top = r.bottom + 4; if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
-  let left = r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+  let left = state.menu.align === 'left' ? r.left : r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
   menu.style.top = `${top}px`; menu.style.left = `${left}px`;
-  (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice') || menu.querySelector('button, input'))?.focus();
+  (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice, .cover-choice.on') || menu.querySelector('button, input'))?.focus();
 }
 
 let outsideHandler = null;
@@ -2231,8 +2340,27 @@ function renderDailyNoteSection(date) {
       render();
     });
     actions.append(add);
+    // No daily template in the vault's settings: offer Mufka's (or the
+    // vault's copy of it).
+    if (!state.layout.dailyTemplate) {
+      const tpl = elem('button', 'btn quiet daily-from-template', 'From template');
+      tpl.title = 'Start the day from the Daily note template';
+      tpl.addEventListener('click', async () => {
+        const choice = allTemplates().find((c) => c.name.toLowerCase() === 'daily note');
+        const day = parseDayKey(key); const now = new Date();
+        day.setHours(now.getHours(), now.getMinutes());
+        const text = choice ? fillTemplate(await templateText(choice), key, day) : '';
+        await notesApi.writeDaily(key, text);
+        state.dailyNote = { key, content: text };
+        state.dailyDates.add(key);
+        histReset('daily');
+        render();
+      });
+      actions.append(tpl);
+    }
     return s;
   }
+  header.insertBefore(moodPicker(key, state.dailyNote.content || ''), actions);
 
   // Several sections share the day page, so the daily note keeps its copy icon
   // and "⋯" menu on its own label line (right-aligned to the text column).
@@ -2449,7 +2577,300 @@ darkQuery.addEventListener('change', () => { splitShown = null; if (!isEditing()
 // blocks and inline queries, and Mermaid diagrams.
 function noteRenderOptions(rel) {
   const dv = dataview.optionsFor(rel);
-  return { ...dv, blocks: { ...dv.blocks, mermaid: (src) => mermaid.block(src) }, embedDrawing };
+  return {
+    ...dv,
+    blocks: {
+      ...dv.blocks,
+      mermaid: (src) => mermaid.block(src),
+      budget: (code, _meta, { src }) => budgetCard(src, code, { onAdd: rel ? (kind) => addBudgetEntry(rel, kind) : null, nav: rel ? budgetNav(rel, src) : null }),
+      habits: (_code, _meta, { src }) => habitsCard(src, { today: habitToday(rel, src), nav: rel ? habitNav(rel, src) : null, onAdd: rel ? () => addHabitEntry(rel) : null }),
+      jobs: (code, _meta, { src }) => jobsBlock(rel, code, src),
+      week: (_code, _meta, { src }) => weekBlock(rel, src),
+      projects: (code) => projectsBlock(rel, code),
+    },
+    embedDrawing,
+  };
+}
+
+// --- budget notes (lib/budget.mjs, src/budget-view.js) ---
+// The settings of the note's ```budget block ('' when it has none).
+const BUDGET_BLOCK = /^```budget[^\S\n]*\n([\s\S]*?)^```/m;
+function budgetCode(src) { const m = BUDGET_BLOCK.exec(String(src || '')); return m ? m[1] : null; }
+
+// The text of a note as the app has it now: the open note or day from the
+// editor, any other from its file.
+async function currentText(rel) {
+  if (rel === state.openNote) return { text: state.noteContent, scope: 'note' };
+  if (state.dailyNote.key && rel === dailyRel(state.dailyNote.key) && state.dailyNote.content != null) return { text: state.dailyNote.content, scope: 'daily' };
+  const res = await notesApi.read(rel);
+  return res && !res.error ? { text: res.content, scope: null } : null;
+}
+
+// The budget notes of the vault by month, for the card's ‹ month › switch.
+function budgetNav(rel, src) {
+  const month = budgetMonth(readProps(src).props, noteTitleOf(rel));
+  if (!month) return null;
+  const months = new Map();
+  for (const n of state.vaultNotes) {
+    if (n.rel === rel || isTemplateNote(n.rel) || !BUDGET_BLOCK.test(n.content)) continue;
+    const m = budgetMonth(readProps(n.content).props, noteTitleOf(n.rel));
+    if (m && !months.has(m)) months.set(m, n.rel);
+  }
+  const sorted = [...months.keys()].sort();
+  const prev = sorted.filter((m) => m < month).pop();
+  const next = sorted.find((m) => m > month);
+  const label = (m) => { const [y, mo] = m.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); };
+  return {
+    current: label(month),
+    prev: prev ? { label: label(prev), open: () => openNote(months.get(prev)) } : null,
+    next: next ? { label: label(next), open: () => openNote(months.get(next)) } : null,
+    newMonth: next ? null : { label: label(shiftMonth(month, 1)), create: () => newBudgetMonth(rel, month) },
+  };
+}
+
+// The next month's budget note, next to this one, with the same settings.
+async function newBudgetMonth(rel, month) {
+  flushActiveEditor();
+  const cur = await currentText(rel);
+  if (!cur) return;
+  const nextMonth = shiftMonth(month, 1);
+  const title = noteTitleOf(rel);
+  const name = title.includes(month) ? title.replace(month, nextMonth) : `Budget ${nextMonth}`;
+  const res = await notesApi.create(folderOf(rel), name);
+  if (!res || !res.rel) { showToast('Could not create the next month'); return; }
+  await notesApi.write(res.rel, nextMonthText(cur.text, nextMonth));
+  await refreshTree();
+  await rebuildBacklinks();
+  await openNote(res.rel);
+}
+
+// "+ Add income / expense": the dialog, then a new row in the note's table.
+async function addBudgetEntry(rel, kind) {
+  flushActiveEditor();
+  const cur = await currentText(rel);
+  if (!cur) return;
+  const code = budgetCode(cur.text) || '';
+  openAddDialog({ kind, categories: categoryChoices(cur.text, code), currency: budgetSettings(code).currency, colourOf: categoryColours(cur.text, code) }, (entry) => {
+    changeNoteText(rel, (text) => addBudgetRow(text, kind, entry));
+  });
+}
+
+// Change a note's text with edit(text) → text: the open note or day through
+// the editor (one undo step), any other straight in its file.
+async function changeNoteText(rel, edit) {
+  const now = await currentText(rel);
+  if (!now) return;
+  const next = edit(now.text);
+  if (next === now.text) return;
+  if (now.scope) {
+    setSrc(now.scope, next, true);
+    histRecord(now.scope);
+    render();
+    return;
+  }
+  const w = await notesApi.write(rel, next);
+  if (w && w.error) { showToast('Could not save the note'); return; }
+  state.noteCache.delete(rel);
+  await rebuildBacklinks(); // boards and cards read the vault's notes
+  render();
+}
+
+// --- job search (lib/jobs.mjs, src/jobs-view.js) ---
+const JOBS_BLOCK = /^```jobs[^\S\n]*\n([\s\S]*?)^```/m;
+// The notes of a kind in the vault (read(rel, text) → item or null, may(text)
+// a quick look first), the open note as it is in the editor; not the
+// templates they are made from.
+function vaultItems(may, read) {
+  const out = [];
+  const templates = state.layout.templates ? `${state.layout.templates}/` : null;
+  for (const n of state.vaultNotes) {
+    if (templates && n.rel.startsWith(templates)) continue;
+    const text = n.rel === state.openNote ? state.noteContent : n.content;
+    if (!may(text)) continue;
+    const item = read(n.rel, text);
+    if (item) out.push(item);
+  }
+  return out;
+}
+const vaultJobs = () => vaultItems(mayBeJob, jobOf);
+const isTemplateNote = (rel) => Boolean(state.layout.templates && rel.startsWith(`${state.layout.templates}/`));
+// The stages: the first ```jobs block's in the vault, else the usual ones.
+function jobStages() {
+  for (const n of state.vaultNotes) {
+    if (isTemplateNote(n.rel)) continue;
+    const m = JOBS_BLOCK.exec(n.rel === state.openNote ? state.noteContent : n.content);
+    if (m) return jobsSettings(m[1]).stages;
+  }
+  return DEFAULT_STAGES;
+}
+function jobsBlock(rel, code, _src) {
+  const settings = jobsSettings(code);
+  return jobsBoard(vaultJobs(), {
+    stages: settings.stages,
+    onOpen: (to) => openNote(to),
+    onMove: (to, stage) => changeNoteText(to, (text) => setJobStatus(text, stage, setProp)),
+    onNew: () => openJobDialog((job) => newJobApplication(rel, settings, job)),
+  });
+}
+// A new application note: from the block's template (a vault template by
+// name, else the built-in "Job application"), with the form's answers.
+// A note made from a template (a vault template named `template`, else the
+// built-in one with id `builtin`) in `folder` (made when missing), with
+// properties set; returns its path or null.
+async function noteFromTemplate({ folder, name, template, builtin, props }) {
+  if (folder && !state.treeFolders.includes(folder)) {
+    const made = await notesApi.createFolder(folderOf(folder), folder.slice(folder.lastIndexOf('/') + 1));
+    if (!made || made.error) { showToast(`Could not make the ${folder} folder`); return null; }
+  }
+  const res = await notesApi.create(folder, name);
+  if (!res || !res.rel) { showToast(`Could not create ${name}`); return null; }
+  // The named template, else the built-in one — or the vault's copy of it,
+  // which takes its place by name.
+  const byName = (n) => n && allTemplates().find((c) => c.name.toLowerCase() === String(n).toLowerCase());
+  const choice = byName(template) || byName(BUILTIN_TEMPLATES.find((t) => t.id === builtin)?.name);
+  let text = choice ? fillTemplate(await templateText(choice), noteTitleOf(res.rel)) : '';
+  try {
+    for (const [k, v] of props) if (v) text = setProp(text, k, v);
+  } catch { /* a template with broken properties: keep its text */ }
+  await notesApi.write(res.rel, text);
+  await refreshTree();
+  await rebuildBacklinks();
+  return res.rel;
+}
+async function newJobApplication(hubRel, settings, job) {
+  const name = jobNoteName(job);
+  const rel = await noteFromTemplate({
+    folder: settings.folder || (hubRel ? folderOf(hubRel) : ''), name, template: settings.template || 'Job application', builtin: 'job',
+    props: [['company', job.company], ['role', job.role], ['status', settings.stages[0]], ['application_date', job.applied], ['location', job.location], ['link', job.link]],
+  });
+  if (!rel) return;
+  render();
+  showToast(`Added ${name}`);
+}
+
+// --- projects (lib/projects.mjs, src/projects-view.js) ---
+const vaultProjects = () => vaultItems(mayBeProject, projectOf);
+function projectsBlock(rel, code) {
+  const settings = projectsSettings(code);
+  return projectsBoard(vaultProjects(), {
+    onOpen: (to) => openNote(to),
+    onMove: (to, stage) => changeNoteText(to, (text) => setJobStatus(text, stage, setProp)),
+    onNew: () => openProjectDialog(async (p) => {
+      const made = await noteFromTemplate({
+        folder: settings.folder || (rel ? folderOf(rel) : ''), name: p.name, template: settings.template, builtin: 'project',
+        props: [['status', 'Planning'], ['due', p.due]],
+      });
+      if (made) await openNote(made);
+    }),
+  });
+}
+
+// --- habit trackers (lib/habits.mjs, src/habits-view.js) ---
+const HABITS_BLOCK = /^```habits[^\S\n]*$/m;
+const weekLabel = (week) => {
+  const m = weekMonday(week);
+  if (!m) return week;
+  const e = new Date(m); e.setDate(m.getDate() + 6);
+  const f = (d, o) => d.toLocaleDateString(undefined, o);
+  return `Week ${Number(week.split('-W')[1])} · ${f(m, { day: 'numeric', month: 'short' })} – ${f(e, { day: 'numeric', month: 'short' })}`;
+};
+// Mon = 0 … Sun = 6 when the note is this week's, else -1.
+function habitToday(rel, src) {
+  const week = habitWeek(readProps(src).props, rel ? noteTitleOf(rel) : '');
+  const now = new Date();
+  return week && week === weekKey(now) ? (now.getDay() + 6) % 7 : -1;
+}
+// ‹ week › between the notes with the same kind of block (blockRe); the
+// next week is made with nextText(text, week) and named after this one.
+function weekNav(rel, src, blockRe, nextText, fallbackName) {
+  const week = habitWeek(readProps(src).props, noteTitleOf(rel));
+  if (!week) return null;
+  const weeks = new Map();
+  for (const n of state.vaultNotes) {
+    if (n.rel === rel || isTemplateNote(n.rel) || !blockRe.test(n.content)) continue;
+    const w = habitWeek(readProps(n.content).props, noteTitleOf(n.rel));
+    if (w && !weeks.has(w)) weeks.set(w, n.rel);
+  }
+  const sorted = [...weeks.keys()].sort();
+  const prev = sorted.filter((w) => w < week).pop();
+  const next = sorted.find((w) => w > week);
+  return {
+    current: weekLabel(week),
+    prev: prev ? { label: weekLabel(prev), open: () => openNote(weeks.get(prev)) } : null,
+    next: next ? { label: weekLabel(next), open: () => openNote(weeks.get(next)) } : null,
+    newMonth: next ? null : { label: `week ${Number(shiftWeek(week, 1).split('-W')[1])}`, create: () => newWeekNote(rel, week, nextText, fallbackName) },
+  };
+}
+const habitNav = (rel, src) => weekNav(rel, src, HABITS_BLOCK, nextWeekText, 'habits');
+async function newWeekNote(rel, week, nextText, fallbackName) {
+  flushActiveEditor();
+  const cur = await currentText(rel);
+  if (!cur) return;
+  const next = shiftWeek(week, 1);
+  const [y, w] = week.split('-W'); const [ny, nw] = next.split('-W');
+  const title = noteTitleOf(rel);
+  const name = title.includes(`${y} Week ${Number(w)}`) ? title.replace(`${y} Week ${Number(w)}`, `${ny} Week ${Number(nw)}`)
+    : title.includes(week) ? title.replace(week, next) : `${ny} Week ${Number(nw)} ${fallbackName}`;
+  const res = await notesApi.create(folderOf(rel), name);
+  if (!res || !res.rel) { showToast('Could not create next week'); return; }
+  await notesApi.write(res.rel, nextText(cur.text, next));
+  await refreshTree();
+  await rebuildBacklinks();
+  await openNote(res.rel);
+}
+
+// --- weekly to-do (lib/weekly.mjs, src/weekly-view.js) ---
+const WEEK_BLOCK = /^```week[^\S\n]*$/m;
+const weekShowText = new Set(); // notes whose days show as text too, this session
+function weekBlock(rel, src) {
+  const week = habitWeek(readProps(src).props, rel ? noteTitleOf(rel) : '');
+  const edit = (fn) => changeNoteText(rel, fn);
+  return weekBoard(src, {
+    key: rel || '',
+    monday: week ? weekMonday(week) : null,
+    today: habitToday(rel, src),
+    nav: rel ? weekNav(rel, src, WEEK_BLOCK, nextWeekTodoText, 'to-do') : null,
+    showText: weekShowText.has(rel),
+    on: {
+      toggle: (line) => edit((text) => toggleTaskLine(text, line)),
+      add: async (day, text, again) => { await edit((t) => addWeekTask(t, day, text)); if (again) focusNewTask(document, day); },
+      edit: (line, text) => edit((t) => editWeekTask(t, line, text)),
+      move: (line, day) => edit((t) => moveWeekTask(t, line, day)),
+      carry: (day) => edit((t) => moveOpenToNextDay(t, day)),
+      text: () => { if (weekShowText.has(rel)) weekShowText.delete(rel); else weekShowText.add(rel); render(); },
+    },
+  });
+}
+
+async function addHabitEntry(rel) {
+  flushActiveEditor();
+  openHabitDialog((h) => changeNoteText(rel, (text) => addHabit(text, h)));
+}
+
+// The income and expenses tables of a budget note: coloured categories and an
+// "+ Add" button under each. b: the table's block.
+function decorateBudgetBlock(el, rel, src, b) {
+  // A weekly to-do's days are drawn by its board; their text shows on request.
+  if (WEEK_BLOCK.test(src) && !weekShowText.has(rel) && weekDays(src).some((d) => b.start >= d.heading && b.start <= d.end)) {
+    el.classList.add('wk-hidden');
+    return;
+  }
+  if (b.type !== 'table') return;
+  if (HABITS_BLOCK.test(src)) {
+    const t = habitTable(src);
+    if (t && t.start === b.start) {
+      decorateHabitTable(el, t, { today: habitToday(rel, src), onToggle: (line, day) => changeNoteText(rel, (text) => toggleHabit(text, line, day)) });
+      el.append(addHabitButton(() => addHabitEntry(rel)));
+      return;
+    }
+  }
+  const code = budgetCode(src);
+  if (code == null) return;
+  const t = budgetTables(src);
+  const kind = t.income && t.income.start === b.start ? 'income' : t.expenses && t.expenses.start === b.start ? 'expenses' : null;
+  if (!kind) return;
+  decorateBudgetTable(el, t[kind].columns, { money: moneyFormat(budgetSettings(code).currency), colourOf: categoryColours(src, code) });
+  el.append(addButton(kind, (k) => addBudgetEntry(rel, k)));
 }
 
 // Tick a task shown by a Dataview query: in the open note or day through the
@@ -3550,6 +3971,7 @@ function startAddProperty(scope = 'note') {
   state.focus = `prop-${scope}-new`;
   render();
 }
+const propsFold = new Map(); // rel -> true (folded) / false (open), this session
 function propertiesBlock(scope, b) {
   const src = getSrcFor(scope);
   const info = readProps(src);
@@ -3558,7 +3980,18 @@ function propertiesBlock(scope, b) {
   box.setAttribute('role', 'group');
   box.setAttribute('aria-label', 'Properties');
   const head = elem('div', 'props-head');
-  head.append(elem('span', 'props-title', 'Properties'));
+  // Folded: just the heading. A page with an icon or cover (or a job
+  // application, whose strip shows them) starts folded, so it opens on its
+  // content; the choice is kept per note for the session.
+  const rel = scope === 'note' ? state.openNote : dailyRel(state.dailyNote.key);
+  const look = noteLook(src);
+  const folded = !info.error && state.propAdding !== scope && (propsFold.has(rel) ? propsFold.get(rel) : Boolean(look.icon || look.cover || (scope === 'note' && (jobOf(rel, src) || projectOf(rel, src)))));
+  const title = elem('button', 'props-title', 'Properties'); title.type = 'button';
+  title.setAttribute('aria-expanded', String(!folded));
+  if (folded && info.props) title.append(elem('span', 'props-count', String(info.props.length)));
+  title.addEventListener('click', () => { propsFold.set(rel, !folded); render(); });
+  head.append(title);
+  if (folded) { box.classList.add('folded'); box.append(head); return box; }
   if (b) {
     const raw = elem('button', 'props-raw', 'Edit YAML'); raw.type = 'button';
     raw.title = 'Edit the properties as text';
@@ -3701,6 +4134,7 @@ function blockPreview(scope, b) {
   const el = elem('div', `block md block-${b.type}`); // block-image, block-heading… for spacing
   el.dataset.blockStart = String(b.start);
   mountBlockMarkdown(el, blockText(getSrcFor(scope), b), b.start, scope);
+  decorateBudgetBlock(el, scope === 'note' ? state.openNote : dailyRel(state.dailyNote.key), getSrcFor(scope), b);
   el.addEventListener('mousedown', (e) => {
     if (e.target.closest('a, input, img:not(.mermaid-img), button, [data-att], summary, .tag')) return; // keep links/tasks/folds/tags/buttons single-click
     e.preventDefault();
@@ -3827,6 +4261,7 @@ function renderBlockEditor(container, scope) {
 function renderNotePane() {
   if (!state.openNote) { contentEl.append(hint('Choose a note, or create one with "New note".')); return; }
   const pane = elem('div', 'note-pane');
+  pane.append(pageHead());
 
   // The folder path is in the toolbar title. The inline title is the file
   // name (click to rename); it steps aside when the note already starts with
@@ -3840,6 +4275,16 @@ function renderNotePane() {
   if (state.noteView === 'blocks' && foldTR(firstLine.replace(/^#\s+/, '').trim()) === foldTR(noteTitleOf(state.openNote)) && /^#\s/.test(firstLine)) header.classList.add('dup');
   header.append(h);
   pane.append(header);
+  const job = isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
+  const project = job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
+  if (project) pane.append(projectStrip(project, { onStage: (stage) => changeNoteText(state.openNote, (text) => setJobStatus(text, stage, setProp)) }));
+  if (job) {
+    pane.append(jobStrip(job, {
+      stages: jobStages(),
+      onStage: (stage) => changeNoteText(state.openNote, (text) => setJobStatus(text, stage, setProp)),
+      onLink: (url) => notesApi.openExternal(url),
+    }));
+  }
 
   if (state.noteView === 'source') {
     const ta = document.createElement('textarea');
@@ -3856,6 +4301,150 @@ function renderNotePane() {
   }
   pane.append(backlinkSection(state.openNote));
   contentEl.append(pane);
+}
+
+// A note's icon and cover, from its properties: icon: 💰, and cover: a colour
+// (violet, blue…) or an image in the vault ("[[beach.jpg]]", as Obsidian's
+// Banners plugin keeps one). cover: { gradient } | { image: raw } | null.
+const COVERS = ['violet', 'blue', 'teal', 'green', 'amber', 'rose', 'gray'];
+function noteLook(src) {
+  const r = readProps(src);
+  const out = { icon: '', cover: null };
+  if (!r.props) return out;
+  for (const p of r.props) {
+    const k = String(p.key).toLowerCase();
+    if (k === 'icon' && typeof p.value === 'string') out.icon = cleanEmoji(p.value);
+    if ((k === 'cover' || k === 'banner') && typeof p.value === 'string' && p.value.trim()) {
+      const v = p.value.trim();
+      out.cover = COVERS.includes(v.toLowerCase()) ? { gradient: v.toLowerCase() } : { image: v.replace(/^!?\[\[|\]\]$/g, '').split('|')[0] };
+    }
+  }
+  return out;
+}
+
+// Set (or with null, remove) a property of the open note; one undo step.
+function setNoteProp(key, value) {
+  closeMenu();
+  flushActiveEditor();
+  let next;
+  try { next = value == null ? deleteProp(state.noteContent, key) : setProp(state.noteContent, key, value); } catch (e) { showToast(`Could not change the properties: ${e.message}`); return; }
+  setSrc('note', next, true);
+  histRecord('note');
+  render();
+}
+
+// The top of a page: its cover across the whole width, its icon, and "Add
+// icon" / "Add cover" for a page that has none yet (shown on hover).
+function pageHead() {
+  const look = noteLook(state.noteContent);
+  const head = elem('div', 'page-head');
+  if (look.cover) {
+    head.classList.add('has-cover');
+    const cover = elem('div', 'note-cover');
+    if (look.cover.gradient) cover.classList.add(`cover-${look.cover.gradient}`);
+    else {
+      const att = attachResolverFor('note')(look.cover.image);
+      if (att.url && att.isImage) cover.style.backgroundImage = `url("${att.url}")`;
+      else cover.classList.add('cover-gray', 'cover-missing');
+    }
+    const acts = elem('div', 'cover-actions');
+    const change = elem('button', 'cover-btn', 'Change cover'); change.type = 'button';
+    change.dataset.menuAnchor = 'page-cover';
+    change.addEventListener('click', () => openCoverPicker('page-cover'));
+    const remove = elem('button', 'cover-btn', 'Remove'); remove.type = 'button';
+    remove.addEventListener('click', () => setNoteProp('cover', null));
+    acts.append(change, remove);
+    cover.append(acts);
+    head.append(cover);
+  }
+  if (look.icon) {
+    head.classList.add('has-icon');
+    const ic = elem('button', 'note-icon', look.icon); ic.type = 'button';
+    ic.title = 'Change icon'; ic.setAttribute('aria-label', `Icon ${look.icon}, change`);
+    ic.dataset.menuAnchor = 'page-icon';
+    ic.addEventListener('click', () => openPageIconPicker('page-icon'));
+    head.append(ic);
+  }
+  const adds = elem('div', 'page-adds');
+  if (!look.icon) {
+    const b = elem('button', 'page-add', '☺ Add icon'); b.type = 'button';
+    b.dataset.menuAnchor = 'page-icon-add';
+    b.addEventListener('click', () => openPageIconPicker('page-icon-add'));
+    adds.append(b);
+  }
+  if (!look.cover) {
+    const b = elem('button', 'page-add', '▭ Add cover'); b.type = 'button';
+    b.addEventListener('click', () => setNoteProp('cover', COVERS[Math.floor(Math.random() * COVERS.length)]));
+    adds.append(b);
+  }
+  if (adds.children.length) head.append(adds);
+  return head;
+}
+
+const PAGE_EMOJI = ['📝', '📌', '⭐', '💡', '🎯', '🚀', '📅', '✅', '📚', '📖', '✏️', '🧠', '💼', '💰', '💸', '📈',
+  '📊', '🧾', '🏠', '🍳', '☕', '🛒', '✈️', '🌍', '🏖️', '🎒', '🏋️', '🧘', '❤️', '🌱', '🌸', '🎨',
+  '🎵', '🎬', '🎮', '📷', '💻', '🛠️', '⚙️', '🔬', '🐛', '🧩', '🗂️', '📦', '🎉', '🔥', '✨', '🌙',
+  '☀️', '👥', '🤝', '💬', '📣', '🔒', '🎓', '🩺', '🐾', '🍀', '🧳', '🗺️'];
+function openPageIconPicker(key) {
+  openMenu(key, () => {
+    const box = pickerBox('Icon');
+    box.classList.add('emoji-picker');
+    const grid = elem('div', 'emoji-grid');
+    for (const e of PAGE_EMOJI) {
+      const b = elem('button', 'emoji-choice', e); b.type = 'button'; b.setAttribute('aria-label', e);
+      b.addEventListener('click', () => setNoteProp('icon', e));
+      grid.append(b);
+    }
+    box.append(grid);
+    const row = elem('div', 'emoji-row');
+    const input = document.createElement('input');
+    input.className = 'emoji-input'; input.placeholder = 'Or type any emoji'; input.maxLength = 16;
+    input.setAttribute('aria-label', 'Emoji');
+    const use = elem('button', 'btn quiet', 'Use'); use.type = 'button';
+    const apply = () => {
+      const e = cleanEmoji(input.value);
+      if (!e) { input.select(); showToast('Type one emoji, for example 🍲'); return; }
+      setNoteProp('icon', e);
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+    use.addEventListener('click', apply);
+    row.append(input, use);
+    box.append(row);
+    if (noteLook(state.noteContent).icon) {
+      const remove = elem('button', 'btn quiet style-reset', 'Remove icon'); remove.type = 'button';
+      remove.addEventListener('click', () => setNoteProp('icon', null));
+      box.append(remove);
+    }
+    return [{ el: box }];
+  }, { align: 'left' });
+}
+function openCoverPicker(key) {
+  openMenu(key, () => {
+    const box = pickerBox('Cover');
+    box.classList.add('cover-picker');
+    const grid = elem('div', 'cover-choices');
+    const now = noteLook(state.noteContent).cover;
+    for (const c of COVERS) {
+      const on = Boolean(now && now.gradient === c);
+      const b = elem('button', `cover-choice cover-${c}${on ? ' on' : ''}`); b.type = 'button';
+      b.title = c[0].toUpperCase() + c.slice(1); b.setAttribute('aria-label', b.title); b.setAttribute('aria-pressed', String(on));
+      b.addEventListener('click', () => setNoteProp('cover', c));
+      grid.append(b);
+    }
+    box.append(grid);
+    const img = elem('button', 'btn quiet style-reset', 'Image from a file…'); img.type = 'button';
+    img.addEventListener('click', async () => {
+      closeMenu();
+      const res = await notesApi.attachPick(attachDirFor('note'));
+      if (!res || res.canceled) { if (res && res.error) showToast(res.error); return; }
+      const pic = (res.files || []).find((f) => f && f.rel && f.isImage);
+      if (!pic) { showToast('Choose an image (PNG, JPG, GIF, WebP…)'); return; }
+      await refreshAttachList();
+      setNoteProp('cover', `[[${pic.rel}]]`);
+    });
+    box.append(img);
+    return [{ el: box }];
+  });
 }
 
 // Toggle between the live-preview block editor and the raw-source textarea.

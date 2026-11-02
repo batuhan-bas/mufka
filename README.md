@@ -84,10 +84,32 @@ yet? Home offers to open the Planner.
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
-- **Templates:** start a note from one of nine — daily note, meeting notes,
-  weekly review, project, book notes, recipe, habit tracker, budget and travel
-  plan — or from your own `Templates` folder (Obsidian-compatible). Copy the
+- **Templates:** start a note from one of eleven — daily note, meeting notes,
+  project, project board, book notes, habit tracker, budget, travel plan,
+  weekly to-do (with a review of the week), job search and job application — or from your own `Templates` folder (Obsidian-compatible). Copy the
   built-in ones there to make them yours.
+- **Budget** pages: add income and expenses with a small form and a card works
+  out what is left, with a ring of where the money went. The entries are plain
+  Markdown tables, so the file reads the same in Obsidian.
+- **Habit tracker:** a week of habits as a grid; tick a day with one click,
+  today is marked, and a card shows how the week is going against each habit's
+  goal. ‹ › moves between weeks and starts the next one.
+- **Today** gathers the day: its plans and calendar events, the day's part of
+  this week's to-do and habit tracker notes (tick and add there), and the
+  daily note with a mood to pick; a new daily note can start from the Daily
+  note template.
+- **Projects:** a project note shows its status (Planning, Active, Done or on
+  hold, one click to change), how much of its checklist is done and when it is
+  due; a project board shows them all by status, with what is late.
+- **Weekly to-do:** the week as seven columns of tasks; tick, add, change and
+  drag them between days, move what is left to the next day, and start next
+  week with the open ones. In the file they are a heading per day.
+- **Job search:** each application is a note; a board shows them all by stage
+  (drag a card to move it on) with how many heard back, and an application
+  note has a strip to move its stage with one click.
+- **Icon and cover** for any note: hover the top of a page to add them, click
+  to change (an emoji; a colour or an image). Kept as `icon:` and `cover:` in
+  its properties.
 - **Dataview**, like Obsidian's plugin: ` ```dataview ` queries (`TABLE`,
   `LIST`, `TASK`, `CALENDAR` with `FROM`, `WHERE`, `SORT`, `GROUP BY`,
   `FLATTEN`, `LIMIT` and its functions) over frontmatter, `key:: value` fields,
