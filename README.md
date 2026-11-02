@@ -88,6 +88,11 @@ yet? Home offers to open the Planner.
   weekly review, project, book notes, recipe, habit tracker, budget and travel
   plan — or from your own `Templates` folder (Obsidian-compatible). Copy the
   built-in ones there to make them yours.
+- **Budget** pages: add income and expenses with a small form and a card works
+  out what is left, with a ring of where the money went. The entries are plain
+  Markdown tables, so the file reads the same in Obsidian.
+- **Icon and cover** for any note: `icon: 💰` and `cover: violet` (blue, teal,
+  green, amber, rose, gray) in its properties.
 - **Dataview**, like Obsidian's plugin: ` ```dataview ` queries (`TABLE`,
   `LIST`, `TASK`, `CALENDAR` with `FROM`, `WHERE`, `SORT`, `GROUP BY`,
   `FLATTEN`, `LIMIT` and its functions) over frontmatter, `key:: value` fields,

@@ -1604,8 +1604,8 @@ app.whenReady().then(() => setTimeout(async () => {
     });
 
     // 59. Templates that come with Mufka: the sidebar button lists them; a
-    //     budget note is named for the month, filled, and shows its tables and
-    //     checklists. Copied into the Templates folder they become editable,
+    //     budget note is named for the month, filled, and shows its card; an
+    //     expense added through its dialog goes into the table and the totals. Copied into the Templates folder they become editable,
     //     and a changed one takes the built-in one's place.
     await step(59, 'built-in templates: new note from one, copy and override', async () => {
       await clickSel('#mode-notes');
@@ -1626,7 +1626,22 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => (file = findNote(`Budget ${month}.md`)) && fs.readFileSync(file, 'utf8').includes('## Expenses'), 3000), 'budget note not made from the template');
       assert(!fs.readFileSync(file, 'utf8').includes('{{'), 'template variables left in the note');
       assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Budget ${month}"`, 3000), 'budget note did not open');
-      assert(await waitFor('document.querySelectorAll(".note-body table").length >= 4 && document.querySelectorAll(".note-body input[type=checkbox]").length >= 4 && !!document.querySelector(".note-body .callout")', 3000), 'tables, checklists or callout not shown');
+      // The budget page: icon and cover, folded properties, the card, and an
+      // expense added through the dialog lands in the table and the totals.
+      assert(await waitFor('!!document.querySelector(".note-cover.cover-violet") && document.querySelector(".note-icon")?.textContent === "💰" && !!document.querySelector(".props.folded")', 3000), 'icon, cover or folded properties not shown');
+      assert(await waitFor('!!document.querySelector(".note-body .bud-card .bud-ring") && document.querySelectorAll(".note-body table").length === 2', 3000), 'budget card or tables not shown');
+      await clickEval(`[...document.querySelectorAll('.note-body .bud-add')].find(b => b.textContent.includes('expense'))`, '+ Add expense');
+      assert(await waitFor('!!document.querySelector(".bud-dialog")', 2000), 'add expense dialog did not open');
+      await typeText('Coffee beans');
+      await js(`(() => { document.querySelector('.bud-amount').value = '1.250,50'; document.querySelector('.bud-pill[data-name="Groceries"]').click(); return true; })()`);
+      await js(`document.querySelector('.bud-what').focus()`);
+      await enter();
+      assert(await waitFor2(() => /\| Coffee beans \| Groceries \| 1250\.5 \|/.test(fs.readFileSync(file, 'utf8')), 3000), `expense row not added: ${fs.readFileSync(file, 'utf8').split('## Expenses')[1]}`);
+      const stats = () => js('[...document.querySelectorAll(".bud-stat-value")].map(e => e.textContent)');
+      let totals = false;
+      for (let t = 0; t < 30 && !totals; t++) { const v = await stats(); totals = v[1].replace(/\D/g, '') === '12505' && v[2].startsWith('−'); if (!totals) await sleep(100); }
+      assert(totals, `totals not updated: ${await stats()}`);
+      assert(await js('!!document.querySelector(".note-body td .bud-chip")'), 'category not shown as a chip');
       // Copy them into the Templates folder, change one: it wins over the built-in.
       await press('P', ['meta']); await typeText('Copy built-in templates'); await enter();
       const tdir = path.join(vault, 'Templates');

@@ -25,6 +25,8 @@ import { renderPlanner, plannerFocus, announce } from './planner.js';
 import { renderTasks, tasksEditing, tasksAnnounce } from './tasks.js';
 import { createDataview } from './dataview-view.js';
 import { createMermaid } from './mermaid-view.js';
+import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
+import { budgetTables, budgetSettings, categoryChoices, addBudgetRow } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs';
@@ -2449,7 +2451,65 @@ darkQuery.addEventListener('change', () => { splitShown = null; if (!isEditing()
 // blocks and inline queries, and Mermaid diagrams.
 function noteRenderOptions(rel) {
   const dv = dataview.optionsFor(rel);
-  return { ...dv, blocks: { ...dv.blocks, mermaid: (src) => mermaid.block(src) }, embedDrawing };
+  return {
+    ...dv,
+    blocks: {
+      ...dv.blocks,
+      mermaid: (src) => mermaid.block(src),
+      budget: (code, _meta, { src }) => budgetCard(src, code, { onAdd: rel ? (kind) => addBudgetEntry(rel, kind) : null }),
+    },
+    embedDrawing,
+  };
+}
+
+// --- budget notes (lib/budget.mjs, src/budget-view.js) ---
+// The settings of the note's ```budget block ('' when it has none).
+const BUDGET_BLOCK = /^```budget[^\S\n]*\n([\s\S]*?)^```/m;
+function budgetCode(src) { const m = BUDGET_BLOCK.exec(String(src || '')); return m ? m[1] : null; }
+
+// The text of a note as the app has it now: the open note or day from the
+// editor, any other from its file.
+async function currentText(rel) {
+  if (rel === state.openNote) return { text: state.noteContent, scope: 'note' };
+  if (state.dailyNote.key && rel === dailyRel(state.dailyNote.key) && state.dailyNote.content != null) return { text: state.dailyNote.content, scope: 'daily' };
+  const res = await notesApi.read(rel);
+  return res && !res.error ? { text: res.content, scope: null } : null;
+}
+
+// "+ Add income / expense": the dialog, then a new row in the note's table.
+async function addBudgetEntry(rel, kind) {
+  flushActiveEditor();
+  const cur = await currentText(rel);
+  if (!cur) return;
+  const code = budgetCode(cur.text) || '';
+  openAddDialog({ kind, categories: categoryChoices(cur.text, code), currency: budgetSettings(code).currency, colourOf: categoryColours(cur.text, code) }, async (entry) => {
+    const now = await currentText(rel);
+    if (!now) return;
+    const next = addBudgetRow(now.text, kind, entry);
+    if (now.scope) {
+      setSrc(now.scope, next, true);
+      histRecord(now.scope);
+      render();
+      return;
+    }
+    const w = await notesApi.write(rel, next);
+    if (w && w.error) { showToast('Could not add the entry'); return; }
+    state.noteCache.delete(rel);
+    render();
+  });
+}
+
+// The income and expenses tables of a budget note: coloured categories and an
+// "+ Add" button under each. b: the table's block.
+function decorateBudgetBlock(el, rel, src, b) {
+  if (b.type !== 'table') return;
+  const code = budgetCode(src);
+  if (code == null) return;
+  const t = budgetTables(src);
+  const kind = t.income && t.income.start === b.start ? 'income' : t.expenses && t.expenses.start === b.start ? 'expenses' : null;
+  if (!kind) return;
+  decorateBudgetTable(el, t[kind].columns, { money: moneyFormat(budgetSettings(code).currency), colourOf: categoryColours(src, code) });
+  el.append(addButton(kind, (k) => addBudgetEntry(rel, k)));
 }
 
 // Tick a task shown by a Dataview query: in the open note or day through the
@@ -3550,6 +3610,7 @@ function startAddProperty(scope = 'note') {
   state.focus = `prop-${scope}-new`;
   render();
 }
+const propsFold = new Map(); // rel -> true (folded) / false (open), this session
 function propertiesBlock(scope, b) {
   const src = getSrcFor(scope);
   const info = readProps(src);
@@ -3558,7 +3619,17 @@ function propertiesBlock(scope, b) {
   box.setAttribute('role', 'group');
   box.setAttribute('aria-label', 'Properties');
   const head = elem('div', 'props-head');
-  head.append(elem('span', 'props-title', 'Properties'));
+  // Folded: just the heading. A page with an icon or cover starts folded, so it
+  // opens on its content; the choice is kept per note for the session.
+  const rel = scope === 'note' ? state.openNote : dailyRel(state.dailyNote.key);
+  const look = noteLook(src);
+  const folded = !info.error && state.propAdding !== scope && (propsFold.has(rel) ? propsFold.get(rel) : Boolean(look.icon || look.cover));
+  const title = elem('button', 'props-title', 'Properties'); title.type = 'button';
+  title.setAttribute('aria-expanded', String(!folded));
+  if (folded && info.props) title.append(elem('span', 'props-count', String(info.props.length)));
+  title.addEventListener('click', () => { propsFold.set(rel, !folded); render(); });
+  head.append(title);
+  if (folded) { box.classList.add('folded'); box.append(head); return box; }
   if (b) {
     const raw = elem('button', 'props-raw', 'Edit YAML'); raw.type = 'button';
     raw.title = 'Edit the properties as text';
@@ -3701,6 +3772,7 @@ function blockPreview(scope, b) {
   const el = elem('div', `block md block-${b.type}`); // block-image, block-heading… for spacing
   el.dataset.blockStart = String(b.start);
   mountBlockMarkdown(el, blockText(getSrcFor(scope), b), b.start, scope);
+  decorateBudgetBlock(el, scope === 'note' ? state.openNote : dailyRel(state.dailyNote.key), getSrcFor(scope), b);
   el.addEventListener('mousedown', (e) => {
     if (e.target.closest('a, input, img:not(.mermaid-img), button, [data-att], summary, .tag')) return; // keep links/tasks/folds/tags/buttons single-click
     e.preventDefault();
@@ -3827,6 +3899,9 @@ function renderBlockEditor(container, scope) {
 function renderNotePane() {
   if (!state.openNote) { contentEl.append(hint('Choose a note, or create one with "New note".')); return; }
   const pane = elem('div', 'note-pane');
+  const look = noteLook(state.noteContent);
+  if (look.cover) { pane.classList.add('has-cover'); pane.append(elem('div', `note-cover cover-${look.cover}`)); }
+  if (look.icon) { pane.classList.add('has-icon'); pane.append(elem('div', 'note-icon', look.icon)); }
 
   // The folder path is in the toolbar title. The inline title is the file
   // name (click to rename); it steps aside when the note already starts with
@@ -3856,6 +3931,21 @@ function renderNotePane() {
   }
   pane.append(backlinkSection(state.openNote));
   contentEl.append(pane);
+}
+
+// A note's icon and cover, from its properties (as Obsidian's Banners and
+// Iconize plugins keep them): icon: 💰, cover: violet.
+const COVERS = ['violet', 'blue', 'teal', 'green', 'amber', 'rose', 'gray'];
+function noteLook(src) {
+  const r = readProps(src);
+  const out = { icon: '', cover: '' };
+  if (!r.props) return out;
+  for (const p of r.props) {
+    const k = String(p.key).toLowerCase();
+    if (k === 'icon' && typeof p.value === 'string') out.icon = cleanEmoji(p.value);
+    if ((k === 'cover' || k === 'banner') && typeof p.value === 'string' && COVERS.includes(p.value.trim().toLowerCase())) out.cover = p.value.trim().toLowerCase();
+  }
+  return out;
 }
 
 // Toggle between the live-preview block editor and the raw-source textarea.
