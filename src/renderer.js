@@ -28,6 +28,8 @@ import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
 import { habitsCard, decorateHabitTable, addHabitButton, openHabitDialog } from './habits-view.js';
 import { jobStrip, jobsBoard, openJobDialog } from './jobs-view.js';
+import { weekBoard, focusNewTask } from './weekly-view.js';
+import { weekDays, addWeekTask, editWeekTask, moveWeekTask, moveOpenToNextDay, nextWeekTodoText } from '../lib/weekly.mjs';
 import { jobOf, jobsSettings, mayBeJob, jobNoteName, setJobStatus, DEFAULT_STAGES } from '../lib/jobs.mjs';
 import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
@@ -2464,6 +2466,7 @@ function noteRenderOptions(rel) {
       budget: (code, _meta, { src }) => budgetCard(src, code, { onAdd: rel ? (kind) => addBudgetEntry(rel, kind) : null, nav: rel ? budgetNav(rel, src) : null }),
       habits: (_code, _meta, { src }) => habitsCard(src, { today: habitToday(rel, src), nav: rel ? habitNav(rel, src) : null, onAdd: rel ? () => addHabitEntry(rel) : null }),
       jobs: (code, _meta, { src }) => jobsBlock(rel, code, src),
+      week: (_code, _meta, { src }) => weekBlock(rel, src),
     },
     embedDrawing,
   };
@@ -2629,12 +2632,14 @@ function habitToday(rel, src) {
   const now = new Date();
   return week && week === weekKey(now) ? (now.getDay() + 6) % 7 : -1;
 }
-function habitNav(rel, src) {
+// ‹ week › between the notes with the same kind of block (blockRe); the
+// next week is made with nextText(text, week) and named after this one.
+function weekNav(rel, src, blockRe, nextText, fallbackName) {
   const week = habitWeek(readProps(src).props, noteTitleOf(rel));
   if (!week) return null;
   const weeks = new Map();
   for (const n of state.vaultNotes) {
-    if (n.rel === rel || !HABITS_BLOCK.test(n.content)) continue;
+    if (n.rel === rel || !blockRe.test(n.content)) continue;
     const w = habitWeek(readProps(n.content).props, noteTitleOf(n.rel));
     if (w && !weeks.has(w)) weeks.set(w, n.rel);
   }
@@ -2645,10 +2650,11 @@ function habitNav(rel, src) {
     current: weekLabel(week),
     prev: prev ? { label: weekLabel(prev), open: () => openNote(weeks.get(prev)) } : null,
     next: next ? { label: weekLabel(next), open: () => openNote(weeks.get(next)) } : null,
-    newMonth: next ? null : { label: `week ${Number(shiftWeek(week, 1).split('-W')[1])}`, create: () => newHabitWeek(rel, week) },
+    newMonth: next ? null : { label: `week ${Number(shiftWeek(week, 1).split('-W')[1])}`, create: () => newWeekNote(rel, week, nextText, fallbackName) },
   };
 }
-async function newHabitWeek(rel, week) {
+const habitNav = (rel, src) => weekNav(rel, src, HABITS_BLOCK, nextWeekText, 'habits');
+async function newWeekNote(rel, week, nextText, fallbackName) {
   flushActiveEditor();
   const cur = await currentText(rel);
   if (!cur) return;
@@ -2656,14 +2662,37 @@ async function newHabitWeek(rel, week) {
   const [y, w] = week.split('-W'); const [ny, nw] = next.split('-W');
   const title = noteTitleOf(rel);
   const name = title.includes(`${y} Week ${Number(w)}`) ? title.replace(`${y} Week ${Number(w)}`, `${ny} Week ${Number(nw)}`)
-    : title.includes(week) ? title.replace(week, next) : `${ny} Week ${Number(nw)} habits`;
+    : title.includes(week) ? title.replace(week, next) : `${ny} Week ${Number(nw)} ${fallbackName}`;
   const res = await notesApi.create(folderOf(rel), name);
   if (!res || !res.rel) { showToast('Could not create next week'); return; }
-  await notesApi.write(res.rel, nextWeekText(cur.text, next));
+  await notesApi.write(res.rel, nextText(cur.text, next));
   await refreshTree();
   await rebuildBacklinks();
   await openNote(res.rel);
 }
+
+// --- weekly to-do (lib/weekly.mjs, src/weekly-view.js) ---
+const WEEK_BLOCK = /^```week[^\S\n]*$/m;
+const weekShowText = new Set(); // notes whose days show as text too, this session
+function weekBlock(rel, src) {
+  const week = habitWeek(readProps(src).props, rel ? noteTitleOf(rel) : '');
+  const edit = (fn) => changeNoteText(rel, fn);
+  return weekBoard(src, {
+    monday: week ? weekMonday(week) : null,
+    today: habitToday(rel, src),
+    nav: rel ? weekNav(rel, src, WEEK_BLOCK, nextWeekTodoText, 'to-do') : null,
+    showText: weekShowText.has(rel),
+    on: {
+      toggle: (line) => edit((text) => toggleTaskLine(text, line)),
+      add: async (day, text, again) => { await edit((t) => addWeekTask(t, day, text)); if (again) focusNewTask(document, day); },
+      edit: (line, text) => edit((t) => editWeekTask(t, line, text)),
+      move: (line, day) => edit((t) => moveWeekTask(t, line, day)),
+      carry: (day) => edit((t) => moveOpenToNextDay(t, day)),
+      text: () => { if (weekShowText.has(rel)) weekShowText.delete(rel); else weekShowText.add(rel); render(); },
+    },
+  });
+}
+
 async function addHabitEntry(rel) {
   flushActiveEditor();
   openHabitDialog((h) => changeNoteText(rel, (text) => addHabit(text, h)));
@@ -2672,6 +2701,11 @@ async function addHabitEntry(rel) {
 // The income and expenses tables of a budget note: coloured categories and an
 // "+ Add" button under each. b: the table's block.
 function decorateBudgetBlock(el, rel, src, b) {
+  // A weekly to-do's days are drawn by its board; their text shows on request.
+  if (WEEK_BLOCK.test(src) && !weekShowText.has(rel) && weekDays(src).some((d) => b.start >= d.heading && b.start <= d.end)) {
+    el.classList.add('wk-hidden');
+    return;
+  }
   if (b.type !== 'table') return;
   if (HABITS_BLOCK.test(src)) {
     const t = habitTable(src);

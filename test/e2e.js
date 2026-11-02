@@ -2163,6 +2163,32 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval('[...document.querySelectorAll(".job-step")].find(b => b.textContent === "Offer")', 'Offer');
       assert(await waitFor2(() => /^status: Offer$/m.test(fs.readFileSync(file, 'utf8')), 3000), 'strip did not move the status');
     });
+
+    // 78. Weekly to-do: seven days as columns (their text hidden), today
+    //     marked; a task added to today goes under its heading; ticking it
+    //     writes [x]; "Show as text" brings the headings back.
+    await step(78, 'weekly to-do: add and tick a task, show as text', async () => {
+      await clickSel('.side-notes .side-btn[aria-label="New note from template"]');
+      assert(await waitFor('!!document.querySelector(".palette-new-from-template")', 2000), 'template list did not open');
+      await typeText('Weekly to-do'); await enter();
+      assert(await waitFor('!!document.getElementById("tree-edit")', 2000), 'no name field');
+      const name = await js('document.getElementById("tree-edit").value');
+      await enter();
+      assert(await waitFor('document.querySelectorAll(".wk-day").length === 7 && document.querySelectorAll(".wk-day.today").length === 1 && !!document.querySelector(".wk-hidden")', 3000), 'week board not shown');
+      await clickSel('.wk-day.today .wk-add');
+      assert(await waitFor('!!document.querySelector(".wk-new")', 2000), 'no field for a new task');
+      await typeText('Water the plants'); await enter();
+      const vault = await js('window.notes.vaultInfo().then(v => v.path)');
+      const findNote = (n) => { const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (e.name.startsWith('.')) continue; const p = path.join(dir, e.name); if (e.isDirectory()) { const r = walk(p); if (r) return r; } else if (e.name === n) return p; } return null; }; return walk(vault); };
+      const file = findNote(`${name}.md`);
+      const dayName = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][(new Date().getDay() + 6) % 7];
+      assert(await waitFor2(() => new RegExp(`## ${dayName}\\n(?:- \\[.\\] .*\\n)*- \\[ \\] Water the plants`).test(fs.readFileSync(file, 'utf8')), 3000), `task not under ${dayName}: ${fs.readFileSync(file, 'utf8')}`);
+      await press('Escape');
+      await clickEval('[...document.querySelectorAll(".wk-day.today .wk-task")].find(t => t.textContent === "Water the plants").querySelector(".wk-check")', 'tick');
+      assert(await waitFor2(() => /- \[x\] Water the plants/.test(fs.readFileSync(file, 'utf8')), 3000), 'tick not saved');
+      await clickSel('.wk-as-text');
+      assert(await waitFor('!document.querySelector(".wk-hidden") && document.querySelectorAll(".note-body h2").length >= 7', 3000), 'days not shown as text');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

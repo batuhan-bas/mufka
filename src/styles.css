@@ -1615,3 +1615,43 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .job-card-ago { margin-left: auto; white-space: nowrap; }
 .job-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 10px 0; border: 1px dashed var(--line); border-radius: 7px; }
 .job-new { flex: none; }
+/* --- weekly to-do (src/weekly-view.js) --- */
+.md .wk-hidden, .wk-hidden { display: none; }
+.content:has(.wk-box) { overflow-x: hidden; }
+.wk-box { --w: min(calc(100cqw - 48px), 1240px); width: var(--w); margin-left: calc((100% - var(--w)) / 2); display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+.wk-head { display: flex; flex-direction: column; gap: 10px; max-width: 564px; margin: 0 auto; width: 100%; }
+.wk-head .bud-nav { margin: 0; }
+.wk-progress { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+.wk-count b { color: var(--text); }
+.wk-bar { flex: 1; height: 6px; }
+.wk-bar i { background: var(--c-green); }
+.wk-as-text { font: inherit; font-size: 12px; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.wk-as-text:hover { color: var(--text); border-color: var(--line-strong); }
+.wk-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+/* narrow: as many days a row as fit */
+@container (max-width: 900px) { .wk-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
+.wk-day { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 8px 8px; display: flex; flex-direction: column; gap: 4px; min-height: 150px; transition: border-color .1s, background .1s; }
+.wk-day.today { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.wk-day.past { opacity: .82; }
+.wk-day.drop { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.wk-day-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; padding: 0 4px 4px; }
+.wk-day-name { font-weight: 600; font-size: 14px; display: flex; flex-direction: column; min-width: 0; }
+.wk-day.today .wk-day-name { color: var(--accent); }
+.wk-day-date { font-weight: 400; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.wk-day-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.wk-tasks { display: flex; flex-direction: column; gap: 2px; }
+.wk-task { display: flex; align-items: flex-start; gap: 6px; padding: 4px; border-radius: 6px; cursor: grab; }
+.wk-task:hover { background: var(--hover-soft); }
+.wk-task.dragging { opacity: .4; }
+.wk-check { flex: none; width: 16px; height: 16px; margin-top: 2px; border-radius: 4px; border: 1.5px solid var(--line-strong); background: none; cursor: pointer; padding: 0; display: grid; place-items: center; }
+.wk-check:hover { border-color: var(--c-green); }
+.wk-task.done .wk-check { background: var(--c-green); border-color: var(--c-green); }
+.wk-task.done .wk-check::after { content: ""; width: 7px; height: 4px; border-left: 2px solid var(--on-green); border-bottom: 2px solid var(--on-green); transform: translateY(-1px) rotate(-45deg); }
+.wk-text { flex: 1; min-width: 0; text-align: left; font: inherit; font-size: 13.5px; line-height: 1.4; color: var(--text); background: none; border: 0; padding: 0; cursor: text; overflow-wrap: anywhere; }
+.wk-task.done .wk-text { color: var(--muted); text-decoration: line-through; }
+.wk-edit { flex: 1; min-width: 0; font: inherit; font-size: 13.5px; color: var(--text); background: var(--raised); border: 1px solid var(--accent); border-radius: 5px; padding: 3px 6px; outline: none; }
+.wk-new { flex: none; width: 100%; }
+.wk-add, .wk-carry { text-align: left; font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; border-radius: 6px; padding: 4px 6px; cursor: pointer; }
+.wk-add:hover, .wk-carry:hover { background: var(--hover-soft); color: var(--text); }
+.wk-carry { font-size: 12px; margin-top: auto; }
+.wk-check:focus-visible, .wk-text:focus-visible, .wk-add:focus-visible, .wk-carry:focus-visible, .wk-as-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
