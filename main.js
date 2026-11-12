@@ -101,7 +101,8 @@ function writeFileAtomic(file, text) {
 }
 
 // --- settings -------------------------------------------------------------
-// <userData>/settings.json: { vaultPath?, theme? }. Unknown keys are kept.
+// <userData>/settings.json: { vaultPath?, theme?, vaultRoot?, mcp? }. Unknown
+// keys are kept. vaultRoot and mcp are read by the MCP server (mcp/).
 
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 function readSettings() {
@@ -129,6 +130,26 @@ function writeSettings(patch) {
   for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
   fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
   writeFileAtomic(settingsPath(), JSON.stringify(next, null, 2));
+}
+
+// --- AI clients (MCP) ----------------------------------------------------
+// out/main/mcp-server.js (mcp/server.mjs) is started by the AI client, with
+// this app's own binary as Node (ELECTRON_RUN_AS_NODE), so nothing else needs
+// installing. It reads settings.mcp on every call: off by default, and
+// read-only unless writing is allowed.
+function mcpSettings() {
+  const m = readSettings().mcp || {};
+  return { enabled: m.enabled === true, allowWrite: m.allowWrite === true };
+}
+// What Settings shows and copies: the Claude Desktop / Cursor JSON and the
+// Claude Code command, with this install's real paths.
+function mcpInfo() {
+  const args = [path.join(app.getAppPath(), 'out', 'main', 'mcp-server.js'), '--user-data', app.getPath('userData')];
+  const json = JSON.stringify({ mcpServers: { mufka: { command: process.execPath, args, env: { ELECTRON_RUN_AS_NODE: '1' } } } }, null, 2);
+  // Quoted for the shell the command is pasted into (macOS/Linux: sh; Windows paths keep their backslashes).
+  const q = (s) => (process.platform === 'win32' ? `"${s}"` : `"${s.replace(/(["\\$`])/g, '\\$1')}"`);
+  const command = `claude mcp add --transport stdio --scope user --env ELECTRON_RUN_AS_NODE=1 mufka -- ${[process.execPath, ...args].map(q).join(' ')}`;
+  return { ...mcpSettings(), json, command };
 }
 
 // --- notes vault --------------------------------------------------------
@@ -170,7 +191,12 @@ function moveNotesToDocuments() {
 }
 // Set at startup and when the user switches vaults.
 let vault = { root: null, custom: false, missing: null };
-function loadVault() { vault = resolveVaultRoot(readSettings(), defaultNotesRoot(), isDir); }
+function loadVault() {
+  vault = resolveVaultRoot(readSettings(), defaultNotesRoot(), isDir);
+  // The MCP server runs without Electron and cannot ask for the Documents
+  // folder (redirected on some Windows setups); it reads the root from here.
+  if (readSettings().vaultRoot !== notesRoot()) writeSettings({ vaultRoot: notesRoot() });
+}
 function notesRoot() { return vault.root || defaultNotesRoot(); }
 // Where daily notes and new attachments go (lib/layout.mjs): the vault's own
 // Obsidian settings if it has them, else the folders Mufka used before
@@ -1785,6 +1811,13 @@ ipcMain.handle('history:restore', wrap((rel, t) => historyRestore(rel, t)));
 ipcMain.handle('history:deleted', wrap(() => historyDeleted()));
 ipcMain.handle('history:restoreDeleted', wrap((rel, t) => historyRestoreDeleted(rel, t)));
 ipcMain.handle('vault:info', wrap(() => ({ name: path.basename(notesRoot()), path: notesRoot(), custom: vault.custom })));
+ipcMain.handle('mcp:get', wrap(() => mcpInfo()));
+ipcMain.handle('mcp:set', wrap((patch) => {
+  const next = { ...mcpSettings() };
+  for (const k of ['enabled', 'allowWrite']) if (patch && typeof patch[k] === 'boolean') next[k] = patch[k];
+  writeSettings({ mcp: next });
+  return mcpInfo();
+}));
 ipcMain.handle('vault:choose', wrap(async () => { await chooseVault(); return { ok: true }; }));
 ipcMain.handle('vault:useDefault', wrap(() => { setVault(null); return { ok: true }; }));
 ipcMain.handle('notes:reveal', wrap(() => { ensureNotesDirs(); shell.showItemInFolder(notesRoot()); return { ok: true }; }));

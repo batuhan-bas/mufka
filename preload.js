@@ -72,6 +72,9 @@ contextBridge.exposeInMainWorld('notes', {
   // Appearance: 'system' | 'light' | 'dark'.
   theme: () => ipcRenderer.invoke('theme:get'),
   setTheme: (choice) => ipcRenderer.invoke('theme:set', choice),
+  // AI clients (MCP): { enabled, allowWrite, json, command }; set takes { enabled?, allowWrite? }.
+  mcp: () => ipcRenderer.invoke('mcp:get'),
+  setMcp: (patch) => ipcRenderer.invoke('mcp:set', patch),
   bookmarks: () => ipcRenderer.invoke('bookmarks:list'),
   treeStyles: () => ipcRenderer.invoke('treestyle:read'),
   saveTreeStyles: (data) => ipcRenderer.invoke('treestyle:write', data),

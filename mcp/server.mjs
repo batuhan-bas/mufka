@@ -26,5 +26,8 @@ const quit = () => { fs.unwatchFile(path.join(userData, 'settings.json')); proce
 process.stdin.on('end', quit);
 process.stdin.on('close', quit);
 
-await server.connect(new StdioServerTransport());
-process.stderr.write(`Mufka MCP server: notes in ${locateVault({ userData, settings: settings() })}\n`);
+// No top-level await: the build makes this file CommonJS, like the app's main.
+server.connect(new StdioServerTransport()).then(
+  () => process.stderr.write(`Mufka MCP server: notes in ${locateVault({ userData, settings: settings() })}\n`),
+  (err) => { process.stderr.write(`Mufka MCP server could not start: ${err.message}\n`); process.exit(1); },
+);
