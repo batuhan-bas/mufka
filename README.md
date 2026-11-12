@@ -27,6 +27,7 @@ Made by [Calexis Labs](https://github.com/Calexis-Labs).
 - [Install it on a Mac](#install-it-on-a-mac)
 - [Install it on Windows](#install-it-on-windows)
 - [Your notes and your data](#your-notes-and-your-data)
+- [Use your notes from AI clients](#use-your-notes-from-ai-clients)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [For the developer](#for-the-developer)
 - [License](#license)
@@ -262,7 +263,9 @@ Everything stays on your computer; there is no account and no server. The except
 are the connections you turn on yourself in **Settings**: your **Microsoft**
 and **Google** calendars (Mufka reads your events; it asks only for calendar
 read access) and **Wispr Flow** (Mufka reads your meetings). Mufka never sends
-your notes or plans anywhere. Sign-ins are kept encrypted (in the macOS Keychain, or by Windows for your user account);
+your notes or plans anywhere; with [AI clients](#use-your-notes-from-ai-clients)
+turned on, a client you run reads notes and sends what it reads to its own AI
+service. Sign-ins are kept encrypted (in the macOS Keychain, or by Windows for your user account);
 **Disconnect** forgets them. Note scripts (` ```dataviewjs `) and Mermaid
 diagrams run in a sandbox that cannot read your files or reach the internet,
 and Draw's fonts come with the app. Details: the [privacy policy](https://mufka.app/privacy).
@@ -278,6 +281,35 @@ and Draw's fonts come with the app. Details: the [privacy policy](https://mufka.
 | Backups | **File → Export Plans…** writes a JSON copy; notes are ordinary files, so any backup tool (Time Machine, iCloud Drive, git) works. |
 
 Notes kept by Mufka before 1.4 (in `~/Library/Application Support/Mufka/Notes`) move to `~/Documents/Mufka` by themselves the first time 1.4 starts; a folder you chose yourself stays where it is.
+
+## Use your notes from AI clients
+
+Claude Desktop, Claude Code, Cursor and other MCP clients can search and read
+your notes through Mufka's MCP server. It runs on your computer, started by the
+client; nothing is set up anywhere else.
+
+1. In **Settings → AI clients (MCP)**, turn on **Let AI clients search and read
+   notes**. It is off until you do.
+2. Click **Copy config for Claude Desktop / Cursor** and paste it into the
+   client's MCP config (Claude Desktop: Settings → Developer → Edit Config;
+   Cursor: Settings → MCP), or **Copy Claude Code command** and run it in a
+   terminal. Restart the client.
+3. Ask it about your notes: *"What did I write about the deploy last week?"*,
+   *"Which job applications are waiting for an answer?"*
+
+| Tool | What it does |
+|---|---|
+| `search_notes` | Mufka's search, with its operators (`"phrase"`, `-word`, `OR`, `/regex/`, `#tag`, `path:`, `task-todo:`, `[property:value]`…) |
+| `read_note` | A note's text, properties, tags and the notes linking to it |
+| `list_notes` | Notes in a folder or with a tag, newest first or by name |
+| `list_job_applications` | Job applications with company, role, status and date |
+| `list_projects` | Projects with status, progress and due date |
+| `create_note`, `append_to_note` | Only when you also allow writing: make a new note, or add to the end of one. Nothing is ever changed or deleted. |
+
+The server reads only the notes folder: never anything outside it (symlinks
+included), and never your plans, settings or sign-ins. The switches apply at
+once; turning access off makes every tool say so. What a client reads goes to
+the AI service it uses.
 
 ## Keyboard shortcuts
 
@@ -322,13 +354,18 @@ Mermaid run in `src/sandbox.html`, a hidden sandboxed window (`main.js`).
 The vault's notes are kept by the main process in `lib/vault-cache.mjs` (saved
 under `<userData>/index/`, outside the vault): only changed files are read again,
 and the window receives the changes, not the whole vault. Note version history
-lives under `<userData>/history/`.
+lives under `<userData>/history/`. The MCP server is `mcp/` (built to
+`out/main/mcp-server.js`, started by the client with the app's own binary and
+`ELECTRON_RUN_AS_NODE=1`), on the same `lib/` modules plus `lib/vaultfs.mjs`,
+which reads and writes the vault without Electron.
 
 ```sh
 npm install              # dependencies, then downloads Electron (pnpm works too)
 npm run dev              # develop with hot reload
 npm start                # build, then run the built app
-npm test                 # unit tests, then build + the real end-to-end test
+npm test                 # unit tests, the MCP eval, then build + the real end-to-end test
+npm run eval:mcp         # questions to the MCP server about a sample vault (Turkish included)
+npm run smoke:packaged   # packs the app, starts the MCP server from app.asar: run before a release
 npm run dist             # build the signed universal .dmg into dist/
 npm run dist:public      # the same, ad-hoc signed: for sharing / Releases
 npm run dist:win         # the Windows installer (.exe), on Windows or a Mac
@@ -381,7 +418,9 @@ tell versions apart.
 UI behaviour is proven by a real end-to-end test (`test/e2e.js`): it boots the
 built app with a throwaway data folder, drives it only through real input
 events (clicks, keys, drags, OS file drops) and checks the files on disk. Pure
-logic has `node:test` suites next to each `lib/` module.
+logic has `node:test` suites next to each `lib/` module. The MCP server is
+tested in-process (`test/mcp-server.test.mjs`) and by an eval of fixed
+questions against `test/fixtures/mcp-vault` (`scripts/mcp-eval.mjs`).
 
 ### Project notes
 
