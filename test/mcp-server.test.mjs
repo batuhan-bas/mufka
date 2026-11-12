@@ -164,9 +164,10 @@ test('create_note and append_to_note when writing is allowed, inside the vault o
 });
 
 test('locate: userData per platform, and the vault the app would open', () => {
-  assert.equal(defaultUserData({ platform: 'darwin', home: '/Users/a' }), '/Users/a/Library/Application Support/Mufka');
+  // path.join of the machine running the test, as the code uses it.
+  assert.equal(defaultUserData({ platform: 'darwin', home: '/Users/a' }), path.join('/Users/a', 'Library', 'Application Support', 'Mufka'));
   assert.equal(defaultUserData({ platform: 'win32', env: { APPDATA: 'C:\\Users\\a\\AppData\\Roaming' }, home: 'C:\\Users\\a' }), path.join('C:\\Users\\a\\AppData\\Roaming', 'Mufka'));
-  assert.equal(defaultUserData({ platform: 'linux', env: {}, home: '/home/a' }), '/home/a/.config/Mufka');
+  assert.equal(defaultUserData({ platform: 'linux', env: {}, home: '/home/a' }), path.join('/home/a', '.config', 'Mufka'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-locate-'));
   try {
     const chosen = path.join(dir, 'Chosen'); const last = path.join(dir, 'Last');
