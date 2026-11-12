@@ -2248,6 +2248,33 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval('[...document.querySelectorAll(".mood")].find(b => b.title === "Good")', 'Good');
       assert(await waitFor('document.querySelector(".mood.on")?.title === "Good"', 3000), 'mood not set');
     });
+
+    // 81. Settings → AI clients (MCP): off by default; turning it on and
+    //     allowing writes is saved to settings.json; the copied config starts
+    //     this app's MCP server with ELECTRON_RUN_AS_NODE.
+    await step(81, 'settings: AI clients (MCP) switches and copied config', async () => {
+      await press(',', ['meta']);
+      assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row")', 3000), 'no AI clients section');
+      const box = (k) => `document.querySelector('.mcp-row input[data-mcp="${k}"]')`;
+      assert(await waitFor(`${box('enabled')}.checked === false && ${box('allowWrite')}.disabled === true`, 2000), 'not off by default');
+      const settingsFile = path.join(tmp, 'settings.json');
+      const saved = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')).mcp || {}; } catch { return {}; } };
+      await clickEval(box('enabled'), 'enable MCP');
+      assert(await waitFor2(() => saved().enabled === true && saved().allowWrite === false, 3000), `not saved: ${JSON.stringify(saved())}`);
+      assert(await waitFor(`${box('allowWrite')}.disabled === false`, 2000), 'write switch still disabled');
+      await clickEval(box('allowWrite'), 'allow writing');
+      assert(await waitFor2(() => saved().allowWrite === true, 3000), 'allowWrite not saved');
+      assert(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).vaultRoot, 'vault root not recorded for the server');
+      // clipboard.readText() is async in this Electron.
+      const copied = async (ok) => { for (let i = 0; i < 30; i++) { const t = await clipboard.readText(); if (ok(t)) return true; await sleep(100); } return false; };
+      await clickSel('.mcp-row [data-mcp-copy="json"]');
+      assert(await copied((t) => { try { const c = JSON.parse(t).mcpServers.mufka; return c.env.ELECTRON_RUN_AS_NODE === '1' && c.args[0].endsWith(path.join('out', 'main', 'mcp-server.js')) && c.args.includes(tmp); } catch { return false; } }), `config not copied: ${(await clipboard.readText()).slice(0, 200)}`);
+      await clickSel('.mcp-row [data-mcp-copy="command"]');
+      assert(await copied((t) => t.startsWith('claude mcp add --transport stdio --scope user --env ELECTRON_RUN_AS_NODE=1 mufka -- ')), `command not copied: ${await clipboard.readText()}`);
+      await clickEval(box('enabled'), 'disable MCP');
+      assert(await waitFor2(() => saved().enabled === false, 3000), 'not turned off');
+      await press('Escape');
+    });
   } catch (e) {
     failedStep = (e && e.message) || String(e);
   }

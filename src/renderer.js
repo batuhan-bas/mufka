@@ -4569,6 +4569,48 @@ function appearanceSection() {
   sec.append(row);
   return sec;
 }
+// AI clients (MCP): whether Claude Desktop, Claude Code, Cursor… may use the
+// notes (mcp/ is the server; main.js keeps the switches in settings.json),
+// and the config to paste into them.
+function mcpSection() {
+  const sec = elem('section', 'settings-section');
+  sec.append(elem('h3', 'settings-heading', 'AI clients (MCP)'));
+  const row = elem('div', 'conn-row mcp-row');
+  const tx = elem('div', 'conn-text');
+  tx.append(elem('span', 'conn-name', 'Use your notes from AI clients'),
+    elem('span', 'conn-note', 'Claude Desktop, Claude Code, Cursor and other MCP clients can search and read your notes, job applications and projects. What a client reads is sent to its AI service. Off until you turn it on.'));
+  const toggle = (label, key) => {
+    const l = elem('label', 'mcp-toggle');
+    const box = document.createElement('input');
+    box.type = 'checkbox'; box.dataset.mcp = key;
+    l.append(box, elem('span', null, label));
+    return { l, box };
+  };
+  const on = toggle('Let AI clients search and read notes', 'enabled');
+  const write = toggle('Also let them create notes and add to them (never change or delete)', 'allowWrite');
+  const copies = elem('div', 'conn-side');
+  const copyBtn = (label, key, done) => {
+    const b = elem('button', 'btn', label); b.type = 'button'; b.dataset.mcpCopy = key;
+    b.addEventListener('click', async () => { const info = await notesApi.mcp(); await notesApi.copy(info[key]); showToast(done); });
+    return b;
+  };
+  copies.append(copyBtn('Copy config for Claude Desktop / Cursor', 'json', 'Copied; paste it into the client\u2019s MCP config and restart it'),
+    copyBtn('Copy Claude Code command', 'command', 'Copied; run it in a terminal'));
+  const where = elem('span', 'conn-info', 'Claude Desktop: Settings → Developer → Edit Config. Cursor: Settings → MCP. The config points at this copy of Mufka; copy it again after moving the app.');
+  const show = (info) => {
+    on.box.checked = info.enabled;
+    write.box.checked = info.allowWrite;
+    write.box.disabled = !info.enabled;
+    write.l.classList.toggle('off', !info.enabled);
+  };
+  const set = async (patch) => show(await notesApi.setMcp(patch));
+  on.box.addEventListener('change', () => set({ enabled: on.box.checked }));
+  write.box.addEventListener('change', () => set({ allowWrite: write.box.checked }));
+  notesApi.mcp().then(show);
+  row.append(tx, on.l, write.l, copies, where);
+  sec.append(row);
+  return sec;
+}
 function openSettings() {
   if (settingsLayer) settingsLayer._close();
   const layer = elem('div', 'palette-layer');
@@ -4610,6 +4652,7 @@ function openSettings() {
   row.append(text, side);
   section.append(row);
   box.append(section);
+  box.append(mcpSection());
 
   let busy = false;
   const button = (label, quiet, fn) => {

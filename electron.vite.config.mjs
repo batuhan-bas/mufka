@@ -1,6 +1,7 @@
 // Build configuration (electron-vite). The sources keep their places; this only
 // points each process at its entry:
 //   main.js          -> out/main/index.js
+//   mcp/server.mjs   -> out/main/mcp-server.js (the MCP server for AI clients)
 //   preload.js       -> out/preload/index.js (CommonJS, required by sandboxed preloads)
 //   index.html       -> out/renderer/index.html
 //   src/export.html  -> out/renderer/src/export.html (offscreen PDF export page)
@@ -28,7 +29,10 @@ export default defineConfig({
   main: {
     build: {
       rollupOptions: {
-        input: { index: resolve(root, 'main.js') },
+        // mcp-server: the MCP server AI clients start (mcp/server.mjs), run by
+        // the app's own binary with ELECTRON_RUN_AS_NODE=1; it shares no code
+        // with main.js beyond the lib modules both use.
+        input: { index: resolve(root, 'main.js'), 'mcp-server': resolve(root, 'mcp/server.mjs') },
         // zod's sources carry comments Rollup cannot place ("contains an
         // annotation that Rollup cannot interpret"); harmless, so not shown.
         onwarn(warning, warn) {

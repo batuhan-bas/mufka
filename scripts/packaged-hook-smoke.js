@@ -19,6 +19,10 @@ ipcMain.handle('notes:all', () => []);
 ipcMain.handle('notes:layout', () => ({ daily: 'Daily', attachments: 'Attachments', relative: false }));
 ipcMain.handle('bookmarks:list', () => []);
 ipcMain.handle('vault:info', () => ({ name: 'Notes', path: '/tmp/Notes', custom: false }));
+// Called at launch since the vault index, tree styles and calendar were added
+ipcMain.handle('notes:sync', () => ({ version: 0, full: true, changed: [], removed: [] }));
+ipcMain.handle('treestyle:read', () => ({}));
+ipcMain.handle('calendar:events', () => ({ connected: false, events: [] }));
 
 let sawError = false;
 app.whenReady().then(() => {
