@@ -4578,7 +4578,7 @@ function mcpSection() {
   const row = elem('div', 'conn-row mcp-row');
   const tx = elem('div', 'conn-text');
   tx.append(elem('span', 'conn-name', 'Use your notes from AI clients'),
-    elem('span', 'conn-note', 'Claude Desktop, Claude Code, Cursor and other MCP clients can search and read your notes, job applications and projects. What a client reads is sent to its AI service. Off until you turn it on.'));
+    elem('span', 'conn-note', 'Claude Desktop, Claude Code, Cursor and other MCP clients can search and read your notes, job applications and projects; Claude also shows them as Mufka draws them. What a client reads is sent to its AI service. Off until you turn it on.'));
   const toggle = (label, key) => {
     const l = elem('label', 'mcp-toggle');
     const box = document.createElement('input');
@@ -4588,6 +4588,7 @@ function mcpSection() {
   };
   const on = toggle('Let AI clients search and read notes', 'enabled');
   const write = toggle('Also let them create notes and add to them (never change or delete)', 'allowWrite');
+  const ticks = toggle('Let them tick tasks in the notes they show (only [ ] ↔ [x], nothing else)', 'allowTicks');
   const copies = elem('div', 'conn-side');
   const copyBtn = (label, key, done) => {
     const b = elem('button', 'btn', label); b.type = 'button'; b.dataset.mcpCopy = key;
@@ -4599,15 +4600,18 @@ function mcpSection() {
   const where = elem('span', 'conn-info', 'Claude Desktop: Settings → Developer → Edit Config. Cursor: Settings → MCP. The config points at this copy of Mufka; copy it again after moving the app.');
   const show = (info) => {
     on.box.checked = info.enabled;
-    write.box.checked = info.allowWrite;
-    write.box.disabled = !info.enabled;
-    write.l.classList.toggle('off', !info.enabled);
+    for (const [t, key] of [[write, 'allowWrite'], [ticks, 'allowTicks']]) {
+      t.box.checked = info[key];
+      t.box.disabled = !info.enabled;
+      t.l.classList.toggle('off', !info.enabled);
+    }
   };
   const set = async (patch) => show(await notesApi.setMcp(patch));
   on.box.addEventListener('change', () => set({ enabled: on.box.checked }));
   write.box.addEventListener('change', () => set({ allowWrite: write.box.checked }));
+  ticks.box.addEventListener('change', () => set({ allowTicks: ticks.box.checked }));
   notesApi.mcp().then(show);
-  row.append(tx, on.l, write.l, copies, where);
+  row.append(tx, on.l, write.l, ticks.l, copies, where);
   sec.append(row);
   return sec;
 }

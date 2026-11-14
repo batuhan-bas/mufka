@@ -306,8 +306,16 @@ client; nothing is set up anywhere else.
 | `list_projects` | Projects with status, progress and due date |
 | `create_note`, `append_to_note` | Only when you also allow writing: make a new note, or add to the end of one. Nothing is ever changed or deleted. |
 
+In Claude Desktop and on claude.ai, projects, job applications and notes also
+appear as Mufka draws them (an MCP App): boards with progress and stages, and
+the formatted note; a card opens its note. With **Let them tick tasks** on (a
+separate switch, off by default) you can tick a task right there; that changes
+only the `[ ]` / `[x]` of that one task, and only if the line is still what
+was shown.
+
 The server reads only the notes folder: never anything outside it (symlinks
-included), and never your plans, settings or sign-ins. The switches apply at
+included), and never your plans, settings or sign-ins. It changes a note only
+to add to it (with writing allowed) or to tick a task (with ticking allowed). The switches apply at
 once; turning access off makes every tool say so. What a client reads goes to
 the AI service it uses.
 
@@ -357,7 +365,9 @@ and the window receives the changes, not the whole vault. Note version history
 lives under `<userData>/history/`. The MCP server is `mcp/` (built to
 `out/main/mcp-server.js`, started by the client with the app's own binary and
 `ELECTRON_RUN_AS_NODE=1`), on the same `lib/` modules plus `lib/vaultfs.mjs`,
-which reads and writes the vault without Electron.
+which reads and writes the vault without Electron. Its MCP Apps view is
+`mcp/ui/`, built into one HTML file (`out/mcp-ui/view.html`) from Mufka's own
+renderer, boards and styles.
 
 ```sh
 npm install              # dependencies, then downloads Electron (pnpm works too)
@@ -365,6 +375,7 @@ npm run dev              # develop with hot reload
 npm start                # build, then run the built app
 npm test                 # unit tests, the MCP eval, then build + the real end-to-end test
 npm run eval:mcp         # questions to the MCP server about a sample vault (Turkish included)
+npm run test:view        # the MCP Apps view in a stand-in host: boards, notes, ticking
 npm run smoke:packaged   # packs the app, starts the MCP server from app.asar: run before a release
 npm run dist             # build the signed universal .dmg into dist/
 npm run dist:public      # the same, ad-hoc signed: for sharing / Releases

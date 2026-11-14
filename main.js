@@ -136,10 +136,10 @@ function writeSettings(patch) {
 // out/main/mcp-server.js (mcp/server.mjs) is started by the AI client, with
 // this app's own binary as Node (ELECTRON_RUN_AS_NODE), so nothing else needs
 // installing. It reads settings.mcp on every call: off by default, and
-// read-only unless writing is allowed.
+// read-only unless writing (or ticking tasks from its views) is allowed.
 function mcpSettings() {
   const m = readSettings().mcp || {};
-  return { enabled: m.enabled === true, allowWrite: m.allowWrite === true };
+  return { enabled: m.enabled === true, allowWrite: m.allowWrite === true, allowTicks: m.allowTicks === true };
 }
 // What Settings shows and copies: the Claude Desktop / Cursor JSON and the
 // Claude Code command, with this install's real paths.
@@ -1814,7 +1814,7 @@ ipcMain.handle('vault:info', wrap(() => ({ name: path.basename(notesRoot()), pat
 ipcMain.handle('mcp:get', wrap(() => mcpInfo()));
 ipcMain.handle('mcp:set', wrap((patch) => {
   const next = { ...mcpSettings() };
-  for (const k of ['enabled', 'allowWrite']) if (patch && typeof patch[k] === 'boolean') next[k] = patch[k];
+  for (const k of ['enabled', 'allowWrite', 'allowTicks']) if (patch && typeof patch[k] === 'boolean') next[k] = patch[k];
   writeSettings({ mcp: next });
   return mcpInfo();
 }));

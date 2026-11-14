@@ -2256,7 +2256,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await press(',', ['meta']);
       assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row")', 3000), 'no AI clients section');
       const box = (k) => `document.querySelector('.mcp-row input[data-mcp="${k}"]')`;
-      assert(await waitFor(`${box('enabled')}.checked === false && ${box('allowWrite')}.disabled === true`, 2000), 'not off by default');
+      assert(await waitFor(`${box('enabled')}.checked === false && ${box('allowWrite')}.disabled === true && ${box('allowTicks')}.disabled === true`, 2000), 'not off by default');
       const settingsFile = path.join(tmp, 'settings.json');
       const saved = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')).mcp || {}; } catch { return {}; } };
       await clickEval(box('enabled'), 'enable MCP');
@@ -2264,6 +2264,8 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor(`${box('allowWrite')}.disabled === false`, 2000), 'write switch still disabled');
       await clickEval(box('allowWrite'), 'allow writing');
       assert(await waitFor2(() => saved().allowWrite === true, 3000), 'allowWrite not saved');
+      await clickEval(box('allowTicks'), 'allow ticking');
+      assert(await waitFor2(() => saved().allowTicks === true && saved().allowWrite === true, 3000), `allowTicks not saved: ${JSON.stringify(saved())}`);
       assert(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).vaultRoot, 'vault root not recorded for the server');
       // clipboard.readText() is async in this Electron.
       const copied = async (ok) => { for (let i = 0; i < 30; i++) { const t = await clipboard.readText(); if (ok(t)) return true; await sleep(100); } return false; };
