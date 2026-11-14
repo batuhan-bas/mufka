@@ -73,6 +73,7 @@
   },
   "devDependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "1.31.0",
     "electron": "^44.7.0",
     "electron-builder": "^26.15.3",

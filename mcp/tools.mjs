@@ -4,12 +4,19 @@
 // what Mufka's search finds. Run by mcp/server.mjs; tests drive it in-process.
 //
 // Settings decide on every call: settings.mcp.enabled (off: every tool
-// answers how to turn it on) and settings.mcp.allowWrite (off: the write
-// tools are not listed, and refuse when called anyway).
+// answers how to turn it on), settings.mcp.allowWrite (off: the write tools
+// are not listed, and refuse when called anyway) and settings.mcp.allowTicks
+// (the same for ticking tasks from the views).
+//
+// MCP Apps: read_note, list_projects and list_job_applications also carry a
+// view (ui://mufka/view.html, built from mcp/ui/) that hosts such as Claude
+// Desktop show in place of the text; toggle_task is callable only from it.
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
 import { z } from 'zod';
-import { listVault, readNote, createNote, appendToNote, noteRel, folderRel, vaultLayoutOf } from '../lib/vaultfs.mjs';
+import { listVault, readNote, createNote, appendToNote, editNote, noteRel, folderRel, vaultLayoutOf } from '../lib/vaultfs.mjs';
+import { setTaskLine } from '../lib/taskline.mjs';
 import { createVaultCache } from '../lib/vault-cache.mjs';
 import { parseQuery, isEmptyQuery, searchDoc, matchNote, hitTerms, snippetFor } from '../lib/search.mjs';
 import { buildBacklinkIndex, backlinksFor } from '../lib/backlinks.mjs';
@@ -23,22 +30,28 @@ const READ = { readOnlyHint: true, openWorldHint: false };
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const OFF = 'Access to Mufka notes is turned off. The user can turn it on in Mufka → Settings → AI clients (MCP).';
 const NO_WRITE = 'Writing to Mufka notes is not allowed. The user can allow it in Mufka → Settings → AI clients (MCP).';
+const NO_TICKS = 'Ticking tasks from here is not allowed. The user can allow it in Mufka → Settings → AI clients (MCP).';
+export const VIEW = 'ui://mufka/view.html';
+const WITH_VIEW = { ui: { resourceUri: VIEW } };
 
 const titleOf = (rel) => path.posix.basename(rel).replace(/\.md$/i, '');
 const iso = (ms) => new Date(ms).toISOString();
-const json = (value) => ({ content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] });
+// The text the model reads; structured: what a view draws (MCP Apps).
+const json = (value, structured) => ({ content: [{ type: 'text', text: JSON.stringify(value, null, 2) }], ...(structured ? { structuredContent: structured } : {}) });
 const fail = (message) => ({ isError: true, content: [{ type: 'text', text: message }] });
 // Property values as JSON can hold them (YAML dates become YYYY-MM-DD).
 const plain = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : Array.isArray(v) ? v.map(plain) : v);
 
-// root(): the vault folder; settings(): Mufka's settings.json, read anew.
-export function createMufkaServer({ root, settings, version = '0.0.0' }) {
+// root(): the vault folder; settings(): Mufka's settings.json, read anew;
+// view(): the view's HTML, or null when it was not built.
+export function createMufkaServer({ root, settings, version = '0.0.0', view = () => null }) {
   const server = new McpServer({ name: 'mufka', version }, {
     instructions: 'Mufka is a notes app; these tools read the user\'s Markdown notes (an Obsidian-compatible vault). Paths are relative to the vault, like "Projects/Website.md". Write tools exist only when the user has allowed writing.',
   });
   const cache = createVaultCache({ read: (abs) => readNote(root(), abs).content });
   const enabled = () => Boolean(settings().mcp && settings().mcp.enabled);
   const writable = () => enabled() && Boolean(settings().mcp.allowWrite);
+  const tickable = () => enabled() && Boolean(settings().mcp.allowTicks);
 
   // Every note with its text; files are read again only when they changed.
   function notes() {
@@ -51,9 +64,10 @@ export function createMufkaServer({ root, settings, version = '0.0.0' }) {
 
   // A tool that answers only when access is on, and turns thrown errors (a
   // refused path, a missing note) into an error result the client can show.
-  const guarded = (handler, { write = false } = {}) => async (args) => {
+  const guarded = (handler, { write = false, tick = false } = {}) => async (args) => {
     if (!enabled()) return fail(OFF);
     if (write && !writable()) return fail(NO_WRITE);
+    if (tick && !tickable()) return fail(NO_TICKS);
     try { return await handler(args); } catch (err) { return fail(err.message); }
   };
 
@@ -81,18 +95,13 @@ export function createMufkaServer({ root, settings, version = '0.0.0' }) {
     return json({ total: hits.length, results: hits.slice(0, limit).map(({ inTitle, ...h }) => h) });
   }));
 
-  server.registerTool('read_note', {
-    title: 'Read a note',
-    description: 'Read one note: its Markdown text, its frontmatter properties, its #tags, and the notes that link to it ([[backlinks]]).',
-    inputSchema: { path: z.string().describe('Vault-relative path of the note, e.g. "Projects/Website.md"') },
-    annotations: { title: 'Read a note', ...READ },
-  }, guarded(({ path: rel }) => {
-    const clean = noteRel(rel);
+  // The note as read_note returns it (and the view after a tick).
+  function noteData(clean) {
     const all = notes();
     const n = all.find((x) => x.rel === clean);
-    if (!n) return fail(`No note at ${clean}`);
+    if (!n) throw new Error(`No note at ${clean}`);
     const props = readProps(n.content);
-    return json({
+    return {
       path: n.rel,
       title: titleOf(n.rel),
       properties: props.props ? Object.fromEntries(props.props.map((p) => [p.key, plain(p.value)])) : {},
@@ -100,8 +109,21 @@ export function createMufkaServer({ root, settings, version = '0.0.0' }) {
       backlinks: backlinksFor(buildBacklinkIndex(all), n.rel).map((b) => ({ path: b.rel, line: b.line })),
       modified: iso(n.mtime),
       content: n.content,
-    });
+    };
+  }
+  const noteView = (data) => ({ view: 'note', note: data, canTick: tickable() });
+
+  registerAppTool(server, 'read_note', {
+    title: 'Read a note',
+    description: 'Read one note: its Markdown text, its frontmatter properties, its #tags, and the notes that link to it ([[backlinks]]). Hosts that show views show it as the formatted note.',
+    inputSchema: { path: z.string().describe('Vault-relative path of the note, e.g. "Projects/Website.md"') },
+    annotations: { title: 'Read a note', ...READ },
+    _meta: WITH_VIEW,
+  }, guarded(({ path: rel }) => {
+    const data = noteData(noteRel(rel));
+    return json(data, noteView(data));
   }));
+
 
   server.registerTool('list_notes', {
     title: 'List notes',
@@ -125,32 +147,36 @@ export function createMufkaServer({ root, settings, version = '0.0.0' }) {
     return json({ total: picked.length, notes: list.map(({ n, tags }) => ({ path: n.rel, title: titleOf(n.rel), modified: iso(n.mtime), tags })) });
   }));
 
-  server.registerTool('list_job_applications', {
+  registerAppTool(server, 'list_job_applications', {
     title: 'List job applications',
     description: 'List the job applications kept in Mufka: notes with company and status properties (or type: job), with company, role, status, the date applied, location and the posting link.',
     inputSchema: { status: z.string().optional().describe('Only this status, e.g. "Applied", "Technical", "Offer", "Rejected" (case ignored)') },
     annotations: { title: 'List job applications', ...READ },
+    _meta: WITH_VIEW,
   }, guarded(({ status }) => {
     let jobs = notTemplates(notes()).map((n) => jobOf(n.rel, n.content)).filter(Boolean);
     if (status) jobs = jobs.filter((j) => foldTR(j.status) === foldTR(status));
     jobs.sort((a, b) => String(b.applied).localeCompare(String(a.applied)));
-    return json(jobs.map((j) => ({ path: j.rel, company: j.company, role: j.role, status: j.status, applied: j.applied, location: j.location, salary: j.salary, link: j.link })));
+    const list = jobs.map((j) => ({ path: j.rel, company: j.company, role: j.role, status: j.status, applied: j.applied, location: j.location, salary: j.salary, link: j.link }));
+    return json(list, { view: 'jobs', jobs: list, status: status || null });
   }));
 
-  server.registerTool('list_projects', {
+  registerAppTool(server, 'list_projects', {
     title: 'List projects',
     description: 'List the projects kept in Mufka (notes with type: project): status (Planning, Active, On hold, Done), checklist progress, start and due dates, and days left (negative when late).',
     inputSchema: { status: z.string().optional().describe('Only this status, e.g. "Active" (case ignored)') },
     annotations: { title: 'List projects', ...READ },
+    _meta: WITH_VIEW,
   }, guarded(({ status }) => {
     let ps = notTemplates(notes()).map((n) => projectOf(n.rel, n.content)).filter(Boolean);
     if (status) ps = ps.filter((p) => foldTR(p.status) === foldTR(status));
     ps.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || a.rel.localeCompare(b.rel));
-    return json(ps.map((p) => ({
+    const list = ps.map((p) => ({
       path: p.rel, title: titleOf(p.rel), status: p.status, done: p.done, total: p.total,
       progress: p.total ? Math.round((p.done / p.total) * 100) / 100 : null,
       start: p.start || null, due: p.due || null, daysLeft: daysLeft(p.due),
-    })));
+    }));
+    return json(list, { view: 'projects', projects: list, status: status || null });
   }));
 
   const writeTools = [
@@ -174,10 +200,39 @@ export function createMufkaServer({ root, settings, version = '0.0.0' }) {
     }, guarded(({ path: rel, text }) => json({ path: appendToNote(root(), rel, text) }), { write: true })),
   ];
 
-  // Show the write tools only while writing is allowed; the SDK tells a
-  // connected client that the list changed.
+  // Called only by the view (visibility: app): tick or untick one task, if
+  // that line is still the one the view showed. Returns the note again.
+  const tickTool = registerAppTool(server, 'toggle_task', {
+    title: 'Tick a task',
+    description: 'Tick or untick one task (- [ ] / - [x]) in a note, from the note shown in the view. Refused when the line is no longer what the view showed.',
+    inputSchema: {
+      path: z.string().describe('Vault-relative path of the note'),
+      line: z.number().int().min(0).describe('0-based line of the task in the note'),
+      expect: z.string().describe('The line as the view showed it'),
+      done: z.boolean().describe('true to tick, false to untick'),
+    },
+    annotations: { title: 'Tick a task', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { ui: { resourceUri: VIEW, visibility: ['app'] } },
+  }, guarded(({ path: rel, line, expect, done }) => {
+    const clean = editNote(root(), rel, (text) => setTaskLine(text, line, { expect, done }));
+    const data = noteData(clean);
+    return json({ path: clean, line, done }, noteView(data));
+  }, { tick: true }));
+
+  // The view itself: one HTML file (scripts and styles inline, as the host
+  // loads nothing from elsewhere).
+  registerAppResource(server, 'Mufka view', VIEW, {
+    description: 'Notes, projects and job applications drawn as in Mufka',
+  }, async () => ({
+    contents: [{ uri: VIEW, mimeType: RESOURCE_MIME_TYPE, text: view() || '<!doctype html><p style="font-family:system-ui">The Mufka view was not built (npm run build).</p>' }],
+  }));
+
+  // Show the write tools only while writing is allowed, and the tick tool
+  // only while ticking is; the SDK tells a connected client the list changed.
   function syncWriteTools() {
-    for (const t of writeTools) { if (writable() && !t.enabled) t.enable(); else if (!writable() && t.enabled) t.disable(); }
+    const set = (t, on) => { if (on && !t.enabled) t.enable(); else if (!on && t.enabled) t.disable(); };
+    for (const t of writeTools) set(t, writable());
+    set(tickTool, tickable());
   }
   syncWriteTools();
   return { server, syncWriteTools };
