@@ -12,10 +12,19 @@ import pkg from '../package.json' with { type: 'json' };
 
 const userData = userDataFrom(process.argv);
 const settings = () => readSettings(userData);
+
+// The MCP Apps view (mcp/ui/ built to out/mcp-ui/view.html): next to this
+// file once built (out/main/../mcp-ui), or in out/ when run from the sources.
+const viewFile = ['../mcp-ui/view.html', '../out/mcp-ui/view.html']
+  .map((rel) => new URL(rel, import.meta.url))
+  .find((url) => fs.existsSync(url));
+const view = () => (viewFile ? fs.readFileSync(viewFile, 'utf8') : null);
+
 const { server, syncWriteTools } = createMufkaServer({
   root: () => locateVault({ userData, settings: settings() }),
   settings,
   version: pkg.version,
+  view,
 });
 
 // "Allow writing" switched in the app shows or hides the write tools here.

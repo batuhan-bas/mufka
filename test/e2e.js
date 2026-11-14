@@ -2252,11 +2252,11 @@ app.whenReady().then(() => setTimeout(async () => {
     // 81. Settings → AI clients (MCP): off by default; turning it on and
     //     allowing writes is saved to settings.json; the copied config starts
     //     this app's MCP server with ELECTRON_RUN_AS_NODE.
-    await step(81, 'settings: AI clients (MCP) switches and copied config', async () => {
+    await step(81, 'settings: AI clients (MCP) switches and copied config; updates switch', async () => {
       await press(',', ['meta']);
       assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row")', 3000), 'no AI clients section');
       const box = (k) => `document.querySelector('.mcp-row input[data-mcp="${k}"]')`;
-      assert(await waitFor(`${box('enabled')}.checked === false && ${box('allowWrite')}.disabled === true`, 2000), 'not off by default');
+      assert(await waitFor(`${box('enabled')}.checked === false && ${box('allowWrite')}.disabled === true && ${box('allowTicks')}.disabled === true`, 2000), 'not off by default');
       const settingsFile = path.join(tmp, 'settings.json');
       const saved = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')).mcp || {}; } catch { return {}; } };
       await clickEval(box('enabled'), 'enable MCP');
@@ -2264,6 +2264,8 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor(`${box('allowWrite')}.disabled === false`, 2000), 'write switch still disabled');
       await clickEval(box('allowWrite'), 'allow writing');
       assert(await waitFor2(() => saved().allowWrite === true, 3000), 'allowWrite not saved');
+      await clickEval(box('allowTicks'), 'allow ticking');
+      assert(await waitFor2(() => saved().allowTicks === true && saved().allowWrite === true, 3000), `allowTicks not saved: ${JSON.stringify(saved())}`);
       assert(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).vaultRoot, 'vault root not recorded for the server');
       // clipboard.readText() is async in this Electron.
       const copied = async (ok) => { for (let i = 0; i < 30; i++) { const t = await clipboard.readText(); if (ok(t)) return true; await sleep(100); } return false; };
@@ -2271,6 +2273,13 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await copied((t) => { try { const c = JSON.parse(t).mcpServers.mufka; return c.env.ELECTRON_RUN_AS_NODE === '1' && c.args[0].endsWith(path.join('out', 'main', 'mcp-server.js')) && c.args.includes(tmp); } catch { return false; } }), `config not copied: ${(await clipboard.readText()).slice(0, 200)}`);
       await clickSel('.mcp-row [data-mcp-copy="command"]');
       assert(await copied((t) => t.startsWith('claude mcp add --transport stdio --scope user --env ELECTRON_RUN_AS_NODE=1 mufka -- ')), `command not copied: ${await clipboard.readText()}`);
+      // Updates: on by default; in a run that is not the installed app it says so.
+      const upd = 'document.querySelector(\'.upd-row input[data-update="auto"]\')';
+      assert(await waitFor(`${upd}.checked === true && document.querySelector('.upd-status')?.textContent.includes('updates work in the installed app')`, 2000), `updates section: ${await js('document.querySelector(".upd-row")?.textContent')}`);
+      await clickEval(upd, 'automatic updates off');
+      assert(await waitFor2(() => JSON.parse(fs.readFileSync(settingsFile, 'utf8')).autoUpdate === false, 3000), 'autoUpdate off not saved');
+      await clickEval(upd, 'automatic updates on');
+      assert(await waitFor2(() => !('autoUpdate' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'autoUpdate on should clear the key');
       await clickEval(box('enabled'), 'disable MCP');
       assert(await waitFor2(() => saved().enabled === false, 3000), 'not turned off');
       await press('Escape');

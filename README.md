@@ -225,8 +225,11 @@ yet? Home offers to open the Planner.
 4. When Mufka asks to send notifications, click **Allow** — that is how plan
    reminders reach you. (If you skip it, reminders appear inside the window.)
 
-That's it: Mufka opens on **Home**. Updates are installed the same way —
-replace the app in Applications; your notes and plans stay.
+That's it: Mufka opens on **Home**. From 1.12 on, Mufka updates itself: it
+looks for a new version on the Releases page, downloads it in the background,
+and installs it when you quit or click **Restart** (Settings → Updates turns
+the automatic check off). Older versions are updated once by hand — replace
+the app in Applications; your notes and plans stay.
 
 > **Updating from 1.5.1 or older?** Those were not notarized. After the first
 > signed update macOS may ask once more for notifications and for Mufka's
@@ -254,12 +257,15 @@ Drag Mufka from Applications to the Trash. Your notes stay in
 
 Everything works as on a Mac, with **Ctrl** where the Mac uses **⌘** (Ctrl+O,
 Ctrl+P, Ctrl+Shift+P…); the app shows shortcuts the Windows way. Notes are in
-`Documents\Mufka`, plans in `%APPDATA%\Mufka`. Updates: run the new installer;
-your notes and plans stay. **Uninstall** from **Settings → Apps**.
+`Documents\Mufka`, plans in `%APPDATA%\Mufka`. Updates install themselves from
+1.12 on, as on a Mac (older versions: run the new installer; your notes and
+plans stay). **Uninstall** from **Settings → Apps**.
 
 ## Your notes and your data
 
-Everything stays on your computer; there is no account and no server. The exceptions
+Everything stays on your computer; there is no account and no server. Mufka
+asks GitHub, where it is released, whether there is a new version (Settings →
+Updates turns that off). The other exceptions
 are the connections you turn on yourself in **Settings**: your **Microsoft**
 and **Google** calendars (Mufka reads your events; it asks only for calendar
 read access) and **Wispr Flow** (Mufka reads your meetings). Mufka never sends
@@ -306,8 +312,16 @@ client; nothing is set up anywhere else.
 | `list_projects` | Projects with status, progress and due date |
 | `create_note`, `append_to_note` | Only when you also allow writing: make a new note, or add to the end of one. Nothing is ever changed or deleted. |
 
+In Claude Desktop and on claude.ai, projects, job applications and notes also
+appear as Mufka draws them (an MCP App): boards with progress and stages, and
+the formatted note; a card opens its note. With **Let them tick tasks** on (a
+separate switch, off by default) you can tick a task right there; that changes
+only the `[ ]` / `[x]` of that one task, and only if the line is still what
+was shown.
+
 The server reads only the notes folder: never anything outside it (symlinks
-included), and never your plans, settings or sign-ins. The switches apply at
+included), and never your plans, settings or sign-ins. It changes a note only
+to add to it (with writing allowed) or to tick a task (with ticking allowed). The switches apply at
 once; turning access off makes every tool say so. What a client reads goes to
 the AI service it uses.
 
@@ -357,7 +371,9 @@ and the window receives the changes, not the whole vault. Note version history
 lives under `<userData>/history/`. The MCP server is `mcp/` (built to
 `out/main/mcp-server.js`, started by the client with the app's own binary and
 `ELECTRON_RUN_AS_NODE=1`), on the same `lib/` modules plus `lib/vaultfs.mjs`,
-which reads and writes the vault without Electron.
+which reads and writes the vault without Electron. Its MCP Apps view is
+`mcp/ui/`, built into one HTML file (`out/mcp-ui/view.html`) from Mufka's own
+renderer, boards and styles.
 
 ```sh
 npm install              # dependencies, then downloads Electron (pnpm works too)
@@ -365,6 +381,7 @@ npm run dev              # develop with hot reload
 npm start                # build, then run the built app
 npm test                 # unit tests, the MCP eval, then build + the real end-to-end test
 npm run eval:mcp         # questions to the MCP server about a sample vault (Turkish included)
+npm run test:view        # the MCP Apps view in a stand-in host: boards, notes, ticking
 npm run smoke:packaged   # packs the app, starts the MCP server from app.asar: run before a release
 npm run dist             # build the signed universal .dmg into dist/
 npm run dist:public      # the same, ad-hoc signed: for sharing / Releases
@@ -412,6 +429,15 @@ Microsoft uses Mufka's public app registration (`lib/calendar.mjs`).
 
 Bump `version` in `package.json` before building a new copy, so people can
 tell versions apart.
+
+**Updates** come from the GitHub release with the highest version, read by
+`electron-updater` (its address is `build.publish` in `package.json`). A
+release must carry, next to the installers, `latest-mac.yml` with the Mac
+`.zip` (and its `.blockmap`) and `latest.yml` with the Windows `.exe` (and its
+`.blockmap`), as the build writes them into `dist/`; builds never publish by
+themselves (`--publish never`). `npm run smoke:update` packs this Mufka and a
+99.0.0 of it, serves the update locally and checks the first one finds,
+downloads and readies it.
 
 ### Tests
 

@@ -178,3 +178,63 @@ test('locate: userData per platform, and the vault the app would open', () => {
     assert.equal(locateVault({ userData: dir, settings: { vaultPath: chosen }, env: { MUFKA_VAULT: last }, home: dir }), last);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// --- MCP Apps: the view, and ticking tasks from it ---------------------------
+
+async function withView(t, mcp) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-mcp-apps-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const root = path.join(base, 'vault');
+  fs.mkdirSync(path.join(root, 'Projects'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'Projects', 'Website.md'), NOTES['Projects/Website.md']);
+  fs.writeFileSync(path.join(base, 'outside.md'), '- [ ] outside');
+  fs.symlinkSync(path.join(base, 'outside.md'), path.join(root, 'Leak.md'));
+  const settings = { mcp: { enabled: true, ...mcp } };
+  const { server, syncWriteTools } = createMufkaServer({ root: () => root, settings: () => settings, view: () => '<!doctype html><title>view</title>' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test', version: '1.0.0' });
+  await server.connect(a); await client.connect(b);
+  t.after(() => client.close());
+  return { root, base, settings, client, syncWriteTools };
+}
+
+test('read_note, list_projects and list_job_applications point to the view and give it structured data', async (t) => {
+  const s = await withView(t, {});
+  const { tools } = await s.client.listTools();
+  for (const name of ['read_note', 'list_projects', 'list_job_applications']) {
+    assert.equal(tools.find((x) => x.name === name)._meta.ui.resourceUri, 'ui://mufka/view.html', name);
+  }
+  const r = await s.client.callTool({ name: 'list_projects', arguments: {} });
+  assert.equal(r.structuredContent.view, 'projects');
+  assert.equal(r.structuredContent.projects[0].path, 'Projects/Website.md');
+  const n = await s.client.callTool({ name: 'read_note', arguments: { path: 'Projects/Website.md' } });
+  assert.equal(n.structuredContent.view, 'note');
+  assert.equal(n.structuredContent.canTick, false);
+  assert.match(n.structuredContent.note.content, /Deploy to the server/);
+  const res = await s.client.readResource({ uri: 'ui://mufka/view.html' });
+  assert.equal(res.contents[0].mimeType, 'text/html;profile=mcp-app');
+  assert.match(res.contents[0].text, /<title>view<\/title>/);
+});
+
+test('toggle_task: not listed or allowed until ticking is allowed; then only the line the view saw', async (t) => {
+  const s = await withView(t, {});
+  assert.ok(!(await s.client.listTools()).tools.some((x) => x.name === 'toggle_task'));
+  const args = { path: 'Projects/Website.md', line: 9, expect: '- [ ] Deploy to the server', done: true };
+  assert.equal((await s.client.callTool({ name: 'toggle_task', arguments: args })).isError, true);
+  s.settings.mcp.allowTicks = true; s.syncWriteTools();
+  const tool = (await s.client.listTools()).tools.find((x) => x.name === 'toggle_task');
+  assert.deepEqual(tool._meta.ui.visibility, ['app']);
+  assert.equal(tool.annotations.destructiveHint, false);
+  const r = await s.client.callTool({ name: 'toggle_task', arguments: args });
+  assert.ok(!r.isError, r.content[0].text);
+  assert.equal(r.structuredContent.view, 'note');
+  assert.match(fs.readFileSync(path.join(s.root, 'Projects', 'Website.md'), 'utf8'), /^- \[x\] Deploy to the server$/m);
+  // The view still shows the old line: refused, nothing written.
+  const stale = await s.client.callTool({ name: 'toggle_task', arguments: args });
+  assert.match(stale.content[0].text, /changed since it was shown/);
+  assert.equal((await s.client.callTool({ name: 'toggle_task', arguments: { ...args, line: 0, expect: '---' } })).content[0].text, 'That line is not a task');
+  assert.ok((await s.client.callTool({ name: 'toggle_task', arguments: { path: 'Leak.md', line: 0, expect: '- [ ] outside', done: true } })).isError);
+  assert.equal(fs.readFileSync(path.join(s.base, 'outside.md'), 'utf8'), '- [ ] outside');
+  s.settings.mcp.allowTicks = false; // switched off while connected
+  assert.match((await s.client.callTool({ name: 'toggle_task', arguments: { ...args, expect: '- [x] Deploy to the server', done: false } })).content[0].text, /not allowed/);
+});

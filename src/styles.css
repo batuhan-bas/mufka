@@ -1686,3 +1686,11 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .today-add-input { width: 100%; font: inherit; font-size: 14px; color: var(--text); background: none; border: 0; border-bottom: 1px dashed transparent; padding: 4px 2px; }
 .today-add-input::placeholder { color: var(--muted); }
 .today-add-input:focus { outline: none; border-bottom-color: var(--accent); }
+/* --- updates: the sidebar banner once a new Mufka is downloaded --- */
+.update-banner { display: flex; align-items: center; gap: 8px; margin: 6px 8px; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); font-size: 13px; }
+.update-banner[hidden] { display: none; }
+.update-text { flex: 1; min-width: 0; color: var(--text); }
+.update-restart { padding: 3px 10px; font-size: 13px; }
+.update-later { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
+.update-later:hover { color: var(--text); background: var(--hover-soft); }
+.upd-status { margin-right: auto; }

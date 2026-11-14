@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { noteRel, folderRel, vaultAbs, listVault, readNote, createNote, appendToNote } from '../lib/vaultfs.mjs';
+import { noteRel, folderRel, vaultAbs, listVault, readNote, createNote, appendToNote, editNote } from '../lib/vaultfs.mjs';
 
 // A vault next to a folder outside it, with symlinks out of the vault.
 function fixture(t) {
@@ -81,4 +81,16 @@ test('appendToNote adds a line at the end of an existing note only', (t) => {
   assert.throws(() => appendToNote(root, 'Leak.md', 'x'), /Outside the vault/);
   assert.equal(fs.readFileSync(path.join(outside, 'secret.md'), 'utf8'), 'secret');
   assert.deepEqual(fs.readdirSync(path.join(root, 'Work')).sort(), ['Plan.md', 'image.png']); // no temp files left
+});
+
+test('editNote changes an existing note in place, never through a symlink', (t) => {
+  const { root, outside } = fixture(t);
+  assert.equal(editNote(root, 'Work/Plan.md', (s) => s.toUpperCase()), 'Work/Plan.md');
+  assert.equal(fs.readFileSync(path.join(root, 'Work', 'Plan.md'), 'utf8'), 'PLAN');
+  const before = fs.statSync(path.join(root, 'Home.md')).mtimeMs;
+  editNote(root, 'Home.md', (s) => s); // unchanged: not written
+  assert.equal(fs.statSync(path.join(root, 'Home.md')).mtimeMs, before);
+  assert.throws(() => editNote(root, 'Leak.md', () => 'x'), /Outside the vault/);
+  assert.throws(() => editNote(root, 'Nope.md', () => 'x'), /No note/);
+  assert.equal(fs.readFileSync(path.join(outside, 'secret.md'), 'utf8'), 'secret');
 });

@@ -38,6 +38,8 @@ jobs:
       - run: npm ci
       - name: Unit tests
         run: node --test "test/*.test.mjs"
+      - name: MCP eval
+        run: npm run eval:mcp
       - name: Build
         id: build
         run: npm run build
@@ -45,6 +47,8 @@ jobs:
       # miss one step, so it gets three tries.
       - name: End-to-end test
         run: npm run e2e || npm run e2e || npm run e2e
+      - name: MCP view test
+        run: npm run test:view
       - name: Screenshots
         if: always() && steps.build.outcome == 'success'
         timeout-minutes: 5

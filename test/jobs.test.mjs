@@ -63,3 +63,13 @@ test('setJobStatus keeps the quotes and the comment', async () => {
   assert.match(setJobStatus('---\nstatus: Applied\n---\n', 'Offer', setProp), /^status: Offer$/m);
   assert.match(setJobStatus('---\ncompany: A\n---\n', 'Offer', setProp), /^status: Offer$/m);
 });
+
+test('notes saved with Windows line endings (CRLF)', async () => {
+  const { setJobStatus } = await import('../lib/jobs.mjs');
+  const { setProp } = await import('../lib/properties.mjs');
+  const crlf = '---\r\ntype: job\r\ncompany: Acme\r\nstatus: "Applied" # Applied, Offer\r\n---\r\nBody\r\n';
+  assert.ok(mayBeJob(crlf));
+  assert.equal(setJobStatus(crlf, 'Offer', setProp), crlf.replace('"Applied"', '"Offer"'));
+  const { scanTags } = await import('../lib/tags.mjs');
+  assert.deepEqual(scanTags('---\r\ntags: [gezi/izmir]\r\n---\r\nText #iş\r\n'), ['gezi/izmir', 'iş']);
+});
