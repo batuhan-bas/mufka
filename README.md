@@ -225,8 +225,11 @@ yet? Home offers to open the Planner.
 4. When Mufka asks to send notifications, click **Allow** — that is how plan
    reminders reach you. (If you skip it, reminders appear inside the window.)
 
-That's it: Mufka opens on **Home**. Updates are installed the same way —
-replace the app in Applications; your notes and plans stay.
+That's it: Mufka opens on **Home**. From 1.12 on, Mufka updates itself: it
+looks for a new version on the Releases page, downloads it in the background,
+and installs it when you quit or click **Restart** (Settings → Updates turns
+the automatic check off). Older versions are updated once by hand — replace
+the app in Applications; your notes and plans stay.
 
 > **Updating from 1.5.1 or older?** Those were not notarized. After the first
 > signed update macOS may ask once more for notifications and for Mufka's
@@ -254,12 +257,15 @@ Drag Mufka from Applications to the Trash. Your notes stay in
 
 Everything works as on a Mac, with **Ctrl** where the Mac uses **⌘** (Ctrl+O,
 Ctrl+P, Ctrl+Shift+P…); the app shows shortcuts the Windows way. Notes are in
-`Documents\Mufka`, plans in `%APPDATA%\Mufka`. Updates: run the new installer;
-your notes and plans stay. **Uninstall** from **Settings → Apps**.
+`Documents\Mufka`, plans in `%APPDATA%\Mufka`. Updates install themselves from
+1.12 on, as on a Mac (older versions: run the new installer; your notes and
+plans stay). **Uninstall** from **Settings → Apps**.
 
 ## Your notes and your data
 
-Everything stays on your computer; there is no account and no server. The exceptions
+Everything stays on your computer; there is no account and no server. Mufka
+asks GitHub, where it is released, whether there is a new version (Settings →
+Updates turns that off). The other exceptions
 are the connections you turn on yourself in **Settings**: your **Microsoft**
 and **Google** calendars (Mufka reads your events; it asks only for calendar
 read access) and **Wispr Flow** (Mufka reads your meetings). Mufka never sends
@@ -423,6 +429,15 @@ Microsoft uses Mufka's public app registration (`lib/calendar.mjs`).
 
 Bump `version` in `package.json` before building a new copy, so people can
 tell versions apart.
+
+**Updates** come from the GitHub release with the highest version, read by
+`electron-updater` (its address is `build.publish` in `package.json`). A
+release must carry, next to the installers, `latest-mac.yml` with the Mac
+`.zip` (and its `.blockmap`) and `latest.yml` with the Windows `.exe` (and its
+`.blockmap`), as the build writes them into `dist/`; builds never publish by
+themselves (`--publish never`). `npm run smoke:update` packs this Mufka and a
+99.0.0 of it, serves the update locally and checks the first one finds,
+downloads and readies it.
 
 ### Tests
 

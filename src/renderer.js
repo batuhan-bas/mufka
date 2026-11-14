@@ -51,6 +51,7 @@ import { applyTemplate } from '../lib/template.mjs';
 import { keyLabel } from '../lib/keys.mjs';
 import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs';
 import { countText } from '../lib/wordcount.mjs';
+import { updateStatus } from '../lib/updates.mjs';
 import { createNavHistory, sameLocation } from '../lib/navhistory.mjs';
 import { createTabs } from '../lib/tabs.mjs';
 import { slashItems } from '../lib/slash.mjs';
@@ -4572,6 +4573,60 @@ function appearanceSection() {
 // AI clients (MCP): whether Claude Desktop, Claude Code, Cursor… may use the
 // notes (mcp/ is the server; main.js keeps the switches in settings.json),
 // and the config to paste into them.
+// Updates: the automatic check, "Check now", what is going on, and Restart
+// when a new Mufka is ready (main.js runs electron-updater; lib/updates.mjs
+// words it). The same state drives the sidebar's update banner.
+function updatesSection() {
+  const sec = elem('section', 'settings-section');
+  sec.append(elem('h3', 'settings-heading', 'Updates'));
+  const row = elem('div', 'conn-row upd-row');
+  const l = elem('label', 'mcp-toggle');
+  const auto = document.createElement('input'); auto.type = 'checkbox'; auto.dataset.update = 'auto';
+  l.append(auto, elem('span', null, 'Check for updates automatically (asks GitHub, where Mufka is released)'));
+  const side = elem('div', 'conn-side');
+  const status = elem('span', 'conn-state upd-status');
+  const check = elem('button', 'btn', 'Check now'); check.type = 'button';
+  const restart = elem('button', 'btn primary', 'Restart'); restart.type = 'button'; restart.hidden = true;
+  side.append(status, check, restart);
+  const show = (info) => {
+    const st = updateStatus(info, info);
+    auto.checked = info.auto;
+    status.textContent = st.text;
+    restart.hidden = !st.restart;
+    check.disabled = !info.packaged || ['checking', 'downloading', 'ready'].includes(info.state);
+  };
+  auto.addEventListener('change', async () => show(await notesApi.setUpdates({ auto: auto.checked })));
+  check.addEventListener('click', async () => show(await notesApi.checkUpdates()));
+  restart.addEventListener('click', () => notesApi.installUpdate());
+  notesApi.updates().then(show);
+  updateListeners.add(show);
+  row.append(l, side);
+  sec.append(row);
+  return sec;
+}
+const updateListeners = new Set(); // Settings while it is open
+// The sidebar banner: shown once a new version is downloaded.
+function showUpdateBanner(info) {
+  const el = document.getElementById('update-banner');
+  if (!el) return;
+  const st = updateStatus(info, info);
+  el.hidden = !st.restart || updateBannerDismissed === info.version;
+  if (el.hidden) return;
+  const text = elem('span', 'update-text', `Mufka ${info.version} is ready`);
+  const go = elem('button', 'btn primary update-restart', 'Restart'); go.type = 'button';
+  go.addEventListener('click', () => notesApi.installUpdate());
+  const later = elem('button', 'update-later', '×'); later.type = 'button';
+  later.setAttribute('aria-label', 'Later (installed when Mufka quits)'); later.title = 'Later: it is installed when Mufka quits';
+  later.addEventListener('click', () => { updateBannerDismissed = info.version; el.hidden = true; });
+  el.replaceChildren(text, go, later);
+}
+let updateBannerDismissed = null;
+notesApi.onUpdateState((info) => {
+  showUpdateBanner(info);
+  for (const fn of updateListeners) fn(info);
+});
+notesApi.updates().then(showUpdateBanner);
+
 function mcpSection() {
   const sec = elem('section', 'settings-section');
   sec.append(elem('h3', 'settings-heading', 'AI clients (MCP)'));
@@ -4657,6 +4712,7 @@ function openSettings() {
   section.append(row);
   box.append(section);
   box.append(mcpSection());
+  box.append(updatesSection());
 
   let busy = false;
   const button = (label, quiet, fn) => {
@@ -4752,7 +4808,7 @@ function openSettings() {
   };
 
   const restore = document.activeElement;
-  const close = () => { layer.remove(); settingsLayer = null; if (restore && restore.isConnected) restore.focus(); };
+  const close = () => { layer.remove(); settingsLayer = null; updateListeners.clear(); if (restore && restore.isConnected) restore.focus(); };
   layer._close = close;
   layer._refresh = () => refresh();
   const actions = elem('div', 'plan-dialog-actions');

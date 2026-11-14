@@ -75,6 +75,12 @@ contextBridge.exposeInMainWorld('notes', {
   // AI clients (MCP): { enabled, allowWrite, allowTicks, json, command }; set takes any of the three switches.
   mcp: () => ipcRenderer.invoke('mcp:get'),
   setMcp: (patch) => ipcRenderer.invoke('mcp:set', patch),
+  // Updates: { state, version?, percent?, error?, auto, current, packaged } (lib/updates.mjs).
+  updates: () => ipcRenderer.invoke('update:get'),
+  setUpdates: (patch) => ipcRenderer.invoke('update:set', patch),
+  checkUpdates: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateState: (cb) => ipcRenderer.on('update:state', (_e, s) => cb(s)),
   bookmarks: () => ipcRenderer.invoke('bookmarks:list'),
   treeStyles: () => ipcRenderer.invoke('treestyle:read'),
   saveTreeStyles: (data) => ipcRenderer.invoke('treestyle:write', data),

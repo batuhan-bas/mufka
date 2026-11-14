@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
+import electronUpdater from 'electron-updater';
 import * as np from './lib/notespath.mjs';
 import * as lk from './lib/links.mjs';
 import * as at from './lib/attach.mjs';
@@ -20,6 +21,7 @@ import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder 
 import { isExternalChange } from './lib/watch.mjs';
 import { createHistory } from './lib/history.mjs';
 import { createVaultCache } from './lib/vault-cache.mjs';
+import { autoUpdatesOn } from './lib/updates.mjs';
 import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
 import * as cal from './lib/calendar.mjs';
@@ -150,6 +152,45 @@ function mcpInfo() {
   const q = (s) => (process.platform === 'win32' ? `"${s}"` : `"${s.replace(/(["\\$`])/g, '\\$1')}"`);
   const command = `claude mcp add --transport stdio --scope user --env ELECTRON_RUN_AS_NODE=1 mufka -- ${[process.execPath, ...args].map(q).join(' ')}`;
   return { ...mcpSettings(), json, command };
+}
+
+// --- updates ------------------------------------------------------------
+// The installed app looks for a newer Mufka on GitHub Releases at start and
+// every 6 hours (unless Settings → Updates says not to), downloads it in the
+// background, and installs it when Mufka quits or the user clicks Restart.
+// Never in development or tests (not packaged). MUFKA_UPDATE_FEED points at
+// another feed (a local test server).
+const UPDATE_EVERY = 6 * 60 * 60 * 1000;
+let updateState = { state: 'idle' };
+let updater = null;
+function setUpdateState(next) {
+  updateState = next;
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send('update:state', updateInfo());
+}
+function updateInfo() {
+  return { ...updateState, auto: autoUpdatesOn(readSettings()), current: app.getVersion(), packaged: app.isPackaged };
+}
+function checkForUpdates() {
+  if (!updater || updateState.state === 'checking' || updateState.state === 'downloading' || updateState.state === 'ready') return;
+  updater.checkForUpdates().catch((err) => setUpdateState({ state: 'error', error: err.message.split('\n')[0] }));
+}
+function initUpdates() {
+  if (!app.isPackaged) return;
+  updater = electronUpdater.autoUpdater;
+  updater.logger = console;
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
+  // The feed is GitHub Releases, from app-update.yml in the app's resources
+  // (written by electron-builder from package.json build.publish).
+  if (process.env.MUFKA_UPDATE_FEED) updater.setFeedURL({ provider: 'generic', url: process.env.MUFKA_UPDATE_FEED });
+  updater.on('checking-for-update', () => setUpdateState({ state: 'checking' }));
+  updater.on('update-not-available', () => setUpdateState({ state: 'none' }));
+  updater.on('update-available', (info) => setUpdateState({ state: 'downloading', version: info.version }));
+  updater.on('download-progress', (p) => setUpdateState({ state: 'downloading', version: updateState.version, percent: p.percent }));
+  updater.on('update-downloaded', (info) => { console.log(`Mufka ${info.version} is ready to install`); setUpdateState({ state: 'ready', version: info.version }); });
+  updater.on('error', (err) => setUpdateState({ state: 'error', error: String(err && err.message || err).split('\n')[0] }));
+  setTimeout(() => { if (autoUpdatesOn(readSettings())) checkForUpdates(); }, 10000);
+  setInterval(() => { if (autoUpdatesOn(readSettings())) checkForUpdates(); }, UPDATE_EVERY).unref();
 }
 
 // --- notes vault --------------------------------------------------------
@@ -1811,6 +1852,17 @@ ipcMain.handle('history:restore', wrap((rel, t) => historyRestore(rel, t)));
 ipcMain.handle('history:deleted', wrap(() => historyDeleted()));
 ipcMain.handle('history:restoreDeleted', wrap((rel, t) => historyRestoreDeleted(rel, t)));
 ipcMain.handle('vault:info', wrap(() => ({ name: path.basename(notesRoot()), path: notesRoot(), custom: vault.custom })));
+ipcMain.handle('update:get', wrap(() => updateInfo()));
+ipcMain.handle('update:set', wrap((patch) => {
+  if (patch && typeof patch.auto === 'boolean') writeSettings({ autoUpdate: patch.auto ? undefined : false });
+  if (patch && patch.auto) checkForUpdates();
+  return updateInfo();
+}));
+ipcMain.handle('update:check', wrap(() => { checkForUpdates(); return updateInfo(); }));
+ipcMain.handle('update:install', wrap(() => {
+  if (updater && updateState.state === 'ready') setImmediate(() => updater.quitAndInstall());
+  return { ok: true };
+}));
 ipcMain.handle('mcp:get', wrap(() => mcpInfo()));
 ipcMain.handle('mcp:set', wrap((patch) => {
   const next = { ...mcpSettings() };
@@ -1895,6 +1947,7 @@ app.whenReady().then(() => {
   registerFontProtocol();
   buildMenu();
   wisprSchedule();
+  initUpdates();
   const win = createWindow();
   win.webContents.once('did-finish-load', () => warnIfVaultMissing(win));
   app.on('activate', () => {
