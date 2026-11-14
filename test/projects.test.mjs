@@ -33,3 +33,8 @@ test('daysLeft, columns and numbers', () => {
   assert.deepEqual(cols[1].items.map((p) => p.rel), ['b', 'a']);
   assert.deepEqual(projectStats(ps, NOW), { active: 2, dueSoon: 1, late: 1, done: 1, total: 5 });
 });
+
+test('a project note with Windows line endings (CRLF)', async () => {
+  const { mayBeProject } = await import('../lib/projects.mjs');
+  assert.ok(mayBeProject('---\r\ntype: project\r\nstatus: Active\r\n---\r\n'));
+});
