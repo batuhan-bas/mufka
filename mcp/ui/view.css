@@ -1,0 +1,18 @@
+/* The view inside a host's frame: Mufka's styles (src/styles.css, added by
+   scripts/build-mcp-ui.mjs) with the page layout of a small embedded panel. */
+html, body { height: auto; background: var(--ground); }
+body { padding: 14px 16px 18px; }
+.mv-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.mv-back { flex: none; padding: 3px 8px; font-size: 13px; }
+.mv-title { display: flex; flex-direction: column; min-width: 0; }
+.mv-title-main { font-size: 18px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mv-title-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mv-md { max-width: 760px; }
+.mv-md .task-check:disabled { cursor: default; }
+.mv-backlinks { margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mv-sub { width: 100%; font-size: 12px; color: var(--muted); font-weight: 600; }
+.mv-link { font: inherit; font-size: 13px; color: var(--accent); background: var(--accent-soft); border: 0; border-radius: 10px; padding: 2px 9px; cursor: pointer; }
+.mv-message { position: sticky; top: 0; z-index: 2; margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; background: var(--raised); border: 1px solid var(--today); color: var(--text); }
+/* The boards fill the frame instead of the app's content column. */
+.job-board-box { width: auto; margin-left: 0; }
+.job-board { overflow-x: auto; }

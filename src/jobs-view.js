@@ -79,16 +79,19 @@ export function jobStrip(job, { stages, onStage, onLink }) {
 // a column per stage with cards to open and drag.
 //   columns: [{ stage, cls, items: [{ rel, … }] }]; stats: [{ label, value, cls }]
 //   card(item) → the card's content; current(item) → its stage
-//   onOpen(rel), onMove(rel, stage), onNew(); newLabel, empty: texts
+//   onOpen(rel), onMove(rel, stage), onNew(); newLabel, empty: texts.
+//   Without onNew there is no "+ New" button; without onMove cards do not drag.
 export function stageBoard({ columns, stats, card, current, newLabel, empty, onOpen, onMove, onNew }) {
   const box = el('div', 'job-board-box');
   const head = el('div', 'job-head');
   const row = el('div', 'job-stats');
   for (const st of stats) { const x = el('div', `job-stat ${st.cls || ''}`); x.append(el('div', 'job-stat-value', String(st.value)), el('div', 'job-stat-label', st.label)); row.append(x); }
   head.append(row);
-  const add = el('button', 'btn primary job-new', newLabel); add.type = 'button';
-  add.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onNew(); });
-  head.append(add);
+  if (onNew) {
+    const add = el('button', 'btn primary job-new', newLabel); add.type = 'button';
+    add.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onNew(); });
+    head.append(add);
+  }
   box.append(head);
   const board = el('div', 'job-board');
   const all = columns.flatMap((c) => c.items);
@@ -101,7 +104,7 @@ export function stageBoard({ columns, stats, card, current, newLabel, empty, onO
     const list = el('div', 'job-cards');
     for (const it of col.items) {
       const b = el('button', 'job-card'); b.type = 'button';
-      b.draggable = true;
+      b.draggable = Boolean(onMove);
       b.dataset.rel = it.rel;
       b.append(...card(it));
       b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onOpen(it.rel); });
@@ -111,7 +114,7 @@ export function stageBoard({ columns, stats, card, current, newLabel, empty, onO
     }
     if (!col.items.length) list.append(el('div', 'job-empty', 'Nothing here'));
     c.append(list);
-    c.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-mufka-card')) { e.preventDefault(); c.classList.add('drop'); } });
+    if (onMove) c.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-mufka-card')) { e.preventDefault(); c.classList.add('drop'); } });
     c.addEventListener('dragleave', (e) => { if (!c.contains(e.relatedTarget)) c.classList.remove('drop'); });
     c.addEventListener('drop', (e) => {
       const rel = e.dataTransfer.getData('text/x-mufka-card');
