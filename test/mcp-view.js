@@ -98,6 +98,7 @@ app.whenReady().then(async () => {
   if (!failed && consoleError) failed = `console error: ${consoleError}`;
   for (const r of results) console.log(r);
   console.log(failed ? `[VIEW] FAIL: ${failed}` : `[VIEW] OK (${results.length} steps)`);
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // Windows keeps the live userData folder locked until the app quits.
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* still in use */ }
   app.exit(failed ? 1 : 0);
 });
