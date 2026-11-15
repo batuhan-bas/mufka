@@ -179,14 +179,14 @@ function handyTranscribe(wav) {
 // file goes to its /transcribe as it is; the text comes back. Mufka finds it
 // while it runs; nothing to set up.
 // MUFKA_STUDIO_URL: a stand-in server for the tests.
-const STUDIO = process.env.MUFKA_STUDIO_URL || 'http://127.0.0.1:3900';
+const studioUrl = () => process.env.MUFKA_STUDIO_URL || 'http://127.0.0.1:3900';
 const STUDIO_APP = process.platform === 'darwin'
   ? ['/Applications/VoiceStudio.app', path.join(app.getPath('home'), 'Applications/VoiceStudio.app')]
   : [path.join(process.env.LOCALAPPDATA || '', 'Programs', 'VoiceStudio', 'VoiceStudio.exe')];
 const studioApp = () => STUDIO_APP.find((p) => p && fs.existsSync(p)) || null;
 async function studioRunning() {
   try {
-    const r = await fetch(`${STUDIO}/health`, { signal: AbortSignal.timeout(1500) });
+    const r = await fetch(`${studioUrl()}/health`, { signal: AbortSignal.timeout(1500) });
     return r.ok && (await r.json()).status === 'ok';
   } catch { return false; }
 }
@@ -203,7 +203,7 @@ async function studioTranscribe(data, name) {
   studioJob = new AbortController();
   const timer = setTimeout(() => studioJob && studioJob.abort(), 60 * 60 * 1000);
   try {
-    const r = await fetch(`${STUDIO}/transcribe`, { method: 'POST', body: form, signal: studioJob.signal });
+    const r = await fetch(`${studioUrl()}/transcribe`, { method: 'POST', body: form, signal: studioJob.signal });
     const res = await r.json().catch(() => ({}));
     if (!r.ok) {
       const d = res.detail || {};
