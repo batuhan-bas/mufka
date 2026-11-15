@@ -1854,9 +1854,9 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true" && !!document.querySelector(".tk-col")', 3000), 'board note did not open as a board');
     });
 
-    // 64b. A board task with a due date shows on its day in the Planner;
-    //      clicking it opens its board with the task's dialog.
-    await step('64b', 'a task due today shows in the Planner and opens its board', async () => {
+    // 64b. A board task with a due date shows on its day in the Planner and on
+    //      Home; clicking it opens its board with the task's dialog.
+    await step('64b', 'a task due today shows in the Planner and on Home, and opens its board', async () => {
       await sleep(1700); // past Mufka's own last write of the board
       fs.writeFileSync(boardFile, boardText().replace('## To do\n\n', `## To do\n\n- [ ] Due in the planner @{${todayK}} !P1\n`));
       await clickSel('#mode-planner');
@@ -1865,6 +1865,13 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval(chip, 'planner task');
       assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true"', 3000), 'the board did not open');
       assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Due in the planner"', 3000), 'the task dialog did not open');
+      await press('Escape'); await sleep(200);
+      // Home lists it under Tasks, with its board; a click opens it too.
+      await press('T', ['meta']);
+      const row = `[...document.querySelectorAll('.home-task')].find(r => r.querySelector('.plan-title')?.textContent === 'Due in the planner')`;
+      assert(await waitFor(`!!(${row}) && ${row}.textContent.includes('Sprint') && ${row}.closest('.section')?.querySelector('.section-title')?.textContent === 'Tasks'`, 3000), `not on Home: ${await js('[...document.querySelectorAll(".home-task")].map(r => r.textContent).join("|")')}`);
+      await clickEval(`${row}.querySelector('.agenda-open')`, 'Home task');
+      assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Due in the planner"', 3000), 'Home did not open the task');
       await press('Escape'); await sleep(200);
     });
 

@@ -4,7 +4,7 @@ import {
   isBoard, parseBoard, serializeBoard, newBoard, parseCard, composeCard, urlLabel,
   addCard, updateCard, removeCard, moveCard, addColumn, renameColumn, removeColumn, moveColumn,
   setCompleteColumn, cardMatches, boardTags, DEFAULT_COLUMNS,
-  isDefaultColumn, missingDefaults, addDefaultColumn, dueTasks,
+  isDefaultColumn, missingDefaults, addDefaultColumn, dueTasks, dayTasks,
 } from '../lib/kanban.mjs';
 
 // What Obsidian's Kanban plugin writes.
@@ -233,4 +233,15 @@ test('dueTasks: tasks with a due date that are not done', () => {
     '## Done', '', '- [ ] Shipped @{2026-11-17}', '', '**Complete**', '',
   ].join('\n'));
   assert.deepEqual(dueTasks(board), [{ ci: 0, ki: 0, title: 'Fix login', due: '2026-11-18', priority: 'P1', type: 'bug' }]);
+});
+
+test('dayTasks: due that day; on today also late and in progress', () => {
+  const board = parseBoard([
+    '---', 'kanban-plugin: board', '---', '',
+    '## To do', '', '- [ ] Due today @{2026-11-16}', '- [ ] Late @{2026-11-10} !P1', '- [ ] Later @{2026-11-20}', '- [ ] Someday', '',
+    '## In progress', '', '- [ ] Working on it', '- [x] Ticked', '',
+    '## Done', '', '**Complete**', '- [ ] Old @{2026-11-16}', '',
+  ].join('\n'));
+  assert.deepEqual(dayTasks(board, '2026-11-16', true).map((t) => `${t.why}:${t.title}`), ['due:Due today', 'late:Late', 'doing:Working on it']);
+  assert.deepEqual(dayTasks(board, '2026-11-20', false).map((t) => `${t.why}:${t.title}`), ['due:Later']);
 });

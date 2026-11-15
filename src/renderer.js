@@ -23,7 +23,7 @@ import { attachmentsDirFor } from '../lib/layout.mjs';
 import { parseBlocks, blockText, replaceBlockText, insertBlockAfter, addBlock } from '../lib/blocks.mjs';
 import { createGraphView } from './graph-view.js';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
-import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender } from './tasks.js';
+import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender, prettyDue } from './tasks.js';
 import { createDataview } from './dataview-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
@@ -38,7 +38,7 @@ import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, ne
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
-import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks } from '../lib/kanban.mjs';
+import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks } from '../lib/kanban.mjs';
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
@@ -1995,6 +1995,9 @@ function renderDayPage() {
     more.addEventListener('click', () => openPlanner(date));
     col.append(more);
   }
+  // Tasks from the boards (Tasks): due this day; today also late and in progress.
+  const tasks = homeTasks(date);
+  if (tasks.length) col.append(section('Tasks', tasks.map((t) => homeTaskRow(t))));
 
   // The day's part of this week's to-do and habit tracker notes.
   for (const sec of todayFromWeekNotes(date)) col.append(sec);
@@ -2034,6 +2037,39 @@ function agendaRow(p, date) {
   li.append(open);
   return li;
 }
+// The board tasks a day's page lists (lib/kanban.mjs dayTasks): late ones
+// first, then due that day, then in progress; by priority within each.
+const WHY_ORDER = { late: 0, due: 1, doing: 2 };
+function homeTasks(date) {
+  const key = dayKey(date);
+  const today = isToday(date);
+  const out = [];
+  for (const b of boardList()) {
+    if (isTemplateNote(b.rel)) continue;
+    for (const t of dayTasks(parseBoard(b.content), key, today)) out.push({ ...t, rel: b.rel, board: b.title });
+  }
+  const prio = (t) => (t.priority ? Number(t.priority.slice(1)) : 9);
+  return out.sort((a, b) => WHY_ORDER[a.why] - WHY_ORDER[b.why] || prio(a) - prio(b));
+}
+// A board task on the day's page, to read: a click opens it on its board.
+function homeTaskRow(t) {
+  const li = elem('li', `plan-row agenda-row home-task${t.why === 'late' ? ' late' : ''}`);
+  li.append(elem('span', 'home-task-box'));
+  const open = elem('button', 'agenda-open');
+  open.type = 'button';
+  open.title = `Open on the board ${t.board}`;
+  open.append(elem('span', 'plan-title', t.title));
+  const tags = elem('span', 'home-task-tags');
+  if (t.priority) tags.append(elem('span', `tk-prio ${t.priority.toLowerCase()}`, t.priority));
+  if (t.why === 'late') tags.append(elem('span', 'home-task-why late', `Late · ${prettyDue(t.due)}`));
+  else if (t.why === 'doing') tags.append(elem('span', 'home-task-why', 'In progress'));
+  tags.append(elem('span', 'home-task-board', t.board));
+  open.append(tags);
+  open.addEventListener('click', () => plannerApi.openTask(t));
+  li.append(open);
+  return li;
+}
+
 // Nothing planned: say so and offer the Planner.
 function emptyDayCard(date) {
   const c = elem('section', 'empty-day');
