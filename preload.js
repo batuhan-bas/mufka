@@ -83,6 +83,9 @@ contextBridge.exposeInMainWorld('notes', {
   handyToggle: () => ipcRenderer.invoke('voice:handyToggle'),
   // A 16 kHz mono WAV (bytes) → { text } from Handy; cancel stops it.
   transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),
+  // The audio as it is (bytes, file name) → { text } from VoiceStudio's local server.
+  studioTranscribe: (data, name) => ipcRenderer.invoke('voice:studioTranscribe', data, name),
+  openStudio: () => ipcRenderer.invoke('voice:openStudio'),
   cancelTranscribe: () => ipcRenderer.invoke('voice:cancel'),
   saveAudio: (noteDir, name, data) => ipcRenderer.invoke('voice:saveAudio', noteDir, name, data),
   micAccess: () => ipcRenderer.invoke('voice:micAccess'),

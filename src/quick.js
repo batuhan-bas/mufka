@@ -58,7 +58,7 @@ input.addEventListener('keydown', async (e) => {
   } else hint.textContent = (r && r.error) || 'Could not add it';
 });
 
-api.voice().then((v) => { if (!v || !v.handy) mic.hidden = true; });
+api.voice().then((v) => { if (!v || !v.handy || !v.handy.installed) mic.hidden = true; });
 mic.addEventListener('click', () => { input.focus(); api.handyToggle(); });
 
 input.focus();

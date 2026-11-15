@@ -174,6 +174,49 @@ function handyTranscribe(wav) {
     child.on('error', (e) => { clearTimeout(timer); handyJob = null; fs.rmSync(file, { force: true }); reject(e); });
   });
 }
+// VoiceStudio (https://voicestudio.sh): a local speech app with a server on
+// this computer (127.0.0.1:3900, no key on loopback). A recording or an audio
+// file goes to its /transcribe as it is; the text comes back. Mufka finds it
+// while it runs; nothing to set up.
+// MUFKA_STUDIO_URL: a stand-in server for the tests.
+const STUDIO = process.env.MUFKA_STUDIO_URL || 'http://127.0.0.1:3900';
+const STUDIO_APP = process.platform === 'darwin'
+  ? ['/Applications/VoiceStudio.app', path.join(app.getPath('home'), 'Applications/VoiceStudio.app')]
+  : [path.join(process.env.LOCALAPPDATA || '', 'Programs', 'VoiceStudio', 'VoiceStudio.exe')];
+const studioApp = () => STUDIO_APP.find((p) => p && fs.existsSync(p)) || null;
+async function studioRunning() {
+  try {
+    const r = await fetch(`${STUDIO}/health`, { signal: AbortSignal.timeout(1500) });
+    return r.ok && (await r.json()).status === 'ok';
+  } catch { return false; }
+}
+let studioJob = null;
+async function studioTranscribe(data, name) {
+  const bytes = Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data || []));
+  if (!bytes.length) throw new Error('No recording');
+  if (bytes.length > 500 * 1024 * 1024) throw new Error('Recordings up to 500 MB');
+  if (studioJob) throw new Error('VoiceStudio is already writing one down');
+  const ext = path.extname(String(name || '')).toLowerCase();
+  const file = AUDIO_EXT.has(ext) ? path.basename(String(name)) : 'recording.webm';
+  const form = new FormData();
+  form.append('audio', new Blob([bytes]), file);
+  studioJob = new AbortController();
+  const timer = setTimeout(() => studioJob && studioJob.abort(), 60 * 60 * 1000);
+  try {
+    const r = await fetch(`${STUDIO}/transcribe`, { method: 'POST', body: form, signal: studioJob.signal });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const d = res.detail || {};
+      if (d.error === 'asr_model_missing') throw new Error('VoiceStudio has no speech-to-text model yet: download one in its Model Catalogue');
+      throw new Error(`VoiceStudio: ${d.message || (typeof d === 'string' ? d : '') || `error ${r.status}`}`);
+    }
+    return { text: String(res.text || '').trim(), seconds: res.duration_s || 0 };
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Stopped');
+    if (e.cause && e.cause.code === 'ECONNREFUSED') throw new Error('VoiceStudio is not running: open it and try again');
+    throw e;
+  } finally { clearTimeout(timer); studioJob = null; }
+}
 // The recording itself kept with its note, in the attachments of `noteDir`.
 const AUDIO_EXT = new Set(['.m4a', '.mp3', '.wav', '.webm', '.ogg', '.oga', '.flac', '.aac']);
 function saveAudio(noteDir, name, data) {
@@ -1936,10 +1979,15 @@ ipcMain.handle('update:set', wrap((patch) => {
   if (patch && patch.auto) checkForUpdates();
   return updateInfo();
 }));
-ipcMain.handle('voice:status', wrap(() => ({ handy: { installed: Boolean(handyPath()) } })));
+ipcMain.handle('voice:status', wrap(async () => ({
+  handy: { installed: Boolean(handyPath()) },
+  studio: { running: await studioRunning(), installed: Boolean(studioApp()) },
+})));
+ipcMain.handle('voice:openStudio', wrap(async () => { const a = studioApp(); if (!a) throw new Error('VoiceStudio is not installed'); await shell.openPath(a); return { ok: true }; }));
 ipcMain.handle('voice:handyToggle', wrap(() => handyToggle()));
 ipcMain.handle('voice:transcribe', wrap((wav) => handyTranscribe(wav)));
-ipcMain.handle('voice:cancel', wrap(() => { if (handyJob) handyJob.kill(); return { ok: true }; }));
+ipcMain.handle('voice:studioTranscribe', wrap((data, name) => studioTranscribe(data, name)));
+ipcMain.handle('voice:cancel', wrap(() => { if (handyJob) handyJob.kill(); if (studioJob) studioJob.abort(); return { ok: true }; }));
 ipcMain.handle('voice:saveAudio', wrap((noteDir, name, data) => saveAudio(noteDir, name, data)));
 // The microphone, for "Record now": macOS asks the person once.
 ipcMain.handle('quick:target', wrap((text) => { const t = quickTarget(String(text || ''), quickRels()); return { to: t.title || null }; }));
