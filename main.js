@@ -6,7 +6,7 @@ import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeT
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
-import crypto, { randomUUID } from 'node:crypto';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -19,11 +19,12 @@ import * as bm from './lib/bookmarks.mjs';
 import * as ts from './lib/treestyle.mjs';
 import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
-import { resolveSave } from './lib/outside.mjs';
+import { createVaultIO, fontResponse } from './lib/vault-io.mjs';
+import { createSenderCheck } from './lib/ipc-guard.mjs';
 import { createHistory } from './lib/history.mjs';
 import { createVaultCache } from './lib/vault-cache.mjs';
 import { autoUpdatesOn } from './lib/updates.mjs';
-import { vaultLayout, attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
+import { attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
 import * as cal from './lib/calendar.mjs';
 
@@ -57,6 +58,15 @@ app.setName('Mufka');
 const DATA_FILE = 'planlar.json';
 const appRenderers = new Set();
 
+// Reading and writing the vault, with its path checks (lib/vault-io.mjs).
+const {
+  writeFileAtomic, readJson, obsidianSettings, bookmarksRead, bookmarksWrite, layout, dailyRoot, ensureNotesDirs,
+  safeAbs, checkedVaultPath, mutationAbs, attachAbs, attachTrash, attachOpen, isGunlukRoot, readIfFile,
+  saveFromEditor, trashNote, trashFolder, readDaily, writeDaily, deleteDaily, attachResponse,
+} = createVaultIO({
+  notesRoot, isDir, readSettings, writeSettings, noteOwnWrite, keepBefore, keepDeleted, shell, attachUnused, cleanableAttachDir,
+});
+
 function dataPath() {
   return path.join(app.getPath('userData'), DATA_FILE);
 }
@@ -89,19 +99,6 @@ function writeStore(data) {
   writeFileAtomic(dataPath(), JSON.stringify(data, null, 2));
 }
 
-function writeFileAtomic(file, text) {
-  const tmp = `${file}.${randomUUID()}.tmp`;
-  noteOwnWrite(file);
-  // Exclusive creation prevents a vault-supplied symlink from becoming a writer.
-  const fd = fs.openSync(tmp, 'wx');
-  try {
-    try { fs.writeFileSync(fd, text, 'utf8'); }
-    finally { fs.closeSync(fd); }
-    fs.renameSync(tmp, file);
-  } finally {
-    fs.rmSync(tmp, { force: true });
-  }
-}
 
 // --- settings -------------------------------------------------------------
 // <userData>/settings.json: { vaultPath?, theme?, vaultRoot?, mcp? }. Unknown
@@ -240,20 +237,6 @@ function loadVault() {
   if (readSettings().vaultRoot !== notesRoot()) writeSettings({ vaultRoot: notesRoot() });
 }
 function notesRoot() { return vault.root || defaultNotesRoot(); }
-// Where daily notes and new attachments go (lib/layout.mjs): the vault's own
-// Obsidian settings if it has them, else the folders Mufka used before
-// (Günlük, Ekler) if present, else Daily / Attachments. Re-read on each use —
-// two tiny files — so a change in Obsidian applies right away.
-function readJson(file) { try { return JSON.parse(fs.readFileSync(checkedVaultPath(file), 'utf8')); } catch { return null; } }
-function obsidianSettings() {
-  const dir = path.join(notesRoot(), '.obsidian');
-  if (!isDir(dir) || !np.realInside(notesRoot(), dir, fs)) return null;
-  return {
-    dailyNotes: readJson(path.join(dir, 'daily-notes.json')) || undefined,
-    app: readJson(path.join(dir, 'app.json')) || {},
-    templates: readJson(path.join(dir, 'templates.json')) || undefined,
-  };
-}
 // --- tree colours and icons: .mufka/tree.json in the vault ---
 // Like Obsidian's .obsidian folder, so they travel with the notes (iCloud,
 // Git, another Mac). The folder is made only when someone first picks an
@@ -279,20 +262,6 @@ function treeStyleWrite(data) {
 }
 
 // --- bookmarks ---
-// Obsidian's .obsidian/bookmarks.json when the vault has an .obsidian folder
-// (so both apps share them); otherwise kept in settings.json per vault folder,
-// because Mufka never adds folders to a vault on its own.
-function bookmarksRead() {
-  const dir = path.join(notesRoot(), '.obsidian');
-  if (isDir(dir)) return bm.normalizeBookmarks(readJson(path.join(dir, 'bookmarks.json')));
-  const all = readSettings().bookmarks || {};
-  return bm.normalizeBookmarks(all[notesRoot()]);
-}
-function bookmarksWrite(json) {
-  const dir = path.join(notesRoot(), '.obsidian');
-  if (isDir(dir)) { writeFileAtomic(checkedVaultPath(path.join(dir, 'bookmarks.json')), JSON.stringify(json, null, 2)); return; }
-  writeSettings({ bookmarks: { ...(readSettings().bookmarks || {}), [notesRoot()]: json } });
-}
 function bookmarksToggle(rel) {
   const r = at.normalizeRel(String(rel || ''));
   if (!r) throw new Error('Not a note');
@@ -309,33 +278,9 @@ function bookmarksFollow(oldRel, newRel) {
   } catch { /* bookmarks are a convenience: never fail a rename for them */ }
 }
 
-function layout() { return vaultLayout(obsidianSettings(), (name) => isDir(path.join(notesRoot(), name))); }
-function dailyRoot() { return checkedVaultPath(path.join(notesRoot(), ...layout().daily.split('/').filter(Boolean))); }
-// Only the vault root itself is created on demand. Günlük and Ekler appear when
-// the first daily note / attachment is written, so opening an existing folder
-// (e.g. an Obsidian vault) does not add folders to it.
-function ensureNotesDirs() { fs.mkdirSync(notesRoot(), { recursive: true }); }
 
-// Resolve a vault-relative path to a safe absolute path, or throw.
-function safeAbs(rel) {
-  ensureNotesDirs();
-  return checkedVaultPath(np.vaultPath(notesRoot(), rel || ''));
-}
 
-function checkedVaultPath(abs) {
-  if (!np.isInside(notesRoot(), abs) || !np.realInside(notesRoot(), abs, fs)) {
-    throw new Error('invalid path');
-  }
-  return abs;
-}
 
-function mutationAbs(rel, kind) {
-  const abs = safeAbs(rel);
-  if (fs.realpathSync(abs) === fs.realpathSync(notesRoot())) throw new Error('invalid mutation path');
-  const st = fs.lstatSync(abs);
-  if (kind === 'folder' ? !st.isDirectory() : !st.isFile() || !/\.md$/i.test(abs)) throw new Error('invalid mutation type');
-  return abs;
-}
 
 // --- attachments (<vault>/Ekler) ----------------------------------------
 
@@ -343,16 +288,6 @@ function mutationAbs(rel, kind) {
 function attachDirRel(noteDir) { return attachmentsDirFor(layout(), String(noteDir || '')); }
 function attachDirAbs(noteDir) { return safeAbs(attachDirRel(noteDir)); }
 
-// Resolve a vault-relative path to a file to serve or open: anywhere in the
-// vault (notes from other tools keep images next to them), but never outside
-// it — no traversal, no dot folders (.obsidian, .git), no symlink escape.
-function attachAbs(rel) {
-  const norm = at.normalizeRel(String(rel || ''));
-  if (!norm || norm.split('/').some((seg) => seg.startsWith('.'))) throw new Error('invalid attachment path');
-  const abs = path.join(notesRoot(), ...norm.split('/'));
-  if (!np.isInside(notesRoot(), abs) || !np.realInside(notesRoot(), abs, fs)) throw new Error('invalid attachment path');
-  return abs;
-}
 
 // Vault-relative paths of every non-note file (images, PDFs…), for resolving
 // links. Same walk rules as walkVault: no dot entries, no symlinks.
@@ -478,45 +413,8 @@ function attachUnused() {
   return at.unusedAttachments(names, contents);
 }
 
-async function attachTrash(names) {
-  const dir = cleanableAttachDir();
-  if (!dir) return { ok: true };
-  const eligible = new Set(attachUnused());
-  const files = [];
-  for (const name of (Array.isArray(names) ? names : [])) {
-    if (typeof name !== 'string' || /[/\\]/.test(name) || !eligible.has(name)) continue;
-    try { files.push(attachAbs(`${dir}/${name}`)); } catch { /* skip */ }
-  }
-  // Keep the selected vault's paths even if the user switches while trash awaits.
-  for (const file of files) {
-    try { await shell.trashItem(file); } catch { /* skip */ }
-  }
-  return { ok: true };
-}
 
-// Open in the default app — except files that would run code (a script or an
-// app linked from a note), which are only shown in Finder.
-async function attachOpen(rel) {
-  const abs = attachAbs(rel);
-  const real = fs.realpathSync(abs);
-  const st = fs.statSync(real);
-  const document = at.isOpenableDocument(real);
-  if (!st.isFile() || !document || (st.mode & 0o111) || real.split(path.sep).some(at.isExecutableName)) shell.showItemInFolder(abs);
-  else {
-    const error = await shell.openPath(real);
-    if (error) throw new Error(error);
-  }
-  return { ok: true };
-}
 
-// The daily notes folder: shown in the tree but cannot be renamed/moved/trashed.
-function isGunlukRoot(rel) {
-  const d = layout().daily;
-  if (d === '') return false;
-  const daily = dailyRoot();
-  const abs = safeAbs(rel);
-  return fs.existsSync(abs) && fs.existsSync(daily) && fs.realpathSync(abs) === fs.realpathSync(daily);
-}
 function relOf(abs) { return np.relFromAbs(notesRoot(), abs); }
 
 // --- file recovery ---------------------------------------------------------
@@ -531,7 +429,6 @@ function history() {
   }
   return histories.get(root);
 }
-function readIfFile(abs) { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } }
 // `abs` is about to be overwritten: keep its current text as a version.
 function keepBefore(abs, opts) {
   const old = readIfFile(abs);
@@ -619,24 +516,6 @@ function readNoteRel(rel) {
   catch (err) { if (err.code === 'ENOENT') return null; throw err; }
 }
 
-// What Mufka last wrote to each note from an editor, by absolute path.
-const lastWritten = new Map();
-// An editor's save (base: the text it started from) keeps what another app
-// added at the end of the note meanwhile (lib/outside.mjs); `merged` tells the
-// editor to take that text too. Other callers pass no base and just write.
-function saveFromEditor(abs, content, base) {
-  let text = String(content ?? '');
-  let r = { kind: 'same' };
-  if (typeof base === 'string') {
-    r = resolveSave(text, readIfFile(abs), { last: lastWritten.get(abs), base });
-    text = r.text;
-  }
-  keepBefore(abs);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  writeFileAtomic(abs, text);
-  if (typeof base === 'string') lastWritten.set(abs, text);
-  return r.kind === 'appended' ? { merged: text } : r.kind === 'conflict' ? { conflict: true } : {};
-}
 
 function writeNoteRel(rel, content, base) {
   const abs = safeAbs(rel);
@@ -770,41 +649,9 @@ function moveEntry(srcRel, destFolderRel) {
   return { rel: toRel, ...applyLinkRewrite(before, srcRel, toRel) };
 }
 
-async function trashNote(rel) {
-  const abs = mutationAbs(rel, 'note');
-  keepDeleted(abs);
-  await shell.trashItem(abs);
-  return { ok: true };
-}
-async function trashFolder(rel) {
-  if (isGunlukRoot(rel)) throw new Error('The daily notes folder cannot be deleted');
-  const abs = mutationAbs(rel, 'folder');
-  keepDeleted(abs);
-  await shell.trashItem(abs);
-  return { ok: true };
-}
 
-function readDaily(dateKey) {
-  const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
-  try {
-    return { content: fs.readFileSync(p, 'utf8'), mtime: fs.statSync(p).mtimeMs };
-  } catch (err) {
-    if (err.code === 'ENOENT') return null;
-    throw err;
-  }
-}
 
-function writeDaily(dateKey, content, base) {
-  const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
-  return { ok: true, ...saveFromEditor(p, content, base) };
-}
 
-async function deleteDaily(dateKey) {
-  const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
-  keepDeleted(p);
-  await shell.trashItem(p);
-  return { ok: true };
-}
 
 // --- export -------------------------------------------------------------
 
@@ -944,49 +791,13 @@ async function runDataviewJsNow(payload) {
   return res;
 }
 
-const ATTACH_MIME = {
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
-};
 
-// Serve vault attachments over the custom scheme, resolving ONLY paths that are
-// a direct child of Ekler inside the vault (attachAbs rejects traversal and
-// symlink escape). Anything else 404s.
 function registerFontProtocol() {
-  protocol.handle(FONT_SCHEME, (request) => {
-    try {
-      const root = path.join(__dirname, '../renderer/excalidraw');
-      const rel = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, '');
-      const abs = path.join(root, rel);
-      if (!np.isInside(root, abs) || !/\.(woff2?|ttf|otf)$/i.test(abs)) return new Response('', { status: 404 });
-      return new Response(fs.readFileSync(abs), { headers: {
-        'content-type': /\.woff2$/i.test(abs) ? 'font/woff2' : /\.woff$/i.test(abs) ? 'font/woff' : 'font/ttf',
-        'access-control-allow-origin': '*',
-        'x-content-type-options': 'nosniff',
-      } });
-    } catch {
-      return new Response('', { status: 404 });
-    }
-  });
+  protocol.handle(FONT_SCHEME, (request) => fontResponse(request.url, path.join(__dirname, '../renderer/excalidraw')));
 }
 
 function registerAttachProtocol() {
-  protocol.handle(ATTACH_SCHEME, (request) => {
-    try {
-      const u = new URL(request.url);
-      const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
-      const abs = attachAbs(rel);
-      const buf = fs.readFileSync(abs);
-      const ext = path.extname(abs).toLowerCase();
-      return new Response(buf, { headers: {
-        'content-type': ATTACH_MIME[ext] || 'application/octet-stream',
-        'content-security-policy': "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
-        'x-content-type-options': 'nosniff',
-      } });
-    } catch {
-      return new Response('', { status: 404 });
-    }
-  });
+  protocol.handle(ATTACH_SCHEME, (request) => attachResponse(request.url));
 }
 
 // --- Wispr Flow connection -------------------------------------------------
@@ -1738,22 +1549,12 @@ function createWindow() {
 }
 
 // Synchronous so the renderer can gate dev-only hooks at module load.
-function trustedSender(event) {
-  try {
-    if (!appRenderers.has(event.sender.id) || !event.senderFrame || event.senderFrame !== event.sender.mainFrame) return false;
-    const url = new URL(event.senderFrame.url);
-    const dev = process.env.ELECTRON_RENDERER_URL;
-    if (!app.isPackaged && dev) {
-      const expected = new URL(`${dev}/index.html`);
-      return url.origin === expected.origin && url.pathname === expected.pathname;
-    }
-    return url.protocol === 'file:' && fileURLToPath(url) === path.resolve(__dirname, '../renderer/index.html');
-  } catch { return false; }
-}
-
-function assertTrustedSender(event) {
-  if (!trustedSender(event)) throw new Error('unauthorized IPC sender');
-}
+const { trustedSender, assertTrustedSender, wrap } = createSenderCheck({
+  appRenderers,
+  isPackaged: () => app.isPackaged,
+  devUrl: () => process.env.ELECTRON_RENDERER_URL,
+  rendererFile: path.join(__dirname, '../renderer/index.html'),
+});
 
 ipcMain.on('mufka:isPackaged', (event) => { event.returnValue = trustedSender(event) && app.isPackaged; });
 
@@ -1825,12 +1626,7 @@ ipcMain.handle('planner:import', async (event) => {
   }
 });
 
-// Notes IPC. Each handler wraps a helper and reports errors as { error }.
-function wrap(fn) {
-  return async (_e, ...args) => {
-    try { assertTrustedSender(_e); return await fn(...args); } catch (err) { return { error: err.message }; }
-  };
-}
+// Notes IPC. Each handler wraps a helper (wrap, lib/ipc-guard.mjs) and reports errors as { error }.
 ipcMain.handle('notes:tree', wrap(() => walkVault()));
 ipcMain.handle('notes:all', wrap(() => collectNotes()));
 ipcMain.handle('notes:sync', wrap((since) => syncVault(Number.isFinite(since) ? since : -1)));

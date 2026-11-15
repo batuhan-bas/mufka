@@ -23,6 +23,8 @@ ipcMain.handle('vault:info', () => ({ name: 'Notes', path: '/tmp/Notes', custom:
 ipcMain.handle('notes:sync', () => ({ version: 0, full: true, changed: [], removed: [] }));
 ipcMain.handle('treestyle:read', () => ({}));
 ipcMain.handle('calendar:events', () => ({ connected: false, events: [] }));
+// …and since automatic updates (1.12.0)
+ipcMain.handle('update:get', () => ({ state: 'idle', auto: true, current: '0.0.0', packaged: true }));
 
 let sawError = false;
 app.whenReady().then(() => {
