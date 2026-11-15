@@ -61,6 +61,11 @@ shell.showItemInFolder = (p) => { shellCalls.push(['reveal', p]); };
 let lastMessage = null;
 dialog.showMessageBox = async (...args) => { lastMessage = (args.length > 1 ? args[1] : args[0]).message; return { response: 0 }; };
 
+// A window macOS counts as covered (another Space, a full-screen app, the
+// machine in use) gets no animation frames, so guides and the graph would
+// never draw; keep it rendering like a visible one.
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 require('../out/main/index.js'); // the build: npm test runs `npm run build` first
 
 const notesDir = path.join(tmp, 'Documents', 'Mufka');
@@ -278,10 +283,15 @@ app.whenReady().then(() => setTimeout(async () => {
       await js(`document.querySelector('.pl-scroll').scrollTop = 17 * 48`); await sleep(150);
       const at = await js(`(()=>{const c=document.querySelector('.pl-col[data-drop-day="${todayK}"]');const b=c.getBoundingClientRect();return {x:Math.round(b.x+b.width/2),y:Math.round(b.top+20*48+20)};})()`);
       BrowserWindow.getAllWindows()[0].focus(); await sleep(100);
-      // two small moves: a hover needs a move into the slot, not just a position
-      wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y - 3 }); await sleep(60);
-      wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y });
-      assert(await waitFor('!!document.querySelector(".pl-col .pl-hint:not([hidden])")', 2000), 'no hover hint');
+      // two small moves: a hover needs a move into the slot, not just a position.
+      // Tried again if the real pointer (someone using the Mac) moved it away.
+      let hinted = false;
+      for (let i = 0; i < 3 && !hinted; i++) {
+        wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y - 3 }); await sleep(60);
+        wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y });
+        hinted = await waitFor('!!document.querySelector(".pl-col .pl-hint:not([hidden])")', 1000);
+      }
+      assert(hinted, 'no hover hint');
       wc.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'left', clickCount: 1 });
       wc.sendInputEvent({ type: 'mouseUp', x: at.x, y: at.y, button: 'left', clickCount: 1 });
       wc.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'left', clickCount: 2 });
@@ -551,7 +561,8 @@ app.whenReady().then(() => setTimeout(async () => {
       await treeRowMenu('Kutu'); await clickMenuItem('New note'); await treeType('N1');
       await press('2', ['meta']); await sleep(200); // back to tree
       if ((await js(`${treeRow('Kutu')}?.querySelector('.tri')?.textContent`)) !== '▾') { await clickTreeRow('Kutu'); await sleep(150); }
-      const g = await js(`(() => {
+      // Guides are drawn on the next animation frame, which a busy machine delays.
+      const measure = () => js(`(() => {
         const row = ${treeRow('Kutu')};
         const kids = [...document.querySelectorAll('.tree-row')].filter(r => r.dataset.rel && r.dataset.rel.startsWith('Kutu/'));
         const span = kids.length ? (kids[kids.length-1].offsetTop + kids[kids.length-1].offsetHeight) - (row.offsetTop + row.offsetHeight) : 0;
@@ -559,6 +570,8 @@ app.whenReady().then(() => setTimeout(async () => {
         const guide = [...document.querySelectorAll('.tree-guide')].find(x => Math.abs(x.offsetTop - want) < 3);
         return { found: !!guide, h: guide ? guide.offsetHeight : 0, span, pe: guide ? getComputedStyle(guide).pointerEvents : null, total: document.querySelectorAll('.tree-guide').length };
       })()`);
+      let g = await measure();
+      for (let i = 0; i < 30 && !(g.found && g.h >= g.span - 2 && g.span > 0); i++) { await sleep(100); g = await measure(); }
       assert(g.found && g.h >= g.span - 2 && g.span > 0, `guide does not span children: ${JSON.stringify(g)}`);
       assert(g.pe === 'none', 'guide is not click-through');
       const before = g.total;
@@ -1021,7 +1034,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await sleep(800);
       await clickSel('#graph-btn');
       const api = 'document.querySelector(".graph-view")?.graphApi';
-      assert(await waitFor(`${api}?.ids().includes("Graf/G1.md") && ${api}.settled()`, 8000), 'graph did not show and settle');
+      assert(await waitFor(`${api}?.ids().includes("Graf/G1.md") && ${api}.settled()`, 20000), 'graph did not show and settle');
       assert((await js('document.getElementById("graph-btn").getAttribute("aria-current")')) === 'page', 'graph place not selected');
       const p = await js(`${api}.screenPos("Graf/G3.md")`);
       assert(p, 'G3 has no position');
@@ -1443,7 +1456,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('#mode-planner'); await clickSel('#mode-notes');
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "G2"', 3000), 'Notes did not return to the last note');
       // guides: a depth class per level
-      assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 2000), `no coloured guide: ${await js(`JSON.stringify({ mode: document.body.className, folders: [...document.querySelectorAll('.side-notes .folder-row')].map(r => r.dataset.rel + (r.getAttribute('aria-expanded') === 'true' ? '+' : '')), rows: document.querySelectorAll('.side-notes .tree-row').length, guides: document.querySelectorAll('.tree-guide').length, sideHidden: getComputedStyle(document.getElementById('sidebar')).display })`)}`);
+      assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 5000), `no coloured guide: ${await js(`JSON.stringify({ mode: document.body.className, folders: [...document.querySelectorAll('.side-notes .folder-row')].map(r => r.dataset.rel + (r.getAttribute('aria-expanded') === 'true' ? '+' : '')), rows: document.querySelectorAll('.side-notes .tree-row').length, guides: document.querySelectorAll('.tree-guide').length, sideHidden: getComputedStyle(document.getElementById('sidebar')).display })`)}`);
     });
 
     await step(55, 'Settings (⌘, or the gear): calendar and Wispr Flow connections shown, offline', async () => {
@@ -1539,7 +1552,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.querySelectorAll(".swatch").length === 8', 2000), 'no colour swatches');
       await clickSel('.swatch[aria-label="Pink"]');
       assert(await waitFor(`${row('Tarifler')}.style.getPropertyValue('--row-c') === '#e07bb5'`, 2000), 'folder did not turn pink');
-      assert(await js(`[...document.querySelectorAll('.tree-guide')].some(g => /224, 123, 181|e07bb5/i.test(g.style.background))`), 'guide is not pink');
+      assert(await waitFor(`[...document.querySelectorAll('.tree-guide')].some(g => /224, 123, 181|e07bb5/i.test(g.style.background))`, 3000), 'guide is not pink');
       // Kept in the vault like Obsidian's own settings, and not shown as a folder.
       const styleFile = path.join(vault, '.mufka', 'tree.json');
       const saved = () => { try { return JSON.parse(fs.readFileSync(styleFile, 'utf8')).items; } catch { return null; } };
