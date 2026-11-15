@@ -3011,7 +3011,8 @@ function decorateBudgetBlock(el, rel, src, b) {
   const t = budgetTables(src);
   const kind = t.income && t.income.start === b.start ? 'income' : t.expenses && t.expenses.start === b.start ? 'expenses' : null;
   if (!kind) return;
-  decorateBudgetTable(el, t[kind].columns, { money: moneyFormat(budgetSettings(code).currency), colourOf: categoryColours(src, code) });
+  const rows = t[kind].rows;
+  decorateBudgetTable(el, t[kind].columns, { money: moneyFormat(budgetSettings(code).currency), colourOf: categoryColours(src, code), total: rows.length ? rows.reduce((s, r) => s + r.amount, 0) : null });
   el.append(addButton(kind, (k) => addBudgetEntry(rel, k)));
 }
 

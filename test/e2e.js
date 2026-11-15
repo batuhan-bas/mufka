@@ -1687,6 +1687,9 @@ app.whenReady().then(() => setTimeout(async () => {
       for (let t = 0; t < 30 && !totals; t++) { const v = await stats(); totals = v[1].replace(/\D/g, '') === '12505' && v[2].startsWith('−'); if (!totals) await sleep(100); }
       assert(totals, `totals not updated: ${await stats()}`);
       assert(await js('!!document.querySelector(".note-body td .bud-chip")'), 'category not shown as a chip');
+      // The Expenses table has a Total row (on screen only) with the same sum.
+      assert(await waitFor('[...document.querySelectorAll(".note-body tr.bud-total")].some(r => r.querySelector(".bud-total-label")?.textContent === "Total" && r.querySelector(".bud-total-amount")?.textContent.replace(/\\D/g, "") === "12505")', 3000), `no Total row: ${await js('[...document.querySelectorAll(".note-body tr.bud-total")].map(r => r.textContent).join(" | ")')}`);
+      assert(!/Total/.test(fs.readFileSync(file, 'utf8')), 'the Total row went into the file');
       // The icon can be changed from the page; the next month starts from the card.
       assert(await clickUntil('document.querySelector(".note-icon")', '!!document.querySelector(".emoji-grid")', 'page icon'), 'icon picker did not open');
       await clickEval('[...document.querySelectorAll(".emoji-choice")].find(b => b.textContent === "🚀")', 'rocket');
