@@ -43,7 +43,7 @@ import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMont
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder, pastedImageName } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
-import { meetingTodos, meetingOf } from '../lib/meetings.mjs';
+import { meetingTodos, meetingOf, todoWhen } from '../lib/meetings.mjs';
 import { wavFromSamples, voiceNoteName, voiceNoteText, HANDY_RATE } from '../lib/audio.mjs';
 import { tripOf } from '../lib/trips.mjs';
 import { icon } from './icons.js';
@@ -4534,6 +4534,8 @@ function mountBlockMarkdown(container, bsrc, startLine, scope) {
 function addMeetingTaskButtons(container, startLine) {
   const todos = meetingTodos(state.noteContent);
   if (!todos.length) return;
+  const day = (meetingOf(state.openNote || '', state.noteContent) || {}).date || '';
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(day) ? parseDayKey(day) : new Date();
   const byLine = new Map(todos.map((t) => [t.line, t]));
   const boards = boardList().filter((b) => !isTemplateNote(b.rel));
   container.querySelectorAll('input.task-check').forEach((box) => {
@@ -4542,14 +4544,37 @@ function addMeetingTaskButtons(container, startLine) {
     if (!t || !li) return;
     const title = parseCard(t.text).title.toLowerCase();
     const on = boards.find((b) => parseBoard(b.content).columns.some((c) => c.cards.some((k) => parseCard(k.text).title.toLowerCase() === title)));
-    if (on) { li.append(elem('span', 'meeting-task-on', `On ${on.title}`)); return; }
-    const btn = elem('button', 'meeting-task-btn', 'Add to board');
-    btn.type = 'button';
-    btn.dataset.menuAnchor = `meeting-task-${t.line}`;
-    btn.title = 'Make it a task on a board';
-    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); addMeetingTask(t, boards, btn.dataset.menuAnchor); });
-    li.append(btn);
+    if (on) li.append(elem('span', 'meeting-task-on', `On ${on.title}`));
+    else {
+      const btn = elem('button', 'meeting-task-btn', 'Add to board');
+      btn.type = 'button';
+      btn.dataset.menuAnchor = `meeting-task-${t.line}`;
+      btn.title = 'Make it a task on a board';
+      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); addMeetingTask(t, boards, btn.dataset.menuAnchor); });
+      li.append(btn);
+    }
+    const when = todoWhen(t.text, base);
+    if (when) li.append(meetingPlanButton(t.text, when));
   });
+}
+// The day (and time) a meeting's to-do names (lib/meetings.mjs todoWhen): a
+// button that puts it in the Planner on that day, or where it already is.
+function meetingPlanButton(text, when) {
+  const label = [parseDayKey(when.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', ''), when.time].filter(Boolean).join(' · ');
+  const title = text.trim().toLowerCase();
+  if (state.store.items.some((p) => p.scope === 'day' && p.key === when.date && p.title.toLowerCase() === title)) {
+    return elem('span', 'meeting-task-on', `In Planner · ${label}`);
+  }
+  const btn = elem('button', 'meeting-task-btn', `Plan ${label}`);
+  btn.type = 'button';
+  btn.title = 'Put it in the Planner on that day';
+  btn.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    addPlan(parseDayKey(when.date), { title: text.trim(), time: when.time });
+    btn.replaceWith(elem('span', 'meeting-task-on', `In Planner · ${label}`));
+    showToast(`Added to the Planner · ${label}`);
+  });
+  return btn;
 }
 function addMeetingTask(todo, boards, anchor) {
   const go = (b) => {
