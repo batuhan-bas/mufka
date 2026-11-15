@@ -325,3 +325,10 @@ test('callout content stays inert text', () => {
   assert.equal(findAll(box, 'img').length, 0);
   assert.equal(findAll(box, 'script').length, 0);
 });
+
+test('colour codes in text are not tags', () => {
+  const [p] = render('Renk #1e2025 ve #fff, etiket #proje ve #cafe');
+  const tags = findAll(p, 'span').filter((s) => s.getAttribute('class') === 'tag');
+  assert.deepEqual(tags.map((t) => t.getAttribute('data-tag')), ['proje', 'cafe']);
+  assert.ok(p.textContent.startsWith('Renk #1e2025 ve #fff'));
+});
