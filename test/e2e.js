@@ -1959,6 +1959,47 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await js('document.querySelectorAll(".meeting-task-btn").length === 1'), 'the open action item has no Add to board');
     });
 
+    // 64f. Right-click menus: a note's path is copied, it is duplicated and
+    //      moved; a drawing in the sidebar is renamed (keeping .excalidraw)
+    //      and deleted after asking.
+    await step('64f', 'right-click: copy path, duplicate, move; rename and delete a drawing', async () => {
+      const dir = path.join(tvault, 'Menus');
+      fs.mkdirSync(path.join(dir, 'Inner'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'Alpha.md'), 'alpha');
+      fs.writeFileSync(path.join(dir, 'Inner', 'keep.md'), 'k');
+      fs.mkdirSync(path.join(tvault, 'Excalidraw'), { recursive: true });
+      fs.writeFileSync(path.join(tvault, 'Excalidraw', 'Board sketch.excalidraw.md'), '---\nexcalidraw-plugin: parsed\n---\n');
+      await sleep(900);
+      await clickSel('#mode-notes'); await sleep(300);
+      const row = (n) => `[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === ${JSON.stringify(n)})`;
+      if (!(await js(`!!(${row('Alpha')})`))) await clickEval(row('Menus'), 'Menus folder');
+      assert(await waitFor(`!!(${row('Alpha')})`, 3000), 'Alpha not in the tree');
+      const right = (el) => js(`(() => { const r = ${el}; r.scrollIntoView({ block: 'center' }); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 40, clientY: b.y + b.height / 2 })); return true; })()`);
+      const pick = (label) => clickEval(`[...document.querySelectorAll('.row-menu .menu-item')].find(m => m.textContent === ${JSON.stringify(label)})`, label);
+      await right(row('Alpha'));
+      assert(await waitFor('[...document.querySelectorAll(".row-menu .menu-item")].map(m => m.textContent).includes("Copy full path") && !!document.querySelector(".row-menu .menu-sep")', 2000), 'no right-click menu on a note');
+      await pick('Copy path');
+      let clip = ''; for (let i = 0; i < 30 && clip !== 'Menus/Alpha.md'; i++) { clip = await clipboard.readText(); await sleep(100); }
+      assert(clip === 'Menus/Alpha.md', `copied ${clip}`);
+      await right(row('Alpha')); await pick('Duplicate');
+      assert(await waitFor2(() => fs.existsSync(path.join(dir, 'Alpha 2.md')) && fs.readFileSync(path.join(dir, 'Alpha 2.md'), 'utf8') === 'alpha', 3000), 'not duplicated');
+      await right(row('Alpha')); await pick('Move to…');
+      assert(await waitFor('!!document.querySelector(".palette-move")', 2000), 'no folder list');
+      await typeText('Menus/Inner'); await enter();
+      assert(await waitFor2(() => fs.existsSync(path.join(dir, 'Inner', 'Alpha.md')) && !fs.existsSync(path.join(dir, 'Alpha.md')), 3000), 'not moved');
+      const draw = (n) => `[...document.querySelectorAll('.board-row')].find(r => r.querySelector('.board-name')?.textContent === ${JSON.stringify(n)})`;
+      assert(await waitFor(`!!(${draw('Board sketch')})`, 3000), 'drawing not in the sidebar');
+      await right(draw('Board sketch')); await pick('Rename');
+      assert(await waitFor('!!document.querySelector(".ask-input")', 2000), 'no rename field');
+      await js(`(() => { const i = document.querySelector('.ask-input'); i.value = 'Wall sketch'; return true; })()`); await enter();
+      assert(await waitFor2(() => fs.existsSync(path.join(tvault, 'Excalidraw', 'Wall sketch.excalidraw.md')), 3000), 'drawing not renamed with .excalidraw kept');
+      assert(await waitFor(`!!(${draw('Wall sketch')})`, 3000), 'renamed drawing not in the sidebar');
+      await right(draw('Wall sketch')); await pick('Delete');
+      assert(await waitFor('/Delete Wall sketch/.test(document.querySelector(".plan-dialog")?.textContent || "")', 2000), 'delete was not asked');
+      await clickEval(`[...document.querySelectorAll('.plan-dialog button')].find(b => b.textContent === 'Delete')`, 'Delete');
+      assert(await waitFor2(() => !fs.existsSync(path.join(tvault, 'Excalidraw', 'Wall sketch.excalidraw.md')), 3000), 'drawing not deleted');
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.

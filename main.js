@@ -1786,6 +1786,8 @@ ipcMain.handle('mcp:set', wrap((patch) => {
 ipcMain.handle('vault:choose', wrap(async () => { await chooseVault(); return { ok: true }; }));
 ipcMain.handle('vault:useDefault', wrap(() => { setVault(null); return { ok: true }; }));
 ipcMain.handle('notes:reveal', wrap(() => { ensureNotesDirs(); shell.showItemInFolder(notesRoot()); return { ok: true }; }));
+// A note or folder of the vault shown in Finder / Explorer (its path checked).
+ipcMain.handle('notes:revealItem', wrap((rel) => { shell.showItemInFolder(safeAbs(rel)); return { ok: true }; }));
 ipcMain.handle('attach:list', wrap(() => vaultFiles()));
 ipcMain.handle('attach:paste', wrap((noteDir) => attachPaste(noteDir)));
 ipcMain.handle('attach:pick', wrap((noteDir) => attachPick(noteDir)));

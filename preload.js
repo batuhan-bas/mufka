@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('notes', {
   historyDeleted: () => ipcRenderer.invoke('history:deleted'),
   historyRestoreDeleted: (rel, t) => ipcRenderer.invoke('history:restoreDeleted', rel, t),
   reveal: () => ipcRenderer.invoke('notes:reveal'),
+  revealItem: (rel) => ipcRenderer.invoke('notes:revealItem', rel),
   vaultInfo: () => ipcRenderer.invoke('vault:info'),
   chooseVault: () => ipcRenderer.invoke('vault:choose'),
   useDefaultVault: () => ipcRenderer.invoke('vault:useDefault'),
