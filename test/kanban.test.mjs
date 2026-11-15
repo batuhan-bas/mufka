@@ -4,7 +4,7 @@ import {
   isBoard, parseBoard, serializeBoard, newBoard, parseCard, composeCard, urlLabel,
   addCard, updateCard, removeCard, moveCard, addColumn, renameColumn, removeColumn, moveColumn,
   setCompleteColumn, cardMatches, boardTags, DEFAULT_COLUMNS,
-  isDefaultColumn, missingDefaults, addDefaultColumn,
+  isDefaultColumn, missingDefaults, addDefaultColumn, dueTasks,
 } from '../lib/kanban.mjs';
 
 // What Obsidian's Kanban plugin writes.
@@ -224,4 +224,13 @@ test('default columns: known by name, removed and put back in their place', () =
   assert.equal(b.columns[0].title, 'To do');
   assert.deepEqual(missingDefaults(b), []);
   assert.deepEqual(addDefaultColumn(b, 'Done'), b, 'an existing default is not added twice');
+});
+
+test('dueTasks: tasks with a due date that are not done', () => {
+  const board = parseBoard([
+    '---', 'kanban-plugin: board', '---', '',
+    '## To do', '', '- [ ] Fix login @{2026-11-18} !P1 #bug', '- [ ] No date', '- [x] Ticked @{2026-11-18}', '',
+    '## Done', '', '- [ ] Shipped @{2026-11-17}', '', '**Complete**', '',
+  ].join('\n'));
+  assert.deepEqual(dueTasks(board), [{ ci: 0, ki: 0, title: 'Fix login', due: '2026-11-18', priority: 'P1', type: 'bug' }]);
 });

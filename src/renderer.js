@@ -23,7 +23,7 @@ import { attachmentsDirFor } from '../lib/layout.mjs';
 import { parseBlocks, blockText, replaceBlockText, insertBlockAfter, addBlock } from '../lib/blocks.mjs';
 import { createGraphView } from './graph-view.js';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
-import { renderTasks, tasksEditing, tasksAnnounce } from './tasks.js';
+import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender } from './tasks.js';
 import { createDataview } from './dataview-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
@@ -38,7 +38,7 @@ import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, ne
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
-import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs';
+import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks } from '../lib/kanban.mjs';
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
@@ -1007,9 +1007,31 @@ function planDialog(heading, { title = '', time = '', endTime = '' }, onSave, op
   c.titleInput.focus();
 }
 
+// Board tasks with a due date, by day, for the Planner (lib/kanban.mjs
+// dueTasks); boards in the templates folder are left out. Worked out again only
+// when the vault's notes change.
+let dueCache = { notes: null, byDay: new Map() };
+function tasksDueOn(d) {
+  if (dueCache.notes !== state.vaultNotes) {
+    const byDay = new Map();
+    for (const b of boardList()) {
+      if (isTemplateNote(b.rel)) continue;
+      for (const t of dueTasks(parseBoard(b.content))) {
+        if (!byDay.has(t.due)) byDay.set(t.due, []);
+        byDay.get(t.due).push({ ...t, rel: b.rel, board: b.title });
+      }
+    }
+    dueCache = { notes: state.vaultNotes, byDay };
+  }
+  return dueCache.byDay.get(dayKey(d)) || [];
+}
+
 const plannerApi = {
   dayItems: (d) => getDayItems(d),
   dayEvents: (d) => (calApi ? eventsForDay(d) : []),
+  dayTasks: (d) => tasksDueOn(d),
+  // A board task in the Planner: its board, with the task open.
+  openTask: (t) => { openTaskAfterRender(t.rel, t.ci, t.ki); openTasks(t.rel); },
   calendarsConnected: () => calConnected,
   refreshCalendars: () => refreshCalendars(),
   openEvent: (ev) => openEventCard(ev),

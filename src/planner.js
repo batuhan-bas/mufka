@@ -118,6 +118,7 @@ function gridView(days, api, now) {
     const band = el('div', `pl-allday${key < dayKey(now) ? ' past' : ''}${isToday(d, now) ? ' today' : ''}`);
     band.dataset.dropDay = key;
     for (const ev of api.dayEvents(d).filter((x) => x.allDay)) band.append(eventChip(ev, api));
+    for (const t of api.dayTasks(d)) band.append(boardTaskChip(t, api, key < dayKey(now)));
     for (const p of api.dayItems(d).filter((x) => !x.time)) band.append(taskRow(p, key, api, now));
     band.append(addButton(`Add a to-do on ${WD_LONG[(d.getDay() + 6) % 7]}`, (t) => api.add({ scope: 'day', date: d, title: t }), '+ To-do'));
     dropZone(band, api, () => ({ scope: 'day', key, untimed: true }));
@@ -229,6 +230,19 @@ function eventChip(ev, api) {
   c.textContent = ev.title;
   c.title = `${ev.title} · all day · ${ev.calendar || 'Calendar'}`;
   c.addEventListener('click', (e) => { e.stopPropagation(); api.openEvent(ev); });
+  return c;
+}
+
+// A task from a board (Tasks) due that day: opens the board with the task.
+// `late`: the day has passed and the task is still not done.
+function boardTaskChip(t, api, late) {
+  const c = el('button', `pl-board-task${t.priority ? ` ${t.priority.toLowerCase()}` : ''}${late ? ' late' : ''}`);
+  c.type = 'button';
+  c.dataset.board = t.rel;
+  c.append(el('span', 'pl-board-task-box'), el('span', 'pl-board-task-title', t.title));
+  c.title = `${t.title} · ${late ? 'late' : 'due'} · ${t.board}${t.priority ? ` · ${t.priority}` : ''}`;
+  c.setAttribute('aria-label', `Task ${late ? 'late' : 'due'}: ${t.title}, on the board ${t.board}`);
+  c.addEventListener('click', (e) => { e.stopPropagation(); api.openTask(t); });
   return c;
 }
 
@@ -421,6 +435,7 @@ function listView(days, api, now) {
       if (ev.time) c.prepend(el('span', 'pl-list-time', `${ev.time}–${ev.endTime === '24:00' ? '00:00' : ev.endTime} `));
       sec.append(c);
     }
+    for (const t of api.dayTasks(d)) sec.append(boardTaskChip(t, api, key < dayKey(now)));
     for (const p of items.filter((x) => x.time)) {
       const r = taskRow(p, key, api, now);
       r.querySelector('.pl-task-body')?.prepend(el('span', 'pl-list-time', `${p.time}${p.endTime ? `–${p.endTime}` : ''}`));

@@ -1854,6 +1854,20 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true" && !!document.querySelector(".tk-col")', 3000), 'board note did not open as a board');
     });
 
+    // 64b. A board task with a due date shows on its day in the Planner;
+    //      clicking it opens its board with the task's dialog.
+    await step('64b', 'a task due today shows in the Planner and opens its board', async () => {
+      await sleep(1700); // past Mufka's own last write of the board
+      fs.writeFileSync(boardFile, boardText().replace('## To do\n\n', `## To do\n\n- [ ] Due in the planner @{${todayK}} !P1\n`));
+      await clickSel('#mode-planner');
+      const chip = `[...document.querySelectorAll('.pl-board-task')].find(c => c.textContent === 'Due in the planner')`;
+      assert(await waitFor(`!!(${chip}) && ${chip}.closest('[data-drop-day]')?.dataset.dropDay === ${JSON.stringify(todayK)} && ${chip}.classList.contains('p1')`, 4000), `task not on today: ${await js('[...document.querySelectorAll(".pl-board-task")].map(c => c.textContent).join("|")')}`);
+      await clickEval(chip, 'planner task');
+      assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true"', 3000), 'the board did not open');
+      assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Due in the planner"', 3000), 'the task dialog did not open');
+      await press('Escape'); await sleep(200);
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.

@@ -28,6 +28,7 @@ let dialogOpen = false;
 let drag = null;         // { kind: 'card', col, card } | { kind: 'col', col }
 let scrollLeft = 0;
 let focusAfter = null;   // { col, card } to focus after the next render
+let openAfter = null;    // { rel, col, card } whose dialog opens after the next render
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function btn(cls, label, fn, title) {
@@ -40,6 +41,8 @@ function btn(cls, label, fn, title) {
 
 // True while a field of the board is open: the renderer must not rebuild it.
 export function tasksEditing() { return renaming !== null || dialogOpen; }
+// The Planner opens a task: its board is shown, then the task's dialog.
+export function openTaskAfterRender(rel, col, card) { openAfter = { rel, col, card }; }
 
 function today() {
   const d = new Date();
@@ -87,6 +90,9 @@ export function renderTasks(container, api) {
   root.append(live);
   container.append(root);
   cols.scrollLeft = scrollLeft;
+  const opening = openAfter && openAfter.rel === api.rel ? openAfter : null;
+  openAfter = null;
+  if (opening && board.columns[opening.col]?.cards[opening.card]) taskForm(board, api, { ci: opening.col, ki: opening.card });
   requestAnimationFrame(() => {
     const field = root.querySelector('.tk-col-rename');
     if (field) { field.focus(); field.select(); return; }
