@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -101,6 +102,37 @@ function readStore() {
 function writeStore(data) {
   writeFileAtomic(dataPath(), JSON.stringify(data, null, 2));
   if (tray) updateTray();
+}
+
+// --- Handy: dictation (https://handy.computer) --------------------------------
+// Handy turns speech into text and types it where the caret is; Mufka only
+// starts and stops it, with Handy's own command-line flag, sent to the running
+// Handy (started hidden first when it is not running).
+// MUFKA_HANDY_PATH points at another program (the e2e test's stand-in).
+function handyPath() {
+  const home = app.getPath('home');
+  const places = process.env.MUFKA_HANDY_PATH ? [process.env.MUFKA_HANDY_PATH]
+    : process.platform === 'darwin' ? ['/Applications/Handy.app/Contents/MacOS/handy', path.join(home, 'Applications/Handy.app/Contents/MacOS/handy')]
+      : process.platform === 'win32' ? [path.join(process.env.LOCALAPPDATA || '', 'Handy', 'handy.exe'), path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Handy', 'handy.exe'), path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Handy', 'handy.exe')]
+        : ['/usr/bin/handy', '/usr/local/bin/handy'];
+  return places.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } }) || null;
+}
+function handyRunning(bin) {
+  try {
+    if (process.platform === 'win32') return /handy\.exe/i.test(spawnSync('tasklist', ['/FI', `IMAGENAME eq ${path.basename(bin)}`, '/NH'], { encoding: 'utf8', timeout: 3000 }).stdout || '');
+    return spawnSync('pgrep', ['-if', bin], { timeout: 3000 }).status === 0;
+  } catch { return false; }
+}
+const runDetached = (bin, args) => spawn(bin, args, { detached: true, stdio: 'ignore' }).unref();
+async function handyToggle() {
+  const bin = handyPath();
+  if (!bin) throw new Error('Handy is not installed');
+  if (!handyRunning(bin)) {
+    runDetached(bin, ['--start-hidden']);
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  runDetached(bin, ['--toggle-transcription']);
+  return { ok: true };
 }
 
 // --- menu bar (macOS) / system tray (Windows): today's plans ----------------
@@ -1794,6 +1826,8 @@ ipcMain.handle('update:set', wrap((patch) => {
   if (patch && patch.auto) checkForUpdates();
   return updateInfo();
 }));
+ipcMain.handle('voice:status', wrap(() => ({ handy: { installed: Boolean(handyPath()) } })));
+ipcMain.handle('voice:handyToggle', wrap(() => handyToggle()));
 ipcMain.handle('menubar:get', wrap(() => menubarOn()));
 ipcMain.handle('menubar:set', wrap((on) => { writeSettings({ menubar: on ? undefined : false }); updateTray(); return menubarOn(); }));
 ipcMain.handle('update:check', wrap(() => { checkForUpdates(); return updateInfo(); }));

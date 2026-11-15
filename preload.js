@@ -78,6 +78,9 @@ contextBridge.exposeInMainWorld('notes', {
   theme: () => ipcRenderer.invoke('theme:get'),
   setTheme: (choice) => ipcRenderer.invoke('theme:set', choice),
   // Today's plan in the macOS menu bar / Windows tray: on or off.
+  // Voice: Handy (dictation) installed?, and start/stop its recording.
+  voice: () => ipcRenderer.invoke('voice:status'),
+  handyToggle: () => ipcRenderer.invoke('voice:handyToggle'),
   menubar: () => ipcRenderer.invoke('menubar:get'),
   setMenubar: (on) => ipcRenderer.invoke('menubar:set', on),
   // AI clients (MCP): { enabled, allowWrite, allowTicks, json, command }; set takes any of the three switches.
