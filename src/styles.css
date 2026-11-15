@@ -1792,3 +1792,13 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .md tr.bud-total td { border-top: 2px solid var(--line-strong); background: color-mix(in srgb, var(--line) 45%, transparent); }
 .md td.bud-total-label { color: var(--muted); }
 .md td.bud-total-amount { font-weight: 600; text-align: right; white-space: nowrap; }
+
+/* Menus: a line between groups; Delete in red. */
+.menu-sep { height: 1px; margin: 4px 8px; background: var(--line-strong); }
+.row-menu .menu-item.danger { color: var(--danger); }
+.row-menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+/* The ⋯ of a board or drawing row in the sidebar, on hover. */
+.board-row { position: relative; }
+.board-row .menu-btn { margin-left: auto; padding: 0 4px; }
+.board-row .place-count + .menu-btn { margin-left: 0; }
+.board-row:hover .menu-btn, .board-row:focus-within .menu-btn { visibility: visible; }

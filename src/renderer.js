@@ -41,7 +41,7 @@ import { jobOf, jobsSettings, mayBeJob, jobNoteName, setJobStatus, DEFAULT_STAGE
 import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
-import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
+import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder, pastedImageName } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
 import { meetingTodos, meetingOf } from '../lib/meetings.mjs';
 import { tripOf } from '../lib/trips.mjs';
@@ -1287,7 +1287,8 @@ function renderBoardsSection() {
     const open = board.columns.filter((c) => !c.complete).reduce((n, c) => n + c.cards.length, 0);
     if (open) row.append(elem('span', 'place-count', String(open)));
     if (on) row.setAttribute('aria-current', 'page');
-    row.addEventListener('click', () => openTasks(b.rel));
+    row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openTasks(b.rel); });
+    sideRowMenu(row, `b:${b.rel}`, () => boardRowMenuItems(b));
     body.append(row);
   }
 }
@@ -1380,9 +1381,32 @@ function drawingMenu() {
     } },
   ];
 }
+// A drawing's images as files of their own (lib/drawing.mjs "Embedded Files"):
+// read from the vault for the editor, and written to the drawing's
+// attachments when one is added.
+const drawingImages = {
+  async load(rel, embedded) {
+    const dir = folderOf(rel);
+    const out = {};
+    await Promise.all(Object.entries(embedded).map(async ([id, name]) => {
+      const att = resolveAttachment(name, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+      if (!att.rel || !att.isImage) return;
+      const img = await notesApi.attachReadImage(att.rel);
+      if (img && !img.error) out[id] = { id, mimeType: img.mimeType, dataURL: img.dataURL, created: Date.now() };
+    }));
+    return out;
+  },
+  async store(rel, file, n) {
+    const res = await notesApi.attachWriteImage(folderOf(rel), pastedImageName(new Date(), n, file.mimeType), file.dataURL);
+    if (!res || res.error) { showToast(res && res.error ? res.error : 'Could not save the image'); return null; }
+    await refreshAttachList();
+    return res.name;
+  },
+};
 function drawApi() {
   const d = state.drawing;
   return {
+    images: drawingImages,
     rel: d ? d.rel : null,
     text: d ? d.content : '',
     folder: drawingFolder(null),
@@ -1417,7 +1441,8 @@ function renderDrawingsSection() {
     row.title = d.rel;
     row.append(icon('tiPenLine', { size: 15 }), elem('span', 'board-name', d.title));
     if (on) row.setAttribute('aria-current', 'page');
-    row.addEventListener('click', () => openDraw(d.rel));
+    row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openDraw(d.rel); });
+    sideRowMenu(row, `d:${d.rel}`, () => drawingMenuItems(d));
     body.append(row);
   }
 }
@@ -2347,7 +2372,9 @@ function planMenuItems(p) {
 const menuLayer = document.getElementById('menu-layer');
 
 // align: 'right' (the menu's right edge under the anchor's) or 'left'.
-function openMenu(anchorKey, buildItems, { align = 'right' } = {}) { state.menu = { anchorKey, buildItems, align }; renderMenu(); }
+// at: { x, y } opens it where the pointer is (a right-click) instead of under
+// the anchor.
+function openMenu(anchorKey, buildItems, { align = 'right', at = null } = {}) { state.menu = { anchorKey, buildItems, align, at }; renderMenu(); }
 function closeMenu() { if (state.menu) { state.menu = null; renderMenu(); } }
 
 function menuItem(label, onActivate) {
@@ -2360,15 +2387,24 @@ function menuItem(label, onActivate) {
 function renderMenu() {
   menuLayer.replaceChildren();
   if (!state.menu) return;
-  const anchor = document.querySelector(`[data-menu-anchor="${CSS.escape(state.menu.anchorKey)}"]`);
-  if (!anchor) { state.menu = null; return; }
+  const at = state.menu.at;
+  const anchor = at ? null : document.querySelector(`[data-menu-anchor="${CSS.escape(state.menu.anchorKey)}"]`);
+  if (!anchor && !at) { state.menu = null; return; }
 
   const backdrop = elem('div', 'menu-backdrop');
   backdrop.addEventListener('mousedown', (e) => { e.preventDefault(); closeMenu(); });
   menuLayer.append(backdrop);
 
   const menu = elem('div', 'row-menu'); menu.setAttribute('role', 'menu');
-  const items = state.menu.buildItems().map((it) => it.el || menuItem(it.label, it.fn));
+  // { sep: true } draws a line between groups (none at the ends or twice);
+  // danger: true shows the item in red.
+  const built = state.menu.buildItems().filter((it, i, all) => !it.sep || (i > 0 && i < all.length - 1 && !all[i - 1].sep));
+  const items = built.map((it) => {
+    if (it.sep) { const d = elem('div', 'menu-sep'); d.setAttribute('role', 'separator'); return d; }
+    const b = it.el || menuItem(it.label, it.fn);
+    if (it.danger) b.classList.add('danger');
+    return b;
+  });
   menu.addEventListener('keydown', (e) => {
     const list = [...menu.querySelectorAll('.menu-item')];
     const i = list.indexOf(document.activeElement);
@@ -2378,10 +2414,13 @@ function renderMenu() {
   items.forEach((it) => menu.append(it));
   menuLayer.append(menu);
 
-  // Position below the button, right-aligned, clamped inside the viewport.
-  const r = anchor.getBoundingClientRect();
+  // Position below the button (or at the pointer), right-aligned, inside the
+  // viewport: above when it does not fit below, else as low as it fits.
+  const r = at ? { left: at.x, right: at.x, top: at.y, bottom: at.y } : anchor.getBoundingClientRect();
   const mw = menu.offsetWidth; const mh = menu.offsetHeight;
-  let top = r.bottom + 4; if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+  let top = r.bottom + 4;
+  if (top + mh > window.innerHeight - 8) top = r.top - mh - 4 >= 8 ? r.top - mh - 4 : Math.max(8, window.innerHeight - mh - 8);
+  top = Math.max(8, top);
   let left = state.menu.align === 'left' ? r.left : r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
   menu.style.top = `${top}px`; menu.style.left = `${left}px`;
   (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice, .cover-choice.on') || menu.querySelector('button, input'))?.focus();
@@ -2587,7 +2626,7 @@ function embedDrawing(target) {
   if (!rel) return null;
   const known = (state.vaultNotes.find((n) => n.rel === rel) || {}).content ?? state.noteCache.get(rel);
   if (known == null) return null;
-  return drawingPreview(known, () => openDraw(rel));
+  return drawingPreview(known, () => openDraw(rel), drawingImages, rel);
 }
 
 function wikiExists(target) {
@@ -3614,6 +3653,7 @@ function folderRow(f, depth) {
   row.append(elem('span', 'tree-count', String(f.count)));
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; toggleFolder(f.rel); });
   addMenuBtn(row, `f:${f.rel}`, () => folderMenuItems(f));
+  onRightClick(row, `f:${f.rel}`, () => folderMenuItems(f));
   // The daily notes folder can change places but not move into another folder.
   makeDraggable(row, `f:${f.rel}`);
   setupRowDrop(row, f.rel, true);
@@ -3631,36 +3671,204 @@ function noteRow(n, depth) {
   row.append(elem('span', 'tree-name', n.title));
   row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openNote(n.rel, 'oku', { keepTab: true }); });
   addMenuBtn(row, `n:${n.rel}`, () => noteMenuItems(n));
+  onRightClick(row, `n:${n.rel}`, () => noteMenuItems(n));
   makeDraggable(row, `n:${n.rel}`);
   setupRowDrop(row, n.rel, false);
   return row;
 }
 
 function folderMenuItems(f) {
-  const items = [
+  const daily = isGunluk(f.rel);
+  return [
     { label: 'New note', fn: () => { closeMenu(); newNoteIn(f.rel); } },
     { label: 'New note from template…', fn: () => { closeMenu(); newFromTemplate(f.rel); } },
     { label: 'New folder', fn: () => { closeMenu(); newFolderIn(f.rel); } },
+    SEP,
+    ...(daily ? [] : [{ label: 'Move to…', fn: () => { closeMenu(); moveToFolder(`f:${f.rel}`); } }]),
+    { label: 'Search in folder', fn: () => { closeMenu(); searchFor(`path:"${f.rel}"`); } },
+    SEP,
+    ...copyItems(f.rel),
+    SEP,
+    revealItem(f.rel),
+    SEP,
     { label: 'Icon…', fn: () => openIconPicker(`f:${f.rel}`, f.rel) },
     { label: 'Colour…', fn: () => openColorPicker(`f:${f.rel}`, f.rel, 'folder') },
+    ...(daily ? [] : [{ label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-folder', rel: f.rel }); } },
+      SEP,
+      { label: 'Delete', danger: true, fn: () => { closeMenu(); state.folderDeleteConfirm = f.rel; refreshSidebar(); } }]),
   ];
-  if (!isGunluk(f.rel)) {
-    items.push({ label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-folder', rel: f.rel }); } });
-    items.push({ label: 'Delete', fn: () => { closeMenu(); state.folderDeleteConfirm = f.rel; refreshSidebar(); } });
-  }
-  return items;
 }
 function noteMenuItems(n) {
   return [
+    { label: 'Open in new tab', fn: () => { closeMenu(); openNoteInNewTab(n.rel); } },
+    { label: 'Open to the right', fn: () => { closeMenu(); openSplit(n.rel); } },
+    SEP,
+    { label: 'Duplicate', fn: () => { closeMenu(); duplicateFile(n.rel); } },
+    { label: 'Move to…', fn: () => { closeMenu(); moveToFolder(`n:${n.rel}`); } },
     { label: isBookmarked(n.rel) ? 'Remove bookmark' : 'Bookmark', fn: () => { closeMenu(); toggleBookmark(n.rel); } },
+    SEP,
+    ...copyItems(n.rel, [{ label: 'Copy link', fn: () => { closeMenu(); copyText(`[[${linkTarget(n.rel)}]]`, 'the link'); } }]),
+    SEP,
+    revealItem(n.rel),
+    SEP,
     { label: 'Icon…', fn: () => openIconPicker(`n:${n.rel}`, n.rel) },
     { label: 'Colour…', fn: () => openColorPicker(`n:${n.rel}`, n.rel, 'note') },
     { label: 'Rename', fn: () => { closeMenu(); startTreeEdit({ kind: 'rename-note', rel: n.rel }); } },
-    { label: 'Open in new tab', fn: () => { closeMenu(); openNoteInNewTab(n.rel); } },
-    { label: 'Open to the right', fn: () => { closeMenu(); openSplit(n.rel); } },
     { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(n.rel); } },
-    { label: 'Delete', fn: () => { closeMenu(); deleteNoteRel(n.rel); } },
+    SEP,
+    { label: 'Delete', danger: true, fn: () => { closeMenu(); deleteNoteRel(n.rel); } },
   ];
+}
+
+// --- file actions: the sidebar's ⋯ and right-click menus -------------------
+// A board or drawing row (a button itself): its ⋯ on hover and a right-click.
+function sideRowMenu(row, key, buildItems) {
+  const btn = elem('span', 'menu-btn');
+  btn.append(icon('more', { size: 15 }));
+  btn.setAttribute('role', 'button'); btn.setAttribute('aria-label', 'Options'); btn.setAttribute('aria-haspopup', 'menu');
+  btn.dataset.menuAnchor = key;
+  btn.addEventListener('click', (ev) => { ev.stopPropagation(); ev.preventDefault(); openMenu(key, buildItems); });
+  row.append(btn);
+  onRightClick(row, key, buildItems);
+}
+// Asked first, then to the trash (a drawing or a board).
+function askDelete(rel, what, after) {
+  closeMenu();
+  askDialog({ heading: `Delete ${rel.replace(/^.*\//, '').replace(/(\.excalidraw)?\.md$/i, '')}?`, text: `The ${what} goes to the Trash.`, okLabel: 'Delete', danger: true }, async () => {
+    await deleteNoteRel(rel);
+    await after();
+  });
+}
+function drawingMenuItems(d) {
+  const name = d.rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+  return [
+    { label: 'Open', fn: () => { closeMenu(); openDraw(d.rel); } },
+    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'draw', rel: d.rel }); } },
+    SEP,
+    { label: 'Duplicate', fn: () => { closeMenu(); duplicateFile(d.rel); } },
+    { label: 'Move to…', fn: () => { closeMenu(); moveToFolder(`n:${d.rel}`); } },
+    SEP,
+    ...copyItems(d.rel, [{ label: 'Copy embed', fn: () => { closeMenu(); copyText(`![[${name}]]`, 'the embed'); } }]),
+    SEP,
+    revealItem(d.rel),
+    SEP,
+    { label: 'Rename', fn: () => {
+      closeMenu();
+      askDialog({ heading: 'Rename drawing', value: d.title, okLabel: 'Rename' }, async (to) => {
+        const res = await notesApi.rename(d.rel, `${to}.excalidraw`);
+        if (!res || res.error || !res.rel) { showToast('Could not rename the drawing'); return; }
+        remapRel(d.rel, res.rel);
+        await refreshTree(); await rebuildBacklinks();
+        if (state.drawing && state.drawing.rel === d.rel) await openDraw(res.rel); else render();
+        reportLinks(res);
+      });
+    } },
+    SEP,
+    { label: 'Delete', danger: true, fn: () => askDelete(d.rel, 'drawing', async () => {
+      if (state.drawing && state.drawing.rel === d.rel) { state.drawing = null; await openDraw(); } else render();
+    }) },
+  ];
+}
+function boardRowMenuItems(b) {
+  return [
+    { label: 'Open', fn: () => { closeMenu(); openTasks(b.rel); } },
+    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'tasks', rel: b.rel }); } },
+    { label: 'Open as Markdown', fn: () => { closeMenu(); openNote(b.rel, 'oku', { keepTab: true, asText: true }); } },
+    SEP,
+    { label: 'Duplicate', fn: () => { closeMenu(); duplicateFile(b.rel); } },
+    { label: 'Move to…', fn: () => { closeMenu(); moveToFolder(`n:${b.rel}`); } },
+    SEP,
+    ...copyItems(b.rel, [{ label: 'Copy link', fn: () => { closeMenu(); copyText(`[[${linkTarget(b.rel)}]]`, 'the link'); } }]),
+    SEP,
+    revealItem(b.rel),
+    SEP,
+    { label: 'Rename', fn: () => {
+      closeMenu();
+      askDialog({ heading: 'Rename board', value: b.title, okLabel: 'Rename' }, async (to) => {
+        const res = await notesApi.rename(b.rel, to);
+        if (!res || res.error || !res.rel) { showToast('Could not rename the board'); return; }
+        remapRel(b.rel, res.rel);
+        await refreshTree(); await rebuildBacklinks();
+        if (state.board && state.board.rel === b.rel) await openTasks(res.rel); else render();
+        reportLinks(res);
+      });
+    } },
+    SEP,
+    { label: 'Delete', danger: true, fn: () => askDelete(b.rel, 'board and its tasks', async () => {
+      if (state.board && state.board.rel === b.rel) {
+        try { localStorage.removeItem(BOARD_KEY); } catch { /* ignore */ }
+        state.board = null;
+        if (state.contentView === 'tasks') await openTasks(); else render();
+      } else render();
+    }) },
+  ];
+}
+const SEP = { sep: true };
+// A right-click on a row opens its menu where the pointer is.
+function onRightClick(row, key, buildItems) {
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openMenu(key, buildItems, { align: 'left', at: { x: e.clientX, y: e.clientY } }); });
+}
+async function copyText(text, what) { await notesApi.copy(text); showToast(`Copied ${what}`); }
+// The path on this computer: the vault's folder and the vault path.
+async function fullPath(rel) {
+  const v = await notesApi.vaultInfo();
+  const base = (v && v.path) || '';
+  const sep = base.includes('\\') ? '\\' : '/';
+  return rel ? `${base}${sep}${rel.split('/').join(sep)}` : base;
+}
+function copyItems(rel, extra = []) {
+  return [
+    { label: 'Copy path', fn: () => { closeMenu(); copyText(rel, rel); } },
+    { label: 'Copy full path', fn: async () => { closeMenu(); copyText(await fullPath(rel), 'the full path'); } },
+    ...extra,
+  ];
+}
+const revealItem = (rel) => ({ label: plansApi.isMac ? 'Reveal in Finder' : 'Show in Explorer', fn: () => { closeMenu(); notesApi.revealItem(rel); } });
+// What a [[link]] to the note is: its name, or its path when another note has
+// the same name.
+function linkTarget(rel) {
+  const name = rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+  const same = state.notesFlat.filter((x) => x.rel.replace(/^.*\//, '').replace(/\.md$/i, '').toLowerCase() === name.toLowerCase());
+  return same.length > 1 ? rel.replace(/\.md$/i, '') : name;
+}
+// Move to…: a folder picked from a list (the top of the vault first).
+function moveToFolder(key) {
+  const rel = key.slice(2);
+  const isFolder = key[0] === 'f';
+  const here = folderOf(rel);
+  const folders = ['', ...state.treeFolders].filter((f) => f !== here && !(isFolder && (f === rel || f.startsWith(`${rel}/`))));
+  openPalette({
+    id: 'move',
+    placeholder: `Move ${rel.replace(/^.*\//, '').replace(/\.md$/i, '')} to…`,
+    footer: '↑↓ navigate · ↵ move · esc close',
+    items: (q) => folders
+      .filter((f) => !q.trim() || f.toLowerCase().includes(q.trim().toLowerCase()))
+      .slice(0, 60)
+      .map((f) => ({ label: f ? f.replace(/^.*\//, '') : 'Top of the vault', detail: f.includes('/') ? f.split('/').slice(0, -1).join(' / ') : '', run: () => doMove(key, f) })),
+  });
+}
+// A copy beside it: "Name 2" (a drawing keeps its .excalidraw ending).
+async function duplicateFile(rel) {
+  const res = await notesApi.read(rel);
+  if (!res || res.error) { showToast('Could not read it'); return null; }
+  const folder = folderOf(rel);
+  let name = rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+  const drawing = /\.excalidraw$/i.test(name);
+  if (drawing) {
+    const base = name.replace(/\.excalidraw$/i, '');
+    const taken = new Set(state.vaultNotes.map((x) => x.rel.toLowerCase()));
+    let i = 2;
+    while (taken.has(`${folder ? `${folder}/` : ''}${base} ${i}.excalidraw.md`.toLowerCase())) i += 1;
+    name = `${base} ${i}.excalidraw`;
+  }
+  const made = await notesApi.create(folder, name);
+  if (!made || !made.rel) { showToast('Could not make the copy'); return null; }
+  await notesApi.write(made.rel, res.content);
+  await refreshTree();
+  await rebuildBacklinks();
+  render();
+  showToast(`Copied as ${made.rel.replace(/^.*\//, '').replace(/(\.excalidraw)?\.md$/i, '')}`);
+  return made.rel;
 }
 
 function folderConfirmRow(f, depth) {
@@ -4402,8 +4610,10 @@ function blockTextarea(scope, b, edit) {
   });
   // An empty note is shown being edited, but it only takes the focus when
   // nothing else has it (a menu, a name field): it never pulls it back.
+  // Nor does any editor take it from a new note's or folder's name being typed.
   const a = document.activeElement;
-  if (!edit.auto || !a || a === document.body || a.id === 'block-editor') state.focus = 'block-editor';
+  const naming = a && a.id === 'tree-edit' && state.treeEdit;
+  if (!naming && (!edit.auto || !a || a === document.body || a.id === 'block-editor')) state.focus = 'block-editor';
   state.blockCaretPos = caretOffset(text, edit.caret);
   return ta;
 }

@@ -93,6 +93,10 @@ Planner.
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
+- **Right-click** a note, folder, board or drawing in the sidebar (or use its
+  ⋯): duplicate, move to a folder, copy its path (in the vault or on the
+  computer) or a `[[link]]`, reveal it in Finder, rename, delete. Folders also
+  search inside themselves.
 - **Templates:** start a note from one of twelve — daily note, meeting notes,
   project, project board, book notes, reading shelf, habit tracker, budget, travel plan,
   weekly to-do (with a review of the week), job search and job application — or from your own `Templates` folder (Obsidian-compatible). Copy the
@@ -185,7 +189,8 @@ Planner.
   text, images and its library, in the app's light or dark theme.
 - **Each drawing is a note** in the `Excalidraw` folder, in the format of
   Obsidian's **Excalidraw** plugin, so it opens there too. Changes save as you
-  draw.
+  draw. Images in a drawing are files of their own in the attachments folder
+  (listed under "Embedded Files", as the plugin keeps them).
 - **In notes:** `![[Sketch.excalidraw]]` shows the drawing; click it to open
   it in Draw.
 - Nothing is fetched from the internet: the fonts come with the app.

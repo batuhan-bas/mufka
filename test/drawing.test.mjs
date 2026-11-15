@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import LZString from 'lz-string';
-import { parseDrawing, serializeDrawing, isDrawingRel, isDrawingText, drawingTitle, emptyScene, drawingFolder } from '../lib/drawing.mjs';
+import { parseDrawing, serializeDrawing, isDrawingRel, isDrawingText, drawingTitle, emptyScene, drawingFolder, embeddedFiles, pastedImageName } from '../lib/drawing.mjs';
 
 // A file as the Obsidian Excalidraw plugin writes it.
 const plugin = (scene) => `---
@@ -54,4 +54,30 @@ test('writes what the plugin reads, keeps the frontmatter, lists text, drops del
   assert.equal(back.appState.viewBackgroundColor, '#123');
   assert.equal(back.appState.selectedElementIds, undefined, 'only lasting settings are saved');
   assert.equal(isDrawingText(serializeDrawing(emptyScene(), '')), true);
+});
+
+test('images as files of their own: listed under Embedded Files, not in the JSON', () => {
+  const img = (id, fileId) => ({ id, type: 'image', fileId, x: 0, y: 0, width: 10, height: 10 });
+  const dataURL = 'data:image/png;base64,iVBORw0KGgo=';
+  const scene = { elements: [img('a', 'f1'), img('b', 'f2')], appState: {}, files: { f1: { id: 'f1', mimeType: 'image/png', dataURL }, f2: { id: 'f2', mimeType: 'image/png', dataURL }, gone: { id: 'gone', dataURL } } };
+  const text = serializeDrawing(scene, '', { f1: 'Pasted Image 20261115173000_0.png' });
+  assert.match(text, /## Embedded Files\nf1: \[\[Pasted Image 20261115173000_0\.png\]\]\n\n%%\n## Drawing/);
+  assert.deepEqual(embeddedFiles(text), { f1: 'Pasted Image 20261115173000_0.png' });
+  const back = parseDrawing(text);
+  assert.deepEqual(Object.keys(back.files), ['f2'], 'f1 is a file of its own; f2 still inside; an unused one dropped');
+  // Saving again without saying keeps what the note lists.
+  assert.match(serializeDrawing(back, text), /f1: \[\[Pasted Image 20261115173000_0\.png\]\]/);
+  // An image taken out of the drawing leaves the list.
+  assert.doesNotMatch(serializeDrawing({ ...back, elements: [img('b', 'f2')] }, text), /Embedded Files/);
+});
+
+test('the plugin\'s Embedded Files lines, with ![[…]] or an alias, CRLF', () => {
+  const t = '## Text Elements\r\n%%\r\n## Embedded Files\r\nabc123: [[Ekler/photo.jpg]]\r\ndef-456: ![[pic.png|100]]\r\n\r\n%%\r\n## Drawing\r\n';
+  assert.deepEqual(embeddedFiles(t), { abc123: 'Ekler/photo.jpg', 'def-456': 'pic.png' });
+  assert.deepEqual(embeddedFiles('no list'), {});
+});
+
+test('pasted image names', () => {
+  assert.equal(pastedImageName(new Date(2026, 10, 15, 17, 30, 0), 0, 'image/png'), 'Pasted Image 20261115173000_0.png');
+  assert.equal(pastedImageName(new Date(2026, 0, 2, 3, 4, 5), 2, 'image/jpeg'), 'Pasted Image 20260102030405_2.jpg');
 });
