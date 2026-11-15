@@ -2,7 +2,7 @@
 // never touches the filesystem directly; it talks through the preload bridge.
 // Bundled by electron-vite into out/main/index.js.
 
-import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, Tray, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net, session, systemPreferences } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, Tray, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net, session, systemPreferences, globalShortcut, screen } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -31,6 +31,8 @@ import { isBoard, parseBoard, dayTasks } from './lib/kanban.mjs';
 import { attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
 import * as cal from './lib/calendar.mjs';
+import { quickTarget, appendLine, dailyLine } from './lib/quicknote.mjs';
+import { dayKey } from './lib/dates.mjs';
 
 // Where the renderer pages come from: the Vite dev server while developing
 // (`electron-vite dev` sets ELECTRON_RENDERER_URL), the built files otherwise.
@@ -209,7 +211,7 @@ function trayIcon() {
 // Bring Mufka forward (a window again if it was closed) and do a menu action
 // there: this week's planner, or a task on its board.
 function openFromTray(action = 'planner', arg) {
-  const win = BrowserWindow.getAllWindows()[0] || createWindow();
+  const win = mainWindow() || createWindow();
   if (win.isMinimized()) win.restore();
   win.show(); win.focus();
   const go = () => win.webContents.send('menu:action', action, arg);
@@ -270,6 +272,7 @@ function updateTray() {
     ...(tasks.length ? [{ type: 'separator' }, { label: 'Tasks', enabled: false },
       ...tasks.map((t) => ({ label: t.label, click: () => openFromTray('open-task', { rel: t.task.rel, ci: t.task.ci, ki: t.task.ki }) }))] : []),
     { type: 'separator' },
+    { label: 'Quick note…', accelerator: QUICK_KEY, registerAccelerator: false, click: () => openQuick() },
     { label: 'Open the planner', click: openPlannerFromTray },
     { label: process.platform === 'darwin' ? 'Hide from the menu bar' : 'Hide from the tray', click: () => { writeSettings({ menubar: false }); updateTray(); } },
   ]));
@@ -302,6 +305,7 @@ function applyChrome() {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!appRenderers.has(w.webContents.id)) continue;
     w.setBackgroundColor(c.bg);
+    if (w === quickWin) continue;
     if (process.platform !== 'darwin' && w.setTitleBarOverlay) w.setTitleBarOverlay({ color: c.bg, symbolColor: c.fg, height: 44 });
   }
 }
@@ -1579,6 +1583,7 @@ function buildMenu() {
       submenu: [
         { label: 'New Note', click: () => sendMenu('new-note') },
         { label: 'New Note from Audio…', click: () => sendMenu('voice-note') },
+        { label: 'Quick Note…', accelerator: QUICK_KEY, registerAccelerator: false, click: () => openQuick() },
         // The page handles these keys itself (registerAccelerator: false), so
         // they work wherever the focus is and the menu only shows them.
         { label: 'New Tab', accelerator: 'Alt+CmdOrCtrl+T', registerAccelerator: false, click: () => sendMenu('new-tab') },
@@ -1721,6 +1726,59 @@ function warnIfVaultMissing(win) {
     message: 'Notes folder not found',
     detail: `${vault.missing}\n\nUsing the default notes folder. Restart Mufka when the folder is back, or choose another one with File > Open Notes Folder….`,
   });
+}
+
+// --- Quick note (⌃⌥N, lib/quicknote.mjs) -----------------------------------
+// A small box over whatever app is in front: one line goes to today's daily
+// note, or "Name: text" to that note. It is the app's own page (index.html#quick,
+// src/quick.js) in a window that closes when it loses focus.
+const QUICK_KEY = 'Control+Alt+N';
+let quickWin = null;
+const mainWindow = () => BrowserWindow.getAllWindows().find((w) => w !== quickWin && !w.isDestroyed()) || null;
+function openQuick() {
+  if (quickWin && !quickWin.isDestroyed()) { quickWin.show(); quickWin.focus(); return; }
+  const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const width = 640; const height = 92;
+  const win = new BrowserWindow({
+    width, height,
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + workArea.height * 0.22),
+    frame: false, resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
+    alwaysOnTop: true, skipTaskbar: true, show: false, title: 'Quick note',
+    // macOS: a panel takes the keyboard without bringing Mufka's other windows forward.
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
+    backgroundColor: chrome().bg,
+    webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  quickWin = win;
+  const id = win.webContents.id;
+  appRenderers.add(id);
+  win.webContents.once('destroyed', () => appRenderers.delete(id));
+  win.on('blur', () => closeQuick());
+  win.once('ready-to-show', () => { win.show(); win.focus(); });
+  const devUrl = process.env.ELECTRON_RENDERER_URL;
+  if (!app.isPackaged && devUrl) win.loadURL(`${devUrl}/index.html#quick`);
+  else win.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: 'quick' });
+}
+function closeQuick() {
+  const win = quickWin; quickWin = null;
+  if (!win || win.isDestroyed()) return;
+  win.destroy();
+}
+const quickRels = () => walkVault().notes.map((n) => n.rel);
+function quickAdd(text) {
+  const t = quickTarget(text, quickRels());
+  if (!t.body) return { ok: false };
+  if (t.rel) {
+    const cur = readNoteRel(t.rel);
+    writeNoteRel(t.rel, appendLine(cur ? cur.content : '', t.body));
+  } else {
+    const key = dayKey(new Date());
+    const cur = readDaily(key);
+    writeDaily(key, appendLine(cur ? cur.content : '', dailyLine(t.body)));
+  }
+  for (const w of BrowserWindow.getAllWindows()) if (w !== quickWin) w.webContents.send('notes:changed');
+  return { ok: true, to: t.title || null };
 }
 
 function createWindow() {
@@ -1884,6 +1942,9 @@ ipcMain.handle('voice:transcribe', wrap((wav) => handyTranscribe(wav)));
 ipcMain.handle('voice:cancel', wrap(() => { if (handyJob) handyJob.kill(); return { ok: true }; }));
 ipcMain.handle('voice:saveAudio', wrap((noteDir, name, data) => saveAudio(noteDir, name, data)));
 // The microphone, for "Record now": macOS asks the person once.
+ipcMain.handle('quick:target', wrap((text) => { const t = quickTarget(String(text || ''), quickRels()); return { to: t.title || null }; }));
+ipcMain.handle('quick:add', wrap((text) => quickAdd(String(text || ''))));
+ipcMain.handle('quick:close', wrap(() => { closeQuick(); return { ok: true }; }));
 ipcMain.handle('voice:micAccess', wrap(async () => (process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true)));
 ipcMain.handle('menubar:get', wrap(() => menubarOn()));
 ipcMain.handle('menubar:set', wrap((on) => { writeSettings({ menubar: on ? undefined : false }); updateTray(); return menubarOn(); }));
@@ -1955,7 +2016,7 @@ app.on('web-contents-created', (_event, contents) => {
   });
 });
 
-app.on('will-quit', saveVaultCache);
+app.on('will-quit', () => { saveVaultCache(); globalShortcut.unregisterAll(); });
 
 app.whenReady().then(() => {
   // Light, dark or the system's (Settings → Appearance).
@@ -1985,8 +2046,9 @@ app.whenReady().then(() => {
   const win = createWindow();
   win.webContents.once('did-finish-load', () => warnIfVaultMissing(win));
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow()) createWindow();
   });
+  globalShortcut.register(QUICK_KEY, openQuick);
 });
 
 app.on('window-all-closed', () => {
