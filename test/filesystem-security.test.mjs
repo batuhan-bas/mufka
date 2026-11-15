@@ -9,6 +9,7 @@ import * as np from '../lib/notespath.mjs';
 import * as bm from '../lib/bookmarks.mjs';
 import * as at from '../lib/attach.mjs';
 import { vaultLayout } from '../lib/layout.mjs';
+import { resolveSave } from '../lib/outside.mjs';
 
 // Exercise original main-process helpers; only Electron trash is replaced.
 const source = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
@@ -30,7 +31,7 @@ function fixture(t) {
   let settings = {};
   const ctx = vm.createContext({ fs, path, np, bm, at, randomUUID, vaultLayout,
     notesRoot: () => root, noteOwnWrite: () => {}, readSettings: () => settings,
-    keepBefore: () => {}, keepDeleted: () => {}, // file recovery (lib/history.mjs has its own tests)
+    keepBefore: () => {}, keepDeleted: () => {}, resolveSave, lastWritten: new Map(), // file recovery (lib/history.mjs has its own tests)
     writeSettings: patch => { settings = { ...settings, ...patch }; },
     isDir: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
     shell: { trashItem: async p => { trashed.push(p); }, openPath: async p => { opened.push(p); return ''; }, showItemInFolder: p => revealed.push(p) },
@@ -38,7 +39,7 @@ function fixture(t) {
   });
   for (const name of ['writeFileAtomic', 'checkedVaultPath', 'readJson', 'obsidianSettings',
     'bookmarksRead', 'bookmarksWrite', 'layout', 'dailyRoot', 'ensureNotesDirs', 'safeAbs',
-    'readDaily', 'writeDaily', 'deleteDaily', 'mutationAbs', 'isGunlukRoot',
+    'readIfFile', 'saveFromEditor', 'readDaily', 'writeDaily', 'deleteDaily', 'mutationAbs', 'isGunlukRoot',
     'attachAbs', 'attachTrash', 'attachOpen', 'trashNote', 'trashFolder']) vm.runInContext(original(name), ctx);
   return { root, outside, ctx, trashed, opened, revealed };
 }

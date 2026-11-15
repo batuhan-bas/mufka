@@ -19,6 +19,7 @@ import * as bm from './lib/bookmarks.mjs';
 import * as ts from './lib/treestyle.mjs';
 import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
+import { resolveSave } from './lib/outside.mjs';
 import { createHistory } from './lib/history.mjs';
 import { createVaultCache } from './lib/vault-cache.mjs';
 import { autoUpdatesOn } from './lib/updates.mjs';
@@ -618,12 +619,29 @@ function readNoteRel(rel) {
   catch (err) { if (err.code === 'ENOENT') return null; throw err; }
 }
 
-function writeNoteRel(rel, content) {
-  const abs = safeAbs(rel);
+// What Mufka last wrote to each note from an editor, by absolute path.
+const lastWritten = new Map();
+// An editor's save (base: the text it started from) keeps what another app
+// added at the end of the note meanwhile (lib/outside.mjs); `merged` tells the
+// editor to take that text too. Other callers pass no base and just write.
+function saveFromEditor(abs, content, base) {
+  let text = String(content ?? '');
+  let r = { kind: 'same' };
+  if (typeof base === 'string') {
+    r = resolveSave(text, readIfFile(abs), { last: lastWritten.get(abs), base });
+    text = r.text;
+  }
   keepBefore(abs);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  writeFileAtomic(abs, String(content ?? ''));
-  return { rel, mtime: fs.statSync(abs).mtimeMs };
+  writeFileAtomic(abs, text);
+  if (typeof base === 'string') lastWritten.set(abs, text);
+  return r.kind === 'appended' ? { merged: text } : r.kind === 'conflict' ? { conflict: true } : {};
+}
+
+function writeNoteRel(rel, content, base) {
+  const abs = safeAbs(rel);
+  const r = saveFromEditor(abs, content, base);
+  return { rel, mtime: fs.statSync(abs).mtimeMs, ...r };
 }
 
 function createNote(parentRel, name) {
@@ -776,12 +794,9 @@ function readDaily(dateKey) {
   }
 }
 
-function writeDaily(dateKey, content) {
+function writeDaily(dateKey, content, base) {
   const p = checkedVaultPath(np.dailyFilePath(dailyRoot(), dateKey));
-  keepBefore(p);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  writeFileAtomic(p, String(content ?? ''));
-  return { ok: true };
+  return { ok: true, ...saveFromEditor(p, content, base) };
 }
 
 async function deleteDaily(dateKey) {
@@ -1829,7 +1844,7 @@ ipcMain.handle('theme:set', wrap((choice) => {
   return choice;
 }));
 ipcMain.handle('notes:read', wrap((rel) => readNoteRel(rel)));
-ipcMain.handle('notes:write', wrap((rel, content) => writeNoteRel(rel, content)));
+ipcMain.handle('notes:write', wrap((rel, content, base) => writeNoteRel(rel, content, base)));
 ipcMain.handle('notes:create', wrap((parentRel, name) => createNote(parentRel, name)));
 ipcMain.handle('notes:createFolder', wrap((parentRel, name) => createFolder(parentRel, name)));
 ipcMain.handle('notes:rename', wrap((rel, newName) => renameNoteRel(rel, newName)));
@@ -1844,7 +1859,7 @@ ipcMain.handle('notes:dailyDates', wrap(() => {
     .map((n) => n.replace(/\.md$/, ''));
 }));
 ipcMain.handle('notes:readDaily', wrap((dateKey) => readDaily(dateKey)));
-ipcMain.handle('notes:writeDaily', wrap((dateKey, content) => writeDaily(dateKey, content)));
+ipcMain.handle('notes:writeDaily', wrap((dateKey, content, base) => writeDaily(dateKey, content, base)));
 ipcMain.handle('notes:deleteDaily', wrap((dateKey) => deleteDaily(dateKey)));
 ipcMain.handle('history:list', wrap((rel) => historyList(rel)));
 ipcMain.handle('history:get', wrap((rel, t) => historyGet(rel, t)));

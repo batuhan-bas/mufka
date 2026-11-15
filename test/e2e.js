@@ -800,6 +800,27 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => fs.readFileSync(blokPath, 'utf8') === src.replace('- [ ] alt gorev', '- [x] alt gorev'), 3000), 'nested task did not toggle exactly its line');
     });
 
+    // 34b. Another app (an AI client over MCP) adds to the note while a block
+    //      is being edited: saving the block keeps both. A change elsewhere in
+    //      the note is saved over, with a warning (the version history has it).
+    await step('34b', 'outside addition kept while editing; other change warns', async () => {
+      await setNoteSource('ilk\n\nikinci');
+      await clickBlock('ikinci');
+      assert(await waitFor(`document.getElementById('block-editor')?.value==='ikinci'`, 2500), 'block editor did not open');
+      await press('End'); await typeText(' ek');
+      fs.writeFileSync(blokPath, 'ilk\n\nikinci\n- Claude ekledi\n'); // what append_to_note writes
+      await press('Escape');
+      assert(await waitFor2(() => fs.readFileSync(blokPath, 'utf8') === 'ilk\n\nikinci ek\n- Claude ekledi\n', 3000), `addition lost: ${JSON.stringify(fs.readFileSync(blokPath, 'utf8'))}`);
+      assert(await waitFor('document.querySelector(".note-body")?.textContent.includes("Claude ekledi")', 2500), 'addition not shown');
+      await setNoteSource('bir\n\niki');
+      await clickBlock('iki');
+      assert(await waitFor(`document.getElementById('block-editor')?.value==='iki'`, 2500), 'block editor did not open (2)');
+      await press('End'); await typeText(' degisti');
+      fs.writeFileSync(blokPath, 'tamamen baska\n');
+      await press('Escape');
+      assert(await waitFor2(() => fs.readFileSync(blokPath, 'utf8') === 'bir\n\niki degisti', 3000), `not saved: ${JSON.stringify(fs.readFileSync(blokPath, 'utf8'))}`);
+      assert(await waitFor('(document.getElementById("toast")?.textContent || "").includes("changed outside Mufka")', 2000), 'no warning');
+    });
     // 35. Open an existing folder (an Obsidian vault) as the vault: its notes
     //     show, nothing is added to it, new notes go there; the home folder is
     //     refused; switching back restores the default vault.

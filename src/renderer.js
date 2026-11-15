@@ -11,6 +11,7 @@ import { migrate, emptyStore } from '../lib/migrate.mjs';
 import { genId, searchPlans, foldTR } from '../lib/plans.mjs';
 import { occursOn, describeRecur, repeatChoices, recurFromChoice, choiceFromRecur } from '../lib/recur.mjs';
 import { duePlans } from '../lib/notify.mjs';
+import { mergeOutside } from '../lib/outside.mjs';
 import { renderMarkdown, toggleTaskLine } from '../lib/markdown.mjs';
 import {
   buildTree, TREE_SORTS, flattenNotes, resolveLink, folderOf, joinRel, canMoveInto,
@@ -84,7 +85,8 @@ const state = {
   store: emptyStore(),
   calCursor: new Date(),
   selectedDate: new Date(),
-  dailyNote: { key: null, content: null },
+  // disk: the day's note as Mufka last read or wrote it (lib/outside.mjs).
+  dailyNote: { key: null, content: null, disk: null },
   dailyDeleteConfirm: false,
   noteDeleteConfirm: false,
   dailyDates: new Set(),
@@ -103,6 +105,8 @@ const state = {
   bookmarks: [],          // bookmarked note rels (Obsidian bookmarks.json via main)
   openNote: null,         // open note rel (path), e.g. 'İş/Q1.md'
   noteContent: '',
+  // The open note as Mufka last read or wrote it (lib/outside.mjs).
+  noteDisk: null,
   propAdding: null,       // 'note' | 'daily': the properties editor's new-property row is open
   noteView: 'blocks',     // 'blocks' (live preview) | 'source' (raw textarea)
   blockEdit: null,        // { scope:'note'|'daily', startLine?, newAfter?, caret }
@@ -295,7 +299,7 @@ function renderPaneActions() {
     const title = noteTitleOf(state.openNote);
     paneActionsEl.append(
       copyIconButton(() => state.noteContent),
-      menuIconButton('menu-note', () => noteActionItems(title, () => state.noteContent, () => notesApi.write(state.openNote, state.noteContent))),
+      menuIconButton('menu-note', () => noteActionItems(title, () => state.noteContent, () => saveOpenNote())),
     );
   }
 }
@@ -1797,7 +1801,7 @@ function openRandomNote() {
 // need an open note.
 function commandList() {
   const noteOpen = () => state.contentView === 'note' && Boolean(state.openNote);
-  const saveOpen = () => notesApi.write(state.openNote, state.noteContent);
+  const saveOpen = () => saveOpenNote();
   return [
     { label: 'Open quick switcher', hint: '⌘O', run: openQuickSwitcher },
     { label: 'Show keyboard shortcuts', hint: '⌘/', run: showShortcuts },
@@ -1893,7 +1897,8 @@ async function selectDay(date, opts = {}) {
   state.blockEdit = null;
   const key = dayKey(date);
   const res = await notesApi.readDaily(key);
-  state.dailyNote = { key, content: res && !res.error ? res.content : null };
+  const text = res && !res.error ? res.content : null;
+  state.dailyNote = { key, content: text, disk: text };
   histReset('daily');
   render();
   scheduleBacklinks();
@@ -2333,8 +2338,8 @@ function renderDailyNoteSection(date) {
     add.addEventListener('click', async () => {
       // The vault's daily template (Obsidian daily-notes.json), filled for that day.
       const text = await dailyTemplateText(key);
-      await notesApi.writeDaily(key, text);
-      state.dailyNote = { key, content: text };
+      await saveDaily(key, text);
+      state.dailyNote = { key, content: text, disk: text };
       state.dailyDates.add(key);
       histReset('daily');
       state.blockEdit = text ? null : { scope: 'daily', newAfter: -1, caret: 0 };
@@ -2351,8 +2356,8 @@ function renderDailyNoteSection(date) {
         const day = parseDayKey(key); const now = new Date();
         day.setHours(now.getHours(), now.getMinutes());
         const text = choice ? fillTemplate(await templateText(choice), key, day) : '';
-        await notesApi.writeDaily(key, text);
-        state.dailyNote = { key, content: text };
+        await saveDaily(key, text);
+        state.dailyNote = { key, content: text, disk: text };
         state.dailyDates.add(key);
         histReset('daily');
         render();
@@ -2368,7 +2373,7 @@ function renderDailyNoteSection(date) {
   const getSrc = () => state.dailyNote.content || '';
   const dailyDelete = async () => {
     await notesApi.deleteDaily(key);
-    state.dailyNote = { key, content: null };
+    state.dailyNote = { key, content: null, disk: null };
     state.dailyDates.delete(key);
     state.blockEdit = null;
     render();
@@ -2376,7 +2381,7 @@ function renderDailyNoteSection(date) {
   actions.append(
     copyIconButton(getSrc),
     menuIconButton('menu-daily', () => [
-      { label: 'Export…', fn: () => openMenu('menu-daily', () => exportSubItems(key, getSrc, () => notesApi.writeDaily(key, getSrc()))) },
+      { label: 'Export…', fn: () => openMenu('menu-daily', () => exportSubItems(key, getSrc, () => saveDaily(key, getSrc()))) },
       { label: 'Delete', fn: () => openMenu('menu-daily', () => [
         { label: 'Cancel', fn: () => closeMenu() },
         { label: 'Delete', fn: () => { closeMenu(); dailyDelete(); } },
@@ -3579,6 +3584,7 @@ async function openNote(rel, mode, opts = {}) {
   navVisit({ view: 'note', rel });
   state.openNote = rel;
   state.noteContent = res && !res.error ? res.content : '';
+  state.noteDisk = state.noteContent;
   state.noteCache.set(rel, state.noteContent);
   state.noteView = 'blocks';
   state.blockEdit = null;
@@ -3616,7 +3622,7 @@ async function openNoteHistory(rel = state.openNote) {
   // Save what is pending first, so "now" is what is on screen.
   if (rel === state.openNote && noteSaveTimer) {
     clearTimeout(noteSaveTimer); noteSaveTimer = null;
-    await notesApi.write(rel, state.noteContent);
+    await saveOpenNote();
   }
   const now = rel === state.openNote ? state.noteContent : okOr({ content: '' })(await notesApi.read(rel)).content;
   openVersionHistory({
@@ -3810,6 +3816,39 @@ splitEl.querySelector('.split-close').addEventListener('click', () => closeSplit
 })();
 function openNoteInNewTab(rel) { newTab({ view: 'note', rel }); }
 
+// Saves of the open note and the day's note go through these. Each sends the
+// text it replaces, so text another app added at the end meanwhile (an AI
+// client over MCP, a sync) is kept rather than saved over (lib/outside.mjs).
+async function saveOpenNote(text = state.noteContent) {
+  const rel = state.openNote;
+  const base = state.noteDisk;
+  state.noteDisk = text;
+  const res = await notesApi.write(rel, text, base);
+  if (res && res.merged != null && state.openNote === rel) takeOutside('note', text, res.merged);
+  else if (res && res.conflict) showToast('This note changed outside Mufka. Your text is saved; the other version is in Version history.', 6000);
+  return res;
+}
+async function saveDaily(key, text) {
+  const base = state.dailyNote.key === key ? state.dailyNote.disk : undefined;
+  if (state.dailyNote.key === key) state.dailyNote.disk = text;
+  const res = await notesApi.writeDaily(key, text, base);
+  if (res && res.merged != null && state.dailyNote.key === key) takeOutside('daily', text, res.merged);
+  else if (res && res.conflict) showToast('This note changed outside Mufka. Your text is saved; the other version is in Version history.', 6000);
+  return res;
+}
+// The save above came back with text added outside Mufka: put it on screen
+// too (after whatever was typed since), and save again if more was typed.
+function takeOutside(scope, sent, merged) {
+  const local = getSrcFor(scope);
+  const next = mergeOutside(local, sent, merged).text;
+  if (scope === 'note') { state.noteDisk = merged; state.noteContent = next; state.noteCache.set(state.openNote, next); }
+  else { state.dailyNote.disk = merged; state.dailyNote.content = next; }
+  const ta = scope === 'note' && document.getElementById('note-editor');
+  if (ta) { const { selectionStart: x, selectionEnd: y } = ta; ta.value = next; ta.setSelectionRange(x, y); }
+  if (next !== merged) { if (scope === 'note') saveOpenNote(next); else saveDaily(state.dailyNote.key, next); }
+  if (!isEditing()) render();
+}
+
 let noteSaveTimer = null;
 let dailySaveTimer = null;
 function setSrc(scope, newSrc, persistNow) {
@@ -3820,7 +3859,7 @@ function setSrc(scope, newSrc, persistNow) {
     clearTimeout(noteSaveTimer);
     const save = () => {
       if (!state.openNote) return;
-      notesApi.write(state.openNote, newSrc);
+      saveOpenNote(newSrc);
       const t = state.treeNotes.find((x) => x.rel === state.openNote);
       if (t) { t.mtime = Date.now(); if (state.noteSort.startsWith('modified')) renderSidebar(); }
     };
@@ -3830,7 +3869,7 @@ function setSrc(scope, newSrc, persistNow) {
     state.dailyNote.content = newSrc;
     state.dailyDates.add(key);
     clearTimeout(dailySaveTimer);
-    const save = () => notesApi.writeDaily(key, newSrc);
+    const save = () => saveDaily(key, newSrc);
     if (persistNow) save(); else dailySaveTimer = setTimeout(save, 500);
   }
 }
@@ -5091,7 +5130,7 @@ function wireAutosaveNote(ta) {
   const save = async () => {
     state.noteContent = ta.value;
     state.noteCache.set(state.openNote, ta.value);
-    await notesApi.write(state.openNote, ta.value);
+    await saveOpenNote(ta.value);
     await refreshTree();
     // This runs several ticks after a blur; by now focus may have moved to the
     // filter / a tree-edit field. Re-rendering the sidebar must not steal it.
@@ -5363,8 +5402,16 @@ if (notesApi.onChanged) {
     // Reload the open note if it changed on disk and nothing is being edited.
     if (state.openNote && state.noteView === 'blocks') {
       const res = await notesApi.read(state.openNote);
+      if (res && !res.error) state.noteDisk = res.content;
       if (res && !res.error && res.content !== state.noteContent) {
         state.noteContent = res.content; state.noteCache.set(state.openNote, res.content); histReset('note');
+      }
+    }
+    if (state.contentView === 'day' && state.dailyNote.key) {
+      const key = state.dailyNote.key;
+      const res = await notesApi.readDaily(key).catch(() => null);
+      if (res && !res.error && typeof res.content === 'string' && state.dailyNote.key === key && res.content !== state.dailyNote.content) {
+        state.dailyNote = { key, content: res.content, disk: res.content }; histReset('daily');
       }
     }
     render();
@@ -5495,7 +5542,8 @@ async function boot() {
   state.dailyDates = new Set(await safeDailyDates());
   const now = new Date();
   const res = await notesApi.readDaily(dayKey(now));
-  state.dailyNote = { key: dayKey(now), content: res && !res.error ? res.content : null };
+  const dailyText = res && !res.error ? res.content : null;
+  state.dailyNote = { key: dayKey(now), content: dailyText, disk: dailyText };
   // Tabs come back as they were left, when there were several.
   let savedTabs = null;
   try { savedTabs = JSON.parse(localStorage.getItem('mufka-tabs') || 'null'); } catch { /* none */ }
