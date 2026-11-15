@@ -1893,6 +1893,26 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor(`[...document.querySelectorAll('.meeting-task-on')].some(s => s.textContent === 'On Sprint') && !document.querySelector('.meeting-task-btn')`, 3000), 'the note does not say the board has it');
     });
 
+    // 64d. Done's tasks go to the board's archive (Obsidian Kanban's
+    //      "## Archive"); the archive lists them and one comes back to Done.
+    await step('64d', 'done tasks are archived and one is restored', async () => {
+      await sleep(1700); // past Mufka's own last write of the board
+      fs.writeFileSync(boardFile, boardText().replace('**Complete**\n', '**Complete**\n- [ ] Old finished one\n'));
+      await clickEval(`[...document.querySelectorAll('.board-row')].find(r => r.querySelector('.board-name')?.textContent === 'Sprint')`, 'Sprint board');
+      assert(await waitFor(`[...document.querySelectorAll('.tk-card-title')].some(t => t.textContent === 'Old finished one')`, 4000), 'the done task is not on the board');
+      const doneCol = `[...document.querySelectorAll('.tk-col')].find(c => c.classList.contains('complete'))`;
+      await clickEval(`${doneCol}.querySelector('[data-menu-anchor]')`, 'Done column menu');
+      await clickEval(`[...document.querySelectorAll('.menu-item')].find(m => m.textContent.startsWith('Archive done tasks'))`, 'Archive done tasks');
+      assert(await waitFor2(() => /\*\*\*\n\n## Archive\n\n[\s\S]*- \[x\] Old finished one/.test(boardText()), 3000), `not archived in the file:\n${boardText()}`);
+      assert(await waitFor(`!${doneCol}.querySelector('.tk-card') && /archived/.test(document.querySelector('.tk-archived')?.textContent || '')`, 3000), 'Done still has tasks, or no archived link');
+      await clickSel('.tk-archived');
+      const row = `[...document.querySelectorAll('.tk-archive-row')].find(r => r.textContent.includes('Old finished one'))`;
+      assert(await waitFor(`!!(${row})`, 2000), 'the archive does not list it');
+      await clickEval(`${row}.querySelector('button')`, 'Restore');
+      assert(await waitFor(`[...${doneCol}.querySelectorAll('.tk-card-title')].some(t => t.textContent === 'Old finished one')`, 3000), 'not back in Done');
+      assert(await waitFor2(() => !/- \[x\] Old finished one\n[\s\S]*%% kanban:settings/.test(boardText().split('## Archive')[1] || ''), 3000), `still in the archive:\n${boardText()}`);
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.

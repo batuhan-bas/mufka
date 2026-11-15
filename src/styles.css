@@ -1082,6 +1082,14 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .meeting-task-btn { margin-left: 8px; font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 6px; cursor: pointer; }
 .meeting-task-btn:hover { color: var(--text); background: var(--line); }
 .meeting-task-on { margin-left: 8px; font-size: 12px; color: var(--muted); }
+/* Tasks: the board's archive. */
+.tk-archived { font: inherit; font-size: 13px; color: var(--muted); background: transparent; border: 0; padding: 0 4px; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.tk-archived:hover { color: var(--text); }
+.tk-archive-note { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+.tk-archive-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow: auto; }
+.tk-archive-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.tk-archive-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; color: var(--muted); }
+.tk-archive-due { font-size: 12px; color: var(--muted); }
 .event-row { --ev: var(--accent); }
 .event-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ev); flex: none; margin: 0 4px; }
 .event-join { margin-left: auto; }

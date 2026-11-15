@@ -13,7 +13,7 @@ import { keyLabel } from '../lib/keys.mjs';
 import {
   parseCard, composeCard, urlLabel, addCard, updateCard, removeCard, moveCard,
   addColumn, renameColumn, removeColumn, moveColumn, setCompleteColumn, cardMatches, boardTags,
-  isDefaultColumn, missingDefaults, addDefaultColumn,
+  isDefaultColumn, missingDefaults, addDefaultColumn, archivedTasks, archiveDone, restoreArchived,
   CARD_TYPES, PRIORITIES,
 } from '../lib/kanban.mjs';
 import { icon } from './icons.js';
@@ -123,6 +123,8 @@ function header(board, api) {
   const done = board.columns.filter((c) => c.complete).reduce((n, c) => n + c.cards.length, 0);
   const count = el('span', 'tk-count', `${total} ${total === 1 ? 'task' : 'tasks'}${done ? ` · ${done} done` : ''}`);
   head.append(title, count);
+  const archived = archivedTasks(board).length;
+  if (archived) head.append(btn('tk-archived', `${archived} archived`, () => archiveDialog(board, api), 'Show the archived tasks'));
 
   const tools = el('div', 'tk-tools');
   const search = document.createElement('input');
@@ -247,7 +249,10 @@ function columnMenu(board, ci, api) {
   const col = board.columns[ci];
   const close = api.closeMenu;
   const fixed = isDefaultColumn(col.title);
+  // Done's tasks (and ticked ones elsewhere) go to the board's archive.
+  const doneCount = board.columns.reduce((n, c) => n + c.cards.filter((k) => c.complete || k.checked).length, 0);
   return [
+    ...(col.complete && doneCount ? [{ label: `Archive done tasks (${doneCount})`, fn: () => { close(); api.save(archiveDone(board), K(`${doneCount} ${doneCount === 1 ? 'task' : 'tasks'} archived. ⌘Z undoes.`)); } }] : []),
     ...(fixed ? [] : [
       { label: 'Rename', fn: () => { close(); renaming = ci; api.refresh(); } },
       { label: col.complete ? 'Tasks here are not done' : 'Tasks here are done', fn: () => { close(); api.save(setCompleteColumn(board, ci, !col.complete), col.complete ? `${col.title}: not done` : `${col.title}: tasks are done`); } },
@@ -373,6 +378,38 @@ function setupDrop(list, board, ci, api) {
 
 function clearMarks() {
   document.querySelectorAll('.tasks .drop-before, .tasks .drop-after, .tasks .drop-end').forEach((n) => n.classList.remove('drop-before', 'drop-after', 'drop-end'));
+}
+
+// The board's archived tasks (Obsidian Kanban's "## Archive"): each can go
+// back to Done.
+function archiveDialog(board, api) {
+  dialogOpen = true;
+  const restore = document.activeElement;
+  const layer = el('div', 'tk-layer modal');
+  const panel = el('div', 'tk-panel tk-modal tk-archive');
+  panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-label', 'Archived tasks');
+  const close = () => { dialogOpen = false; layer.remove(); document.removeEventListener('keydown', onKey, true); if (restore && restore.isConnected) restore.focus(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); api.refresh(); } };
+  document.addEventListener('keydown', onKey, true);
+  const head = el('div', 'tk-panel-head');
+  head.append(el('h2', 'tk-modal-heading', 'Archived tasks'));
+  const x = btn('icon-btn-sq tk-panel-close', '×', () => { close(); api.refresh(); }, 'Close (Esc)');
+  x.setAttribute('aria-label', 'Close');
+  head.append(x);
+  const list = el('ul', 'tk-archive-list');
+  archivedTasks(board).forEach((text, i) => {
+    const c = parseCard(text);
+    const li = el('li', 'tk-archive-row');
+    li.append(el('span', 'tk-archive-title', c.title || 'Untitled'));
+    if (c.due) li.append(el('span', 'tk-archive-due', prettyDue(c.due)));
+    li.append(btn('btn quiet', 'Restore', () => { close(); api.save(restoreArchived(board, i), `${c.title || 'Task'} is back in Done`); }, 'Put it back in Done'));
+    list.append(li);
+  });
+  panel.append(head, el('p', 'tk-archive-note', 'Kept at the end of the board\'s note, where Obsidian\'s Kanban plugin shows them too.'), list);
+  layer.append(panel);
+  layer.addEventListener('mousedown', (e) => { if (e.target === layer) { close(); api.refresh(); } });
+  document.body.append(layer);
+  x.focus();
 }
 
 // A task with all its fields. Editing (`ki` given) opens a panel on the right;
