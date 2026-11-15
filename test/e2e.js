@@ -228,6 +228,9 @@ app.whenReady().then(() => setTimeout(async () => {
   wc.on('dom-ready', killAnim);
   killAnim();
   win.show(); win.focus(); wc.focus();
+  // Behind other windows (the machine in use while the test runs) Chromium
+  // slows timers and animation frames, so the graph would not settle in time.
+  wc.setBackgroundThrottling(false);
   await sleep(1800);
 
   let failedStep = null;

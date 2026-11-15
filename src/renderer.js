@@ -3574,6 +3574,9 @@ async function openOrCreateFromSearch() {
 }
 
 async function openNote(rel, mode, opts = {}) {
+  // A block still being edited is saved first, even when the focus already
+  // left it (a palette, a menu) and its blur did not save it.
+  flushActiveEditor();
   const res = await notesApi.read(rel);
   // A task board opens as a board ("Open as Markdown" in its menu shows the text).
   if (!opts.asText && res && !res.error && isBoard(res.content)) { await openTasks(rel); return; }
