@@ -46,7 +46,8 @@
       "icon": "build/icon.icns",
       "identity": null,
       "extendInfo": {
-        "NSDocumentsFolderUsageDescription": "Mufka keeps your notes as Markdown files in Documents/Mufka."
+        "NSDocumentsFolderUsageDescription": "Mufka keeps your notes as Markdown files in Documents/Mufka.",
+        "NSMicrophoneUsageDescription": "Mufka records a voice note when you choose Record now; Handy turns it into text on your Mac."
       }
     },
     "dmg": {

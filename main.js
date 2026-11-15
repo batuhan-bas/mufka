@@ -2,7 +2,7 @@
 // never touches the filesystem directly; it talks through the preload bridge.
 // Bundled by electron-vite into out/main/index.js.
 
-import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, Tray, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net, session } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, Tray, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net, session, systemPreferences } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -133,6 +133,57 @@ async function handyToggle() {
   }
   runDetached(bin, ['--toggle-transcription']);
   return { ok: true };
+}
+
+// A recording or an audio file turned into text by Handy, headless: the
+// renderer sends a 16 kHz mono WAV (lib/audio.mjs); it goes to a temporary
+// file, `handy --transcribe-file <wav> --json` reads it with the model chosen
+// in Handy, and the text comes back. One at a time; cancel stops it.
+let handyJob = null;
+function handyTranscribe(wav) {
+  const bin = handyPath();
+  if (!bin) throw new Error('Handy is not installed');
+  const bytes = Buffer.from(wav instanceof Uint8Array ? wav : new Uint8Array(wav || []));
+  if (bytes.length < 44 || bytes.toString('latin1', 0, 4) !== 'RIFF') throw new Error('Not a WAV recording');
+  if (bytes.length > 2 * 60 * 60 * 32000) throw new Error('Recordings up to two hours');
+  if (handyJob) throw new Error('Handy is already writing one down');
+  const file = path.join(app.getPath('temp'), `mufka-voice-${crypto.randomUUID()}.wav`);
+  fs.writeFileSync(file, bytes);
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, ['--transcribe-file', file, '--json'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    handyJob = child;
+    let out = ''; let err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    const timer = setTimeout(() => child.kill(), 30 * 60 * 1000);
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      handyJob = null;
+      fs.rmSync(file, { force: true });
+      if (signal) { reject(new Error('Stopped')); return; }
+      try {
+        const res = JSON.parse(out.trim().split('\n').pop());
+        resolve({ text: String(res.text || '').trim(), seconds: res.audio_secs || 0 });
+      } catch {
+        const why = (err.match(/\]\[(?:ERROR|WARN)\][^\n]*/g) || []).pop() || `Handy stopped (${code})`;
+        reject(new Error(/model/i.test(why) ? 'Handy has no model yet: open Handy and download one' : why.replace(/^.*\]\s*/, '')));
+      }
+    });
+    child.on('error', (e) => { clearTimeout(timer); handyJob = null; fs.rmSync(file, { force: true }); reject(e); });
+  });
+}
+// The recording itself kept with its note, in the attachments of `noteDir`.
+const AUDIO_EXT = new Set(['.m4a', '.mp3', '.wav', '.webm', '.ogg', '.oga', '.flac', '.aac']);
+function saveAudio(noteDir, name, data) {
+  const ext = path.extname(String(name || '')).toLowerCase();
+  if (!AUDIO_EXT.has(ext)) throw new Error('Not an audio file');
+  const bytes = Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data || []));
+  if (bytes.length > at.MAX_ATTACH_BYTES) throw new Error('File too large (50 MB max)');
+  const dirRel = attachDirRel(noteDir);
+  const dirAbs = attachDirAbs(noteDir);
+  const file = uniqueAttachName(path.basename(String(name)), dirAbs);
+  writeFileAtomic(checkedVaultPath(path.join(dirAbs, file)), bytes);
+  return { rel: dirRel ? `${dirRel}/${file}` : file, name: file };
 }
 
 // --- menu bar (macOS) / system tray (Windows): today's plans ----------------
@@ -1527,6 +1578,7 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'New Note', click: () => sendMenu('new-note') },
+        { label: 'New Note from Audio…', click: () => sendMenu('voice-note') },
         // The page handles these keys itself (registerAccelerator: false), so
         // they work wherever the focus is and the menu only shows them.
         { label: 'New Tab', accelerator: 'Alt+CmdOrCtrl+T', registerAccelerator: false, click: () => sendMenu('new-tab') },
@@ -1828,6 +1880,11 @@ ipcMain.handle('update:set', wrap((patch) => {
 }));
 ipcMain.handle('voice:status', wrap(() => ({ handy: { installed: Boolean(handyPath()) } })));
 ipcMain.handle('voice:handyToggle', wrap(() => handyToggle()));
+ipcMain.handle('voice:transcribe', wrap((wav) => handyTranscribe(wav)));
+ipcMain.handle('voice:cancel', wrap(() => { if (handyJob) handyJob.kill(); return { ok: true }; }));
+ipcMain.handle('voice:saveAudio', wrap((noteDir, name, data) => saveAudio(noteDir, name, data)));
+// The microphone, for "Record now": macOS asks the person once.
+ipcMain.handle('voice:micAccess', wrap(async () => (process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true)));
 ipcMain.handle('menubar:get', wrap(() => menubarOn()));
 ipcMain.handle('menubar:set', wrap((on) => { writeSettings({ menubar: on ? undefined : false }); updateTray(); return menubarOn(); }));
 ipcMain.handle('update:check', wrap(() => { checkForUpdates(); return updateInfo(); }));

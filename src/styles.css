@@ -1807,3 +1807,15 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .dictate-btn { display: inline-flex; align-items: center; gap: 5px; }
 .dictate-btn.on { width: auto; padding: 0 8px; color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 .dictate-time { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* New note from audio (Handy). */
+.voice-dialog { width: min(480px, calc(100vw - 32px)); }
+.voice-lede { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.voice-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.voice-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px; height: auto; text-align: left; }
+.voice-choice span { color: var(--muted); font-size: 12px; font-weight: 400; }
+.voice-choice.recording { border-color: var(--danger); color: var(--danger); }
+.voice-status { font-size: 13px; color: var(--muted); min-height: 18px; }
+.voice-status.rec, .voice-status.error { color: var(--danger); }
+.voice-keep { display: flex; gap: 8px; align-items: center; font-size: 13px; margin-top: 10px; }
+.att-audio { display: block; width: 100%; max-width: 480px; margin: 4px 0; }

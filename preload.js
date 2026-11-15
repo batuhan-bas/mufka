@@ -81,6 +81,11 @@ contextBridge.exposeInMainWorld('notes', {
   // Voice: Handy (dictation) installed?, and start/stop its recording.
   voice: () => ipcRenderer.invoke('voice:status'),
   handyToggle: () => ipcRenderer.invoke('voice:handyToggle'),
+  // A 16 kHz mono WAV (bytes) → { text } from Handy; cancel stops it.
+  transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),
+  cancelTranscribe: () => ipcRenderer.invoke('voice:cancel'),
+  saveAudio: (noteDir, name, data) => ipcRenderer.invoke('voice:saveAudio', noteDir, name, data),
+  micAccess: () => ipcRenderer.invoke('voice:micAccess'),
   menubar: () => ipcRenderer.invoke('menubar:get'),
   setMenubar: (on) => ipcRenderer.invoke('menubar:set', on),
   // AI clients (MCP): { enabled, allowWrite, allowTicks, json, command }; set takes any of the three switches.

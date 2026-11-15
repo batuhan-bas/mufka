@@ -332,3 +332,13 @@ test('colour codes in text are not tags', () => {
   assert.deepEqual(tags.map((t) => t.getAttribute('data-tag')), ['proje', 'cafe']);
   assert.ok(p.textContent.startsWith('Renk #1e2025 ve #fff'));
 });
+
+test('an audio embed plays in place; a plain link to it stays a link', () => {
+  const attach = (raw) => ({ local: true, exists: true, url: `mufka-att://v/${raw}`, rel: raw, name: raw, isImage: false });
+  const [p] = render('![[memo.m4a]] and [the memo](memo.m4a)', { attach });
+  const audio = find(p, 'audio');
+  assert.ok(audio, 'no audio element');
+  assert.equal(audio.getAttribute('src'), 'mufka-att://v/memo.m4a');
+  assert.equal(audio.getAttribute('controls'), '');
+  assert.equal(findAll(p, 'a').filter((a) => a.getAttribute('class') === 'att-file').length, 1);
+});
