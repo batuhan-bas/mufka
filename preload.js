@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld('planner', {
   // True in a packaged build; used to suppress dev-only test hooks.
   isPackaged: ipcRenderer.sendSync('mufka:isPackaged'),
   // Menu bar actions (Dosya, Görünüm tabs, new note).
-  onMenu: (cb) => ipcRenderer.on('menu:action', (_e, action) => cb(action)),
+  onMenu: (cb) => ipcRenderer.on('menu:action', (_e, action, arg) => cb(action, arg)),
   // macOS, and whether the window is full screen (the title bar's room for the traffic lights).
   isMac: process.platform === 'darwin',
   onFullScreen: (cb) => ipcRenderer.on('window:fullscreen', (_e, on) => cb(on)),

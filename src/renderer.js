@@ -5574,7 +5574,9 @@ async function importBackup() {
 // --- menu + shortcuts ---
 
 if (plansApi.onMenu) {
-  plansApi.onMenu((action) => {
+  plansApi.onMenu((action, arg) => {
+    // The menu bar's task: its board, with the task open.
+    if (action === 'open-task' && arg && arg.rel) { plannerApi.openTask(arg); return; }
     if (action === 'export') exportBackup();
     else if (action === 'import') importBackup();
     else if (action === 'new-note') newNote();
