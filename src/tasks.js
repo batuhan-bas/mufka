@@ -28,7 +28,7 @@ let dialogOpen = false;
 let drag = null;         // { kind: 'card', col, card } | { kind: 'col', col }
 let scrollLeft = 0;
 let focusAfter = null;   // { col, card } to focus after the next render
-let openAfter = null;    // { rel, col, card } whose dialog opens after the next render
+let openAfter = null;    // { rel, col, card, draft } whose dialog opens after the next render
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function btn(cls, label, fn, title) {
@@ -42,7 +42,8 @@ function btn(cls, label, fn, title) {
 // True while a field of the board is open: the renderer must not rebuild it.
 export function tasksEditing() { return renaming !== null || dialogOpen; }
 // The Planner opens a task: its board is shown, then the task's dialog.
-export function openTaskAfterRender(rel, col, card) { openAfter = { rel, col, card }; }
+// card null with a draft ({ title, body }): the New task dialog, filled in.
+export function openTaskAfterRender(rel, col, card, draft = null) { openAfter = { rel, col, card, draft }; }
 
 function today() {
   const d = new Date();
@@ -92,7 +93,8 @@ export function renderTasks(container, api) {
   cols.scrollLeft = scrollLeft;
   const opening = openAfter && openAfter.rel === api.rel ? openAfter : null;
   openAfter = null;
-  if (opening && board.columns[opening.col]?.cards[opening.card]) taskForm(board, api, { ci: opening.col, ki: opening.card });
+  if (opening && opening.card == null && opening.draft) taskForm(board, api, { ci: Math.max(0, board.columns.findIndex((c) => !c.complete)), draft: opening.draft });
+  else if (opening && board.columns[opening.col]?.cards[opening.card]) taskForm(board, api, { ci: opening.col, ki: opening.card });
   requestAnimationFrame(() => {
     const field = root.querySelector('.tk-col-rename');
     if (field) { field.focus(); field.select(); return; }
@@ -375,9 +377,9 @@ function clearMarks() {
 
 // A task with all its fields. Editing (`ki` given) opens a panel on the right;
 // "New task" opens the same fields in a dialog in the middle.
-function taskForm(board, api, { ci = 0, ki = null } = {}) {
+function taskForm(board, api, { ci = 0, ki = null, draft = null } = {}) {
   const isNew = ki === null;
-  const card = isNew ? { checked: false, text: '' } : board.columns[ci] && board.columns[ci].cards[ki];
+  const card = isNew ? { checked: false, text: draft ? composeCard(draft) : '' } : board.columns[ci] && board.columns[ci].cards[ki];
   if (!card) return;
   const c = parseCard(card.text);
   dialogOpen = true;

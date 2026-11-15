@@ -38,7 +38,8 @@ import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, ne
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
-import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks } from '../lib/kanban.mjs';
+import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
+import { meetingTodos } from '../lib/wispr.mjs';
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
@@ -4058,6 +4059,41 @@ function mountBlockMarkdown(container, bsrc, startLine, scope) {
       render();
     });
   });
+  if (scope === 'note') addMeetingTaskButtons(container, startLine);
+}
+
+// A Wispr Flow meeting note's open to-dos (lib/wispr.mjs meetingTodos): next to
+// each, a button that puts it on a task board through the New task dialog,
+// filled in; or the board that already has a task with that title.
+function addMeetingTaskButtons(container, startLine) {
+  const todos = meetingTodos(state.noteContent);
+  if (!todos.length) return;
+  const byLine = new Map(todos.map((t) => [t.line, t]));
+  const boards = boardList().filter((b) => !isTemplateNote(b.rel));
+  container.querySelectorAll('input.task-check').forEach((box) => {
+    const t = byLine.get(startLine + Number(box.getAttribute('data-line')));
+    const li = box.closest('li');
+    if (!t || !li) return;
+    const title = parseCard(t.text).title.toLowerCase();
+    const on = boards.find((b) => parseBoard(b.content).columns.some((c) => c.cards.some((k) => parseCard(k.text).title.toLowerCase() === title)));
+    if (on) { li.append(elem('span', 'meeting-task-on', `On ${on.title}`)); return; }
+    const btn = elem('button', 'meeting-task-btn', 'Add to board');
+    btn.type = 'button';
+    btn.dataset.menuAnchor = `meeting-task-${t.line}`;
+    btn.title = 'Make it a task on a board';
+    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); addMeetingTask(t, boards, btn.dataset.menuAnchor); });
+    li.append(btn);
+  });
+}
+function addMeetingTask(todo, boards, anchor) {
+  const go = (b) => {
+    closeMenu();
+    openTaskAfterRender(b.rel, null, null, { title: todo.text, body: `From [[${noteTitleOf(state.openNote)}]]` });
+    openTasks(b.rel);
+  };
+  if (!boards.length) { showToast('No task board yet: make one in Tasks first'); return; }
+  if (boards.length === 1) { go(boards[0]); return; }
+  openMenu(anchor, () => boards.map((b) => ({ label: b.title, fn: () => go(b) })));
 }
 
 // --- the properties editor (lib/properties.mjs) ---------------------------

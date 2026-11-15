@@ -1875,6 +1875,24 @@ app.whenReady().then(() => setTimeout(async () => {
       await press('Escape'); await sleep(200);
     });
 
+    // 64c. A Wispr Flow meeting note's open to-dos can go on a board: the New
+    //      task dialog comes filled in, linking back to the meeting; once the
+    //      board has it, the note says so.
+    await step('64c', 'a meeting to-do goes on a board through the New task dialog', async () => {
+      fs.mkdirSync(path.join(tvault, 'Meetings'), { recursive: true });
+      fs.writeFileSync(path.join(tvault, 'Meetings', 'Kickoff.md'), '---\nsource: Wispr Flow\nwispr_meeting: "k1"\n---\n\n# Kickoff\n\n## Tasks\n\n- [ ] Send the deck\n- [x] Book the room\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Kickoff'); await enter();
+      const btn = `[...document.querySelectorAll('.meeting-task-btn')].find(b => b.closest('li').textContent.includes('Send the deck'))`;
+      assert(await waitFor(`!!(${btn}) && document.querySelectorAll('.meeting-task-btn').length === 1`, 3000), `no Add to board button: ${await js('document.querySelector(".note-body")?.textContent')}`);
+      await clickEval(btn, 'Add to board');
+      assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Send the deck" && document.querySelector(".tk-panel-body")?.value === "From [[Kickoff]]"', 3000), 'the New task dialog is not filled in');
+      await clickEval(`[...document.querySelectorAll('.tk-panel button')].find(b => b.textContent === 'Add task')`, 'Add task');
+      assert(await waitFor2(() => boardText().includes('- [ ] Send the deck\n  From [[Kickoff]]') || /Send the deck[\s\S]*From \[\[Kickoff\]\]/.test(boardText()), 3000), `task not saved:\n${boardText()}`);
+      await press('O', ['meta']); await typeText('Kickoff'); await enter();
+      assert(await waitFor(`[...document.querySelectorAll('.meeting-task-on')].some(s => s.textContent === 'On Sprint') && !document.querySelector('.meeting-task-btn')`, 3000), 'the note does not say the board has it');
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.

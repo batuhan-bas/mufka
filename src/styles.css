@@ -1078,6 +1078,10 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .home-task-why, .home-task-board { font-size: 12px; color: var(--muted); }
 .home-task-why.late { color: var(--danger); }
 .home-task-board::before { content: '· '; }
+/* A Wispr meeting note's to-do: put it on a task board. */
+.meeting-task-btn { margin-left: 8px; font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 6px; cursor: pointer; }
+.meeting-task-btn:hover { color: var(--text); background: var(--line); }
+.meeting-task-on { margin-left: 8px; font-size: 12px; color: var(--muted); }
 .event-row { --ev: var(--accent); }
 .event-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ev); flex: none; margin: 0 4px; }
 .event-join { margin-left: auto; }
