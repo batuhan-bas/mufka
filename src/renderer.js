@@ -11,6 +11,7 @@ import { migrate, emptyStore } from '../lib/migrate.mjs';
 import { genId, searchPlans, foldTR } from '../lib/plans.mjs';
 import { occursOn, describeRecur, repeatChoices, recurFromChoice, choiceFromRecur } from '../lib/recur.mjs';
 import { duePlans } from '../lib/notify.mjs';
+import { mergeOutside } from '../lib/outside.mjs';
 import { renderMarkdown, toggleTaskLine } from '../lib/markdown.mjs';
 import {
   buildTree, TREE_SORTS, flattenNotes, resolveLink, folderOf, joinRel, canMoveInto,
@@ -22,7 +23,7 @@ import { attachmentsDirFor } from '../lib/layout.mjs';
 import { parseBlocks, blockText, replaceBlockText, insertBlockAfter, addBlock } from '../lib/blocks.mjs';
 import { createGraphView } from './graph-view.js';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
-import { renderTasks, tasksEditing, tasksAnnounce } from './tasks.js';
+import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender, prettyDue } from './tasks.js';
 import { createDataview } from './dataview-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
@@ -31,13 +32,19 @@ import { jobStrip, jobsBoard, openJobDialog } from './jobs-view.js';
 import { weekBoard, focusNewTask } from './weekly-view.js';
 import { projectStrip, projectsBoard, openProjectDialog } from './projects-view.js';
 import { projectOf, projectsSettings, mayBeProject } from '../lib/projects.mjs';
+import { bookOf, mayBeBook, bookShelves, bookStats, stageChanges } from '../lib/books.mjs';
+import { bookHead, bookcase, openBookDialog } from './books-view.js';
+import { tripStrip } from './trips-view.js';
+import { meetingStrip } from './meetings-view.js';
 import { weekDays, addWeekTask, editWeekTask, moveWeekTask, moveOpenToNextDay, nextWeekTodoText } from '../lib/weekly.mjs';
 import { jobOf, jobsSettings, mayBeJob, jobNoteName, setJobStatus, DEFAULT_STAGES } from '../lib/jobs.mjs';
 import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
-import { isBoard, parseBoard, serializeBoard, newBoard } from '../lib/kanban.mjs';
+import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
+import { meetingTodos, meetingOf } from '../lib/meetings.mjs';
+import { tripOf } from '../lib/trips.mjs';
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
@@ -84,7 +91,8 @@ const state = {
   store: emptyStore(),
   calCursor: new Date(),
   selectedDate: new Date(),
-  dailyNote: { key: null, content: null },
+  // disk: the day's note as Mufka last read or wrote it (lib/outside.mjs).
+  dailyNote: { key: null, content: null, disk: null },
   dailyDeleteConfirm: false,
   noteDeleteConfirm: false,
   dailyDates: new Set(),
@@ -103,6 +111,8 @@ const state = {
   bookmarks: [],          // bookmarked note rels (Obsidian bookmarks.json via main)
   openNote: null,         // open note rel (path), e.g. 'İş/Q1.md'
   noteContent: '',
+  // The open note as Mufka last read or wrote it (lib/outside.mjs).
+  noteDisk: null,
   propAdding: null,       // 'note' | 'daily': the properties editor's new-property row is open
   noteView: 'blocks',     // 'blocks' (live preview) | 'source' (raw textarea)
   blockEdit: null,        // { scope:'note'|'daily', startLine?, newAfter?, caret }
@@ -295,7 +305,7 @@ function renderPaneActions() {
     const title = noteTitleOf(state.openNote);
     paneActionsEl.append(
       copyIconButton(() => state.noteContent),
-      menuIconButton('menu-note', () => noteActionItems(title, () => state.noteContent, () => notesApi.write(state.openNote, state.noteContent))),
+      menuIconButton('menu-note', () => noteActionItems(title, () => state.noteContent, () => saveOpenNote())),
     );
   }
 }
@@ -330,7 +340,8 @@ function restoreFocus() {
       const pos = state.blockCaretPos; state.blockCaretPos = null;
       try { el.setSelectionRange(pos, pos); } catch { /* ignore */ }
     } else if (el.id === 'tree-edit') {
-      el.select(); // the suggested name ("Untitled", "New folder") is replaced by typing
+      // The suggested name ("Untitled", "New folder") is replaced by typing.
+      if (!(state.treeEdit && state.treeEdit.typed)) el.select();
     } else if (typeof el.value === 'string') { const v = el.value; el.value = ''; el.value = v; }
   }
 }
@@ -498,6 +509,11 @@ function renderSidebar() {
   // out of the search field.
   const act = document.activeElement;
   const typing = act && act.id === 'ara-input' ? { start: act.selectionStart, end: act.selectionEnd } : null;
+  // Nor out of a name being typed for a new note or folder: the field is
+  // rebuilt with what was typed, and removing the old one must not commit it.
+  const naming = act && act.id === 'tree-edit' && state.treeEdit;
+  if (naming) state.treeEdit.typed = { value: act.value, start: act.selectionStart, end: act.selectionEnd };
+  state.rebuildingSidebar = true;
   sideEl.replaceChildren();
   renderSearchField();
   if (state.araQuery.trim()) renderSearchResults();
@@ -508,11 +524,17 @@ function renderSidebar() {
     renderDrawingsSection();
     renderNotesSection();
   }
+  state.rebuildingSidebar = false;
   sideEl.scrollTop = scroll;
   if (typing) {
     const f = document.getElementById('ara-input');
     f.focus();
     try { f.setSelectionRange(typing.start, typing.end); } catch { /* ignore */ }
+  }
+  const named = naming && document.getElementById('tree-edit');
+  if (named) {
+    named.focus();
+    try { named.setSelectionRange(state.treeEdit.typed.start, state.treeEdit.typed.end); } catch { /* ignore */ }
   }
 }
 
@@ -991,9 +1013,31 @@ function planDialog(heading, { title = '', time = '', endTime = '' }, onSave, op
   c.titleInput.focus();
 }
 
+// Board tasks with a due date, by day, for the Planner (lib/kanban.mjs
+// dueTasks); boards in the templates folder are left out. Worked out again only
+// when the vault's notes change.
+let dueCache = { notes: null, byDay: new Map() };
+function tasksDueOn(d) {
+  if (dueCache.notes !== state.vaultNotes) {
+    const byDay = new Map();
+    for (const b of boardList()) {
+      if (isTemplateNote(b.rel)) continue;
+      for (const t of dueTasks(parseBoard(b.content))) {
+        if (!byDay.has(t.due)) byDay.set(t.due, []);
+        byDay.get(t.due).push({ ...t, rel: b.rel, board: b.title });
+      }
+    }
+    dueCache = { notes: state.vaultNotes, byDay };
+  }
+  return dueCache.byDay.get(dayKey(d)) || [];
+}
+
 const plannerApi = {
   dayItems: (d) => getDayItems(d),
   dayEvents: (d) => (calApi ? eventsForDay(d) : []),
+  dayTasks: (d) => tasksDueOn(d),
+  // A board task in the Planner: its board, with the task open.
+  openTask: (t) => { openTaskAfterRender(t.rel, t.ci, t.ki); openTasks(t.rel); },
   calendarsConnected: () => calConnected,
   refreshCalendars: () => refreshCalendars(),
   openEvent: (ev) => openEventCard(ev),
@@ -1797,7 +1841,7 @@ function openRandomNote() {
 // need an open note.
 function commandList() {
   const noteOpen = () => state.contentView === 'note' && Boolean(state.openNote);
-  const saveOpen = () => notesApi.write(state.openNote, state.noteContent);
+  const saveOpen = () => saveOpenNote();
   return [
     { label: 'Open quick switcher', hint: '⌘O', run: openQuickSwitcher },
     { label: 'Show keyboard shortcuts', hint: '⌘/', run: showShortcuts },
@@ -1893,7 +1937,8 @@ async function selectDay(date, opts = {}) {
   state.blockEdit = null;
   const key = dayKey(date);
   const res = await notesApi.readDaily(key);
-  state.dailyNote = { key, content: res && !res.error ? res.content : null };
+  const text = res && !res.error ? res.content : null;
+  state.dailyNote = { key, content: text, disk: text };
   histReset('daily');
   render();
   scheduleBacklinks();
@@ -1956,6 +2001,9 @@ function renderDayPage() {
     more.addEventListener('click', () => openPlanner(date));
     col.append(more);
   }
+  // Tasks from the boards (Tasks): due this day; today also late and in progress.
+  const tasks = homeTasks(date);
+  if (tasks.length) col.append(section('Tasks', tasks.map((t) => homeTaskRow(t))));
 
   // The day's part of this week's to-do and habit tracker notes.
   for (const sec of todayFromWeekNotes(date)) col.append(sec);
@@ -1995,6 +2043,39 @@ function agendaRow(p, date) {
   li.append(open);
   return li;
 }
+// The board tasks a day's page lists (lib/kanban.mjs dayTasks): late ones
+// first, then due that day, then in progress; by priority within each.
+const WHY_ORDER = { late: 0, due: 1, doing: 2 };
+function homeTasks(date) {
+  const key = dayKey(date);
+  const today = isToday(date);
+  const out = [];
+  for (const b of boardList()) {
+    if (isTemplateNote(b.rel)) continue;
+    for (const t of dayTasks(parseBoard(b.content), key, today)) out.push({ ...t, rel: b.rel, board: b.title });
+  }
+  const prio = (t) => (t.priority ? Number(t.priority.slice(1)) : 9);
+  return out.sort((a, b) => WHY_ORDER[a.why] - WHY_ORDER[b.why] || prio(a) - prio(b));
+}
+// A board task on the day's page, to read: a click opens it on its board.
+function homeTaskRow(t) {
+  const li = elem('li', `plan-row agenda-row home-task${t.why === 'late' ? ' late' : ''}`);
+  li.append(elem('span', 'home-task-box'));
+  const open = elem('button', 'agenda-open');
+  open.type = 'button';
+  open.title = `Open on the board ${t.board}`;
+  open.append(elem('span', 'plan-title', t.title));
+  const tags = elem('span', 'home-task-tags');
+  if (t.priority) tags.append(elem('span', `tk-prio ${t.priority.toLowerCase()}`, t.priority));
+  if (t.why === 'late') tags.append(elem('span', 'home-task-why late', `Late · ${prettyDue(t.due)}`));
+  else if (t.why === 'doing') tags.append(elem('span', 'home-task-why', 'In progress'));
+  tags.append(elem('span', 'home-task-board', t.board));
+  open.append(tags);
+  open.addEventListener('click', () => plannerApi.openTask(t));
+  li.append(open);
+  return li;
+}
+
 // Nothing planned: say so and offer the Planner.
 function emptyDayCard(date) {
   const c = elem('section', 'empty-day');
@@ -2333,8 +2414,8 @@ function renderDailyNoteSection(date) {
     add.addEventListener('click', async () => {
       // The vault's daily template (Obsidian daily-notes.json), filled for that day.
       const text = await dailyTemplateText(key);
-      await notesApi.writeDaily(key, text);
-      state.dailyNote = { key, content: text };
+      await saveDaily(key, text);
+      state.dailyNote = { key, content: text, disk: text };
       state.dailyDates.add(key);
       histReset('daily');
       state.blockEdit = text ? null : { scope: 'daily', newAfter: -1, caret: 0 };
@@ -2351,8 +2432,8 @@ function renderDailyNoteSection(date) {
         const day = parseDayKey(key); const now = new Date();
         day.setHours(now.getHours(), now.getMinutes());
         const text = choice ? fillTemplate(await templateText(choice), key, day) : '';
-        await notesApi.writeDaily(key, text);
-        state.dailyNote = { key, content: text };
+        await saveDaily(key, text);
+        state.dailyNote = { key, content: text, disk: text };
         state.dailyDates.add(key);
         histReset('daily');
         render();
@@ -2368,7 +2449,7 @@ function renderDailyNoteSection(date) {
   const getSrc = () => state.dailyNote.content || '';
   const dailyDelete = async () => {
     await notesApi.deleteDaily(key);
-    state.dailyNote = { key, content: null };
+    state.dailyNote = { key, content: null, disk: null };
     state.dailyDates.delete(key);
     state.blockEdit = null;
     render();
@@ -2376,7 +2457,7 @@ function renderDailyNoteSection(date) {
   actions.append(
     copyIconButton(getSrc),
     menuIconButton('menu-daily', () => [
-      { label: 'Export…', fn: () => openMenu('menu-daily', () => exportSubItems(key, getSrc, () => notesApi.writeDaily(key, getSrc()))) },
+      { label: 'Export…', fn: () => openMenu('menu-daily', () => exportSubItems(key, getSrc, () => saveDaily(key, getSrc()))) },
       { label: 'Delete', fn: () => openMenu('menu-daily', () => [
         { label: 'Cancel', fn: () => closeMenu() },
         { label: 'Delete', fn: () => { closeMenu(); dailyDelete(); } },
@@ -2588,6 +2669,7 @@ function noteRenderOptions(rel) {
       jobs: (code, _meta, { src }) => jobsBlock(rel, code, src),
       week: (_code, _meta, { src }) => weekBlock(rel, src),
       projects: (code) => projectsBlock(rel, code),
+      books: (code) => booksBlock(rel, code),
     },
     embedDrawing,
   };
@@ -2762,6 +2844,65 @@ function projectsBlock(rel, code) {
         props: [['status', 'Planning'], ['due', p.due]],
       });
       if (made) await openNote(made);
+    }),
+  });
+}
+
+// --- books (lib/books.mjs, src/books-view.js) ---
+const vaultBooks = () => vaultItems(mayBeBook, bookOf);
+// The address of a book's cover image, '' when it has none (or it is missing).
+function bookCoverUrl(book) {
+  if (!book.image) return '';
+  const dir = folderOf(book.rel);
+  const att = resolveAttachment(book.image, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+  return att.url && att.isImage ? att.url : '';
+}
+// An image put in the attachments of the folder `dir`: picked, pasted or
+// dropped. { name, url } or null.
+const coverInto = (dir) => {
+  const took = async (res) => {
+    const f = Array.isArray(res) ? res.find((x) => x && x.isImage) : (res && res.files ? res.files.find((x) => x && x.isImage) : res);
+    if (!f || f.error || !f.isImage) { if (res && !res.canceled) showToast(f && f.error ? f.error : 'That is not an image'); return null; }
+    await refreshAttachList();
+    const att = resolveAttachment(f.name, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+    return { name: f.name, url: att.url || '' };
+  };
+  return {
+    pick: async () => took(await notesApi.attachPick(dir)),
+    paste: async () => took(await notesApi.attachPaste(dir)),
+    files: async (paths) => took(await notesApi.attachAddFiles(paths, dir)),
+  };
+};
+// "Add cover" on a book: an image file picked for it.
+async function addBookCover(book) {
+  const img = await coverInto(folderOf(book.rel)).pick();
+  if (!img) return;
+  await changeNoteText(book.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
+  render();
+}
+// A book moved to another shelf: its status, and the day it was started or
+// finished when not written yet.
+function moveBook(book, stage) {
+  return changeNoteText(book.rel, (text) => stageChanges(book, stage, dayKey(new Date()))
+    .reduce((t, [k, v]) => (k === 'status' ? setJobStatus(t, v, setProp) : setProp(t, k, v)), text));
+}
+function booksBlock(rel, code) {
+  const settings = projectsSettings(code); // the same settings: folder, template
+  const books = vaultBooks();
+  const folder = settings.folder || (rel ? folderOf(rel) : '');
+  return bookcase(bookShelves(books), bookStats(books), {
+    urlOf: bookCoverUrl,
+    onOpen: (to) => openNote(to),
+    onMove: (to, stage) => { const b = books.find((x) => x.rel === to); if (b) moveBook(b, stage); },
+    onCover: (b) => addBookCover(b),
+    onNew: () => openBookDialog({ cover: coverInto(folder), pathOf: (f) => notesApi.pathForFile(f) }, async (b) => {
+      const today = dayKey(new Date());
+      const made = await noteFromTemplate({
+        folder, name: b.title, template: settings.template, builtin: 'book',
+        props: [['author', b.author], ['status', b.stage], ['image', b.image ? `[[${b.image}]]` : ''],
+          ['started', b.stage !== 'To read' ? today : ''], ['finished', b.stage === 'Finished' ? today : '']],
+      });
+      if (made) { render(); showToast(`Added ${b.title}`); }
     }),
   });
 }
@@ -3371,9 +3512,26 @@ function forgetTreeStyles(rel) {
   state.treeOrder = forgetOrder(state.treeOrder, rel);
   saveTreeStyles();
 }
+// A note's own page icon (icon: in its properties), by path; worked out again
+// only when the vault's notes change.
+let pageIcons = { notes: null, byRel: new Map() };
+function pageIconOf(rel) {
+  if (pageIcons.notes !== state.vaultNotes) {
+    const byRel = new Map();
+    for (const n of state.vaultNotes) {
+      if (!/^---\r?\n/.test(n.content) || !/^icon:/m.test(n.content)) continue;
+      const ic = noteLook(n.content).icon;
+      if (ic) byRel.set(n.rel, ic);
+    }
+    pageIcons = { notes: state.vaultNotes, byRel };
+  }
+  return pageIcons.byRel.get(rel) || '';
+}
+// The icon picked for the row in the tree, else (a note) its page icon, else
+// `fallback`.
 function treeIcon(rel, fallback) {
   const wrap = elem('span', 'tree-icon');
-  const v = state.treeStyles[rel] && state.treeStyles[rel].icon;
+  const v = (state.treeStyles[rel] && state.treeStyles[rel].icon) || (fallback === 'tiFileText' ? pageIconOf(rel) : '');
   if (v && !isIconId(v)) wrap.append(elem('span', 'tree-emoji', v));
   else wrap.append(icon(v || fallback, { size: 15 }));
   return wrap;
@@ -3521,13 +3679,15 @@ function treeEditRow(depth) {
   row.style.paddingLeft = `${8 + depth * 16}px`;
   const input = document.createElement('input');
   input.className = 'tree-edit-input'; input.id = 'tree-edit'; input.maxLength = 120;
-  input.value = treeEditDefault();
-  input.addEventListener('focus', () => input.select(), { once: true });
+  const typed = state.treeEdit && state.treeEdit.typed;
+  input.value = typed ? typed.value : treeEditDefault();
+  // The suggested name is selected so typing replaces it (not a name being typed).
+  input.addEventListener('focus', () => { if (!typed) input.select(); }, { once: true });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); commitTreeEdit(input.value); }
     if (e.key === 'Escape') { e.preventDefault(); state.treeEdit = null; render(); }
   });
-  input.addEventListener('blur', () => { if (state.treeEdit) commitTreeEdit(input.value); });
+  input.addEventListener('blur', () => { if (state.treeEdit && !state.rebuildingSidebar) commitTreeEdit(input.value); });
   row.append(input);
   return row;
 }
@@ -3569,6 +3729,9 @@ async function openOrCreateFromSearch() {
 }
 
 async function openNote(rel, mode, opts = {}) {
+  // A block still being edited is saved first, even when the focus already
+  // left it (a palette, a menu) and its blur did not save it.
+  flushActiveEditor();
   const res = await notesApi.read(rel);
   // A task board opens as a board ("Open as Markdown" in its menu shows the text).
   if (!opts.asText && res && !res.error && isBoard(res.content)) { await openTasks(rel); return; }
@@ -3579,6 +3742,7 @@ async function openNote(rel, mode, opts = {}) {
   navVisit({ view: 'note', rel });
   state.openNote = rel;
   state.noteContent = res && !res.error ? res.content : '';
+  state.noteDisk = state.noteContent;
   state.noteCache.set(rel, state.noteContent);
   state.noteView = 'blocks';
   state.blockEdit = null;
@@ -3616,7 +3780,7 @@ async function openNoteHistory(rel = state.openNote) {
   // Save what is pending first, so "now" is what is on screen.
   if (rel === state.openNote && noteSaveTimer) {
     clearTimeout(noteSaveTimer); noteSaveTimer = null;
-    await notesApi.write(rel, state.noteContent);
+    await saveOpenNote();
   }
   const now = rel === state.openNote ? state.noteContent : okOr({ content: '' })(await notesApi.read(rel)).content;
   openVersionHistory({
@@ -3810,6 +3974,39 @@ splitEl.querySelector('.split-close').addEventListener('click', () => closeSplit
 })();
 function openNoteInNewTab(rel) { newTab({ view: 'note', rel }); }
 
+// Saves of the open note and the day's note go through these. Each sends the
+// text it replaces, so text another app added at the end meanwhile (an AI
+// client over MCP, a sync) is kept rather than saved over (lib/outside.mjs).
+async function saveOpenNote(text = state.noteContent) {
+  const rel = state.openNote;
+  const base = state.noteDisk;
+  state.noteDisk = text;
+  const res = await notesApi.write(rel, text, base);
+  if (res && res.merged != null && state.openNote === rel) takeOutside('note', text, res.merged);
+  else if (res && res.conflict) showToast('This note changed outside Mufka. Your text is saved; the other version is in Version history.', 6000);
+  return res;
+}
+async function saveDaily(key, text) {
+  const base = state.dailyNote.key === key ? state.dailyNote.disk : undefined;
+  if (state.dailyNote.key === key) state.dailyNote.disk = text;
+  const res = await notesApi.writeDaily(key, text, base);
+  if (res && res.merged != null && state.dailyNote.key === key) takeOutside('daily', text, res.merged);
+  else if (res && res.conflict) showToast('This note changed outside Mufka. Your text is saved; the other version is in Version history.', 6000);
+  return res;
+}
+// The save above came back with text added outside Mufka: put it on screen
+// too (after whatever was typed since), and save again if more was typed.
+function takeOutside(scope, sent, merged) {
+  const local = getSrcFor(scope);
+  const next = mergeOutside(local, sent, merged).text;
+  if (scope === 'note') { state.noteDisk = merged; state.noteContent = next; state.noteCache.set(state.openNote, next); }
+  else { state.dailyNote.disk = merged; state.dailyNote.content = next; }
+  const ta = scope === 'note' && document.getElementById('note-editor');
+  if (ta) { const { selectionStart: x, selectionEnd: y } = ta; ta.value = next; ta.setSelectionRange(x, y); }
+  if (next !== merged) { if (scope === 'note') saveOpenNote(next); else saveDaily(state.dailyNote.key, next); }
+  if (!isEditing()) render();
+}
+
 let noteSaveTimer = null;
 let dailySaveTimer = null;
 function setSrc(scope, newSrc, persistNow) {
@@ -3820,7 +4017,7 @@ function setSrc(scope, newSrc, persistNow) {
     clearTimeout(noteSaveTimer);
     const save = () => {
       if (!state.openNote) return;
-      notesApi.write(state.openNote, newSrc);
+      saveOpenNote(newSrc);
       const t = state.treeNotes.find((x) => x.rel === state.openNote);
       if (t) { t.mtime = Date.now(); if (state.noteSort.startsWith('modified')) renderSidebar(); }
     };
@@ -3830,7 +4027,7 @@ function setSrc(scope, newSrc, persistNow) {
     state.dailyNote.content = newSrc;
     state.dailyDates.add(key);
     clearTimeout(dailySaveTimer);
-    const save = () => notesApi.writeDaily(key, newSrc);
+    const save = () => saveDaily(key, newSrc);
     if (persistNow) save(); else dailySaveTimer = setTimeout(save, 500);
   }
 }
@@ -3944,6 +4141,41 @@ function mountBlockMarkdown(container, bsrc, startLine, scope) {
       render();
     });
   });
+  if (scope === 'note') addMeetingTaskButtons(container, startLine);
+}
+
+// A Wispr Flow meeting note's open to-dos (lib/wispr.mjs meetingTodos): next to
+// each, a button that puts it on a task board through the New task dialog,
+// filled in; or the board that already has a task with that title.
+function addMeetingTaskButtons(container, startLine) {
+  const todos = meetingTodos(state.noteContent);
+  if (!todos.length) return;
+  const byLine = new Map(todos.map((t) => [t.line, t]));
+  const boards = boardList().filter((b) => !isTemplateNote(b.rel));
+  container.querySelectorAll('input.task-check').forEach((box) => {
+    const t = byLine.get(startLine + Number(box.getAttribute('data-line')));
+    const li = box.closest('li');
+    if (!t || !li) return;
+    const title = parseCard(t.text).title.toLowerCase();
+    const on = boards.find((b) => parseBoard(b.content).columns.some((c) => c.cards.some((k) => parseCard(k.text).title.toLowerCase() === title)));
+    if (on) { li.append(elem('span', 'meeting-task-on', `On ${on.title}`)); return; }
+    const btn = elem('button', 'meeting-task-btn', 'Add to board');
+    btn.type = 'button';
+    btn.dataset.menuAnchor = `meeting-task-${t.line}`;
+    btn.title = 'Make it a task on a board';
+    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); addMeetingTask(t, boards, btn.dataset.menuAnchor); });
+    li.append(btn);
+  });
+}
+function addMeetingTask(todo, boards, anchor) {
+  const go = (b) => {
+    closeMenu();
+    openTaskAfterRender(b.rel, null, null, { title: todo.text, body: `From [[${noteTitleOf(state.openNote)}]]` });
+    openTasks(b.rel);
+  };
+  if (!boards.length) { showToast('No task board yet: make one in Tasks first'); return; }
+  if (boards.length === 1) { go(boards[0]); return; }
+  openMenu(anchor, () => boards.map((b) => ({ label: b.title, fn: () => go(b) })));
 }
 
 // --- the properties editor (lib/properties.mjs) ---------------------------
@@ -4262,7 +4494,8 @@ function renderBlockEditor(container, scope) {
 function renderNotePane() {
   if (!state.openNote) { contentEl.append(hint('Choose a note, or create one with "New note".')); return; }
   const pane = elem('div', 'note-pane');
-  pane.append(pageHead());
+  // A book's head is its cover (below); its page icon is for the tree.
+  if (!(isTemplateNote(state.openNote) ? null : bookOf(state.openNote, state.noteContent))) pane.append(pageHead());
 
   // The folder path is in the toolbar title. The inline title is the file
   // name (click to rename); it steps aside when the note already starts with
@@ -4275,10 +4508,26 @@ function renderNotePane() {
   const firstLine = first ? blockText(state.noteContent, first).split('\n')[0] : '';
   if (state.noteView === 'blocks' && foldTR(firstLine.replace(/^#\s+/, '').trim()) === foldTR(noteTitleOf(state.openNote)) && /^#\s/.test(firstLine)) header.classList.add('dup');
   header.append(h);
-  pane.append(header);
-  const job = isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
-  const project = job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
+  // A book: its cover beside the title, with its shelf and facts.
+  const book = isTemplateNote(state.openNote) ? null : bookOf(state.openNote, state.noteContent);
+  if (book) {
+    pane.append(bookHead(book, bookCoverUrl(book), header, {
+      onStage: (stage) => moveBook(book, stage),
+      onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
+      onCover: () => addBookCover(book),
+    }));
+  } else pane.append(header);
+  const job = book || isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
+  const project = book || job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
   if (project) pane.append(projectStrip(project, { onStage: (stage) => changeNoteText(state.openNote, (text) => setJobStatus(text, stage, setProp)) }));
+  // A trip: its countdown, where and when, packing; a meeting: when, who,
+  // action items.
+  const plain = !(book || job || project) && !isTemplateNote(state.openNote);
+  const trip = plain ? tripOf(state.openNote, state.noteContent) : null;
+  if (trip) pane.append(tripStrip(trip));
+  const meeting = plain && !trip ? meetingOf(state.openNote, state.noteContent) : null;
+  const mStrip = meeting && meetingStrip(meeting);
+  if (mStrip) pane.append(mStrip);
   if (job) {
     pane.append(jobStrip(job, {
       stages: jobStages(),
@@ -4567,7 +4816,17 @@ function appearanceSection() {
   }
   notesApi.theme().then((cur) => { seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === (typeof cur === 'string' ? cur : 'system')))); });
   row.append(tx, seg);
-  sec.append(row);
+  // Today's plan next to the clock (main.js draws it, lib/menubar.mjs).
+  const bar = elem('div', 'conn-row menubar-row');
+  const l = elem('label', 'mcp-toggle');
+  const on = document.createElement('input'); on.type = 'checkbox'; on.dataset.menubar = 'on';
+  l.append(on, elem('span', null, plansApi.isMac
+    ? 'Show today\'s plan in the menu bar: the next one and the time until it'
+    : 'Show today\'s plan in the system tray'));
+  on.addEventListener('change', async () => { const res = await notesApi.setMenubar(on.checked); if (typeof res === 'boolean') on.checked = res; });
+  notesApi.menubar().then((cur) => { on.checked = cur === true; });
+  bar.append(l);
+  sec.append(row, bar);
   return sec;
 }
 // AI clients (MCP): whether Claude Desktop, Claude Code, Cursor… may use the
@@ -5091,7 +5350,7 @@ function wireAutosaveNote(ta) {
   const save = async () => {
     state.noteContent = ta.value;
     state.noteCache.set(state.openNote, ta.value);
-    await notesApi.write(state.openNote, ta.value);
+    await saveOpenNote(ta.value);
     await refreshTree();
     // This runs several ticks after a blur; by now focus may have moved to the
     // filter / a tree-edit field. Re-rendering the sidebar must not steal it.
@@ -5363,8 +5622,16 @@ if (notesApi.onChanged) {
     // Reload the open note if it changed on disk and nothing is being edited.
     if (state.openNote && state.noteView === 'blocks') {
       const res = await notesApi.read(state.openNote);
+      if (res && !res.error) state.noteDisk = res.content;
       if (res && !res.error && res.content !== state.noteContent) {
         state.noteContent = res.content; state.noteCache.set(state.openNote, res.content); histReset('note');
+      }
+    }
+    if (state.contentView === 'day' && state.dailyNote.key) {
+      const key = state.dailyNote.key;
+      const res = await notesApi.readDaily(key).catch(() => null);
+      if (res && !res.error && typeof res.content === 'string' && state.dailyNote.key === key && res.content !== state.dailyNote.content) {
+        state.dailyNote = { key, content: res.content, disk: res.content }; histReset('daily');
       }
     }
     render();
@@ -5495,7 +5762,8 @@ async function boot() {
   state.dailyDates = new Set(await safeDailyDates());
   const now = new Date();
   const res = await notesApi.readDaily(dayKey(now));
-  state.dailyNote = { key: dayKey(now), content: res && !res.error ? res.content : null };
+  const dailyText = res && !res.error ? res.content : null;
+  state.dailyNote = { key: dayKey(now), content: dailyText, disk: dailyText };
   // Tabs come back as they were left, when there were several.
   let savedTabs = null;
   try { savedTabs = JSON.parse(localStorage.getItem('mufka-tabs') || 'null'); } catch { /* none */ }
@@ -5512,3 +5780,5 @@ boot().catch((e) => { console.error('boot failed', e); render(); });
 
 // Dev-only test hook; never present in packaged builds.
 if (!plansApi.isPackaged) window.__mufkaCheckDue = checkDue;
+// The test redraws the page when an async refresh would, at a chosen moment.
+if (!plansApi.isPackaged) window.__mufkaRender = render;

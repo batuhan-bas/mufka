@@ -27,7 +27,8 @@ contextBridge.exposeInMainWorld('notes', {
   // What changed in the vault since `version` (-1: everything): { version, full, changed, removed }.
   sync: (version) => ipcRenderer.invoke('notes:sync', version),
   read: (rel) => ipcRenderer.invoke('notes:read', rel),
-  write: (rel, content) => ipcRenderer.invoke('notes:write', rel, content),
+  // base: the text the editor started from (keeps what another app added meanwhile).
+  write: (rel, content, base) => ipcRenderer.invoke('notes:write', rel, content, base),
   create: (parentRel, name) => ipcRenderer.invoke('notes:create', parentRel, name),
   createFolder: (parentRel, name) => ipcRenderer.invoke('notes:createFolder', parentRel, name),
   rename: (rel, newName) => ipcRenderer.invoke('notes:rename', rel, newName),
@@ -37,7 +38,7 @@ contextBridge.exposeInMainWorld('notes', {
   removeFolder: (rel) => ipcRenderer.invoke('notes:deleteFolder', rel),
   dailyDates: () => ipcRenderer.invoke('notes:dailyDates'),
   readDaily: (dateKey) => ipcRenderer.invoke('notes:readDaily', dateKey),
-  writeDaily: (dateKey, content) => ipcRenderer.invoke('notes:writeDaily', dateKey, content),
+  writeDaily: (dateKey, content, base) => ipcRenderer.invoke('notes:writeDaily', dateKey, content, base),
   deleteDaily: (dateKey) => ipcRenderer.invoke('notes:deleteDaily', dateKey),
   // File recovery: past versions of notes, and deleted notes (lib/history.mjs).
   historyList: (rel) => ipcRenderer.invoke('history:list', rel),
@@ -72,6 +73,9 @@ contextBridge.exposeInMainWorld('notes', {
   // Appearance: 'system' | 'light' | 'dark'.
   theme: () => ipcRenderer.invoke('theme:get'),
   setTheme: (choice) => ipcRenderer.invoke('theme:set', choice),
+  // Today's plan in the macOS menu bar / Windows tray: on or off.
+  menubar: () => ipcRenderer.invoke('menubar:get'),
+  setMenubar: (on) => ipcRenderer.invoke('menubar:set', on),
   // AI clients (MCP): { enabled, allowWrite, allowTicks, json, command }; set takes any of the three switches.
   mcp: () => ipcRenderer.invoke('mcp:get'),
   setMcp: (patch) => ipcRenderer.invoke('mcp:set', patch),

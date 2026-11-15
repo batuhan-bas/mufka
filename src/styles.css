@@ -1061,6 +1061,35 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .pl-event.free { background: transparent; border-style: dashed; }
 .pl-event-chip { --ev: var(--accent); display: block; width: 100%; text-align: left; font: inherit; font-size: 12px; color: var(--text); background: color-mix(in srgb, var(--ev) 18%, var(--ground)); border: 0; border-left: 3px solid var(--ev); border-radius: 4px; padding: 2px 6px; margin-bottom: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .pl-event-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A board task due that day (Tasks): outlined, with an empty task box, so it
+   reads as something to do rather than a calendar event. */
+.pl-board-task { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; font: inherit; font-size: 12px; color: var(--text); background: transparent; border: 1px solid var(--line-strong); border-radius: 4px; padding: 2px 6px; margin-bottom: 3px; cursor: pointer; min-width: 0; }
+.pl-board-task:hover { background: var(--line); }
+.pl-board-task:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pl-board-task-box { flex: none; width: 10px; height: 10px; border: 1.5px solid var(--muted); border-radius: 3px; }
+.pl-board-task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-board-task.p1 { border-left: 3px solid var(--danger); }
+.pl-board-task.p2 { border-left: 3px solid var(--c-amber); }
+.pl-board-task.late .pl-board-task-box { border-color: var(--danger); }
+/* Board tasks on a day's Home page: read-only rows that open the task. */
+.home-task-box { flex: none; width: 14px; height: 14px; margin: 0 2px; border: 1.5px solid var(--muted); border-radius: 4px; }
+.home-task.late .home-task-box { border-color: var(--danger); }
+.home-task-tags { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+.home-task-why, .home-task-board { font-size: 12px; color: var(--muted); }
+.home-task-why.late { color: var(--danger); }
+.home-task-board::before { content: '· '; }
+/* A Wispr meeting note's to-do: put it on a task board. */
+.meeting-task-btn { margin-left: 8px; font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 6px; cursor: pointer; }
+.meeting-task-btn:hover { color: var(--text); background: var(--line); }
+.meeting-task-on { margin-left: 8px; font-size: 12px; color: var(--muted); }
+/* Tasks: the board's archive. */
+.tk-archived { font: inherit; font-size: 13px; color: var(--muted); background: transparent; border: 0; padding: 0 4px; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.tk-archived:hover { color: var(--text); }
+.tk-archive-note { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+.tk-archive-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow: auto; }
+.tk-archive-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.tk-archive-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; color: var(--muted); }
+.tk-archive-due { font-size: 12px; color: var(--muted); }
 .event-row { --ev: var(--accent); }
 .event-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ev); flex: none; margin: 0 4px; }
 .event-join { margin-left: auto; }
@@ -1694,3 +1723,67 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .update-later { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
 .update-later:hover { color: var(--text); background: var(--hover-soft); }
 .upd-status { margin-right: auto; }
+
+/* --- Books (src/books-view.js): covers, a book's head, the bookcase -------- */
+.book-cover { --h: 210; position: relative; aspect-ratio: 2 / 3; width: 100%; border-radius: 3px 6px 6px 3px; overflow: hidden; background: linear-gradient(160deg, hsl(var(--h) 45% 46%), hsl(var(--h) 50% 22%)); color: #fff; display: flex; flex-direction: column; justify-content: space-between; padding: 10% 9%; box-shadow: inset 4px 0 0 rgb(0 0 0 / .22), 0 6px 14px rgb(0 0 0 / .3); }
+.book-cover::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(255 255 255 / .12), transparent 18%); pointer-events: none; }
+.book-cover.has-image { padding: 0; background: var(--line); }
+.book-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.book-cover-title { font: 700 14px/1.15 Georgia, "Times New Roman", serif; overflow-wrap: break-word; }
+.book-cover-title.long { font-size: 11.5px; }
+.book-cover.big .book-cover-title.long { font-size: 17px; }
+.book-cover-author { font-size: 10.5px; line-height: 1.2; opacity: .85; text-transform: uppercase; letter-spacing: .06em; }
+.book-cover.big .book-cover-title { font-size: 21px; }
+.book-cover.big .book-cover-author { font-size: 12px; }
+.book-cover-btn { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 1; font: inherit; font-size: 11.5px; white-space: nowrap; color: #fff; background: rgb(0 0 0 / .6); border: 0; border-radius: 5px; padding: 2px 8px; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.book-cover:hover .book-cover-btn, .book-cover-btn:focus-visible { opacity: 1; }
+.book-stars { display: inline-flex; gap: 1px; margin-left: 6px; }
+.book-star { font: inherit; font-size: 14px; line-height: 1; color: var(--line-strong); background: none; border: 0; padding: 0; }
+.book-star.on { color: var(--c-amber); }
+.book-stars.can-rate .book-star { cursor: pointer; }
+.book-stars.can-rate:hover .book-star { color: var(--c-amber); }
+.book-stars.can-rate .book-star:hover ~ .book-star { color: var(--line-strong); }
+/* a book's note: the cover beside the title */
+.book-head { display: grid; grid-template-columns: 150px 1fr; gap: 26px; align-items: end; margin: 32px 0 6px; }
+.book-head-side { min-width: 0; }
+.book-head .note-head { margin-top: 0; }
+.book-strip { margin-top: 4px; }
+/* the bookcase */
+.bookcase .job-head { margin-bottom: 18px; }
+.book-shelf { margin-bottom: 30px; border-radius: 8px; }
+.book-shelf.drop { outline: 2px dashed var(--accent); outline-offset: 4px; }
+.book-shelf-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-weight: 600; }
+.book-shelf-count { color: var(--muted); font-weight: 400; font-size: 13px; }
+.book-shelf-more { margin-left: auto; font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.book-shelf-more:hover { color: var(--text); }
+.book-row { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end; padding: 14px 16px 0; border-radius: 8px 8px 0 0; background: color-mix(in srgb, var(--panel) 60%, transparent); min-height: 70px; }
+.book-item { width: 104px; flex: none; cursor: pointer; border-radius: 6px; }
+.book-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.book-item.dragging { opacity: .4; }
+.book-caption { margin: 8px 0 6px; font-size: 12.5px; line-height: 1.3; }
+.book-caption b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-caption span { color: var(--muted); }
+.book-caption .book-stars { margin-left: 0; }
+.book-caption .book-star { font-size: 12px; }
+.book-shelf-empty { color: var(--muted); font-size: 13px; padding: 0 0 18px; }
+.book-plank { height: 12px; margin-top: -2px; border-radius: 3px; background: linear-gradient(#6b4a2f, #4a321f); box-shadow: 0 6px 12px rgb(0 0 0 / .3); }
+@media (prefers-color-scheme: light) { .book-plank { background: linear-gradient(#c9a27a, #a67c55); box-shadow: 0 6px 12px rgb(60 40 20 / .18); } }
+.book-hint { color: var(--muted); font-size: 13px; }
+/* the New book dialog */
+.book-dialog { width: min(560px, calc(100vw - 32px)); }
+.book-dialog-grid { display: grid; grid-template-columns: 130px 1fr; gap: 20px; }
+.book-dialog-cover { aspect-ratio: 2 / 3; border: 1.5px dashed var(--line-strong); border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font: inherit; font-size: 12.5px; text-align: center; padding: 10px; background: transparent; cursor: pointer; overflow: hidden; }
+.book-dialog-cover small { font-size: 11px; }
+.book-dialog-fields { display: flex; flex-direction: column; gap: 10px; }
+.book-dialog-cover.drop { border-color: var(--accent); color: var(--text); }
+.book-dialog-cover.has-image { padding: 0; border-style: solid; }
+.book-dialog-cover img { width: 100%; height: 100%; object-fit: cover; }
+.book-dialog-plus { font-size: 22px; }
+.book-dialog-stages .job-steps { flex-wrap: wrap; }
+
+/* --- Trips and meetings (src/trips-view.js, src/meetings-view.js) --------- */
+.trip-countdown { display: inline-flex; width: fit-content; align-items: baseline; gap: 6px; margin-bottom: 6px; padding: 4px 12px; border-radius: 8px; font-size: 13px; color: var(--muted); background: color-mix(in srgb, var(--c-green) 16%, transparent); border: 1px solid color-mix(in srgb, var(--c-green) 45%, transparent); }
+.trip-countdown b { font-size: 19px; color: var(--c-green); font-weight: 650; }
+.trip-countdown.after { background: transparent; border-color: var(--line-strong); }
+.trip-countdown.after b { color: var(--text); }
+.trip-empty { color: var(--muted); font-size: 13px; }

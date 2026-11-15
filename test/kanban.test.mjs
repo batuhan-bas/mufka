@@ -4,7 +4,7 @@ import {
   isBoard, parseBoard, serializeBoard, newBoard, parseCard, composeCard, urlLabel,
   addCard, updateCard, removeCard, moveCard, addColumn, renameColumn, removeColumn, moveColumn,
   setCompleteColumn, cardMatches, boardTags, DEFAULT_COLUMNS,
-  isDefaultColumn, missingDefaults, addDefaultColumn,
+  isDefaultColumn, missingDefaults, addDefaultColumn, dueTasks, dayTasks, archivedTasks, archiveDone, restoreArchived,
 } from '../lib/kanban.mjs';
 
 // What Obsidian's Kanban plugin writes.
@@ -224,4 +224,55 @@ test('default columns: known by name, removed and put back in their place', () =
   assert.equal(b.columns[0].title, 'To do');
   assert.deepEqual(missingDefaults(b), []);
   assert.deepEqual(addDefaultColumn(b, 'Done'), b, 'an existing default is not added twice');
+});
+
+test('dueTasks: tasks with a due date that are not done', () => {
+  const board = parseBoard([
+    '---', 'kanban-plugin: board', '---', '',
+    '## To do', '', '- [ ] Fix login @{2026-11-18} !P1 #bug', '- [ ] No date', '- [x] Ticked @{2026-11-18}', '',
+    '## Done', '', '- [ ] Shipped @{2026-11-17}', '', '**Complete**', '',
+  ].join('\n'));
+  assert.deepEqual(dueTasks(board), [{ ci: 0, ki: 0, title: 'Fix login', due: '2026-11-18', priority: 'P1', type: 'bug' }]);
+});
+
+test('dayTasks: due that day; on today also late and in progress', () => {
+  const board = parseBoard([
+    '---', 'kanban-plugin: board', '---', '',
+    '## To do', '', '- [ ] Due today @{2026-11-16}', '- [ ] Late @{2026-11-10} !P1', '- [ ] Later @{2026-11-20}', '- [ ] Someday', '',
+    '## In progress', '', '- [ ] Working on it', '- [x] Ticked', '',
+    '## Done', '', '**Complete**', '- [ ] Old @{2026-11-16}', '',
+  ].join('\n'));
+  assert.deepEqual(dayTasks(board, '2026-11-16', true).map((t) => `${t.why}:${t.title}`), ['due:Due today', 'late:Late', 'doing:Working on it']);
+  assert.deepEqual(dayTasks(board, '2026-11-20', false).map((t) => `${t.why}:${t.title}`), ['due:Later']);
+});
+
+test('archive: done tasks move under ## Archive, the settings stay, and come back', () => {
+  const src = [
+    '---', 'kanban-plugin: board', '---', '',
+    '## To do', '', '- [ ] Open', '- [x] Ticked here', '',
+    '## Done', '', '**Complete**', '- [ ] Shipped', '\tWith a note', '',
+    '%% kanban:settings', '```', '{"kanban-plugin":"board"}', '```', '%%', '',
+  ].join('\n');
+  const board = parseBoard(src);
+  const archived = archiveDone(board);
+  assert.deepEqual(archived.columns.map((c) => c.cards.map((k) => k.text)), [['Open'], []]);
+  assert.deepEqual(archivedTasks(archived), ['Ticked here', 'Shipped\nWith a note']);
+  const text = serializeBoard(archived);
+  assert.match(text, /\*\*\*\n\n## Archive\n\n- \[x\] Ticked here\n- \[x\] Shipped\n\tWith a note\n\n%% kanban:settings/);
+  // Read back from the file the same way; archiving again adds after the old ones.
+  const again = parseBoard(text);
+  assert.deepEqual(archivedTasks(again), ['Ticked here', 'Shipped\nWith a note']);
+  const more = archiveDone(addCard(again, 1, 'Later one'));
+  assert.deepEqual(archivedTasks(more), ['Ticked here', 'Shipped\nWith a note', 'Later one']);
+  // Restore: back into Done, still done; the archive keeps the rest.
+  const back = restoreArchived(more, 1);
+  assert.deepEqual(back.columns[1].cards, [{ checked: true, text: 'Shipped\nWith a note' }]);
+  assert.deepEqual(archivedTasks(back), ['Ticked here', 'Later one']);
+  // The last one out: no empty Archive heading left.
+  const empty = [0, 0].reduce((b) => restoreArchived(b, 0), back);
+  assert.doesNotMatch(serializeBoard(empty), /## Archive/);
+  assert.match(serializeBoard(empty), /%% kanban:settings/);
+  // Nothing done: the board is unchanged.
+  const plain = parseBoard('---\nkanban-plugin: board\n---\n\n## To do\n\n- [ ] a\n');
+  assert.equal(archiveDone(plain), plain);
 });

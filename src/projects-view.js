@@ -23,7 +23,7 @@ function dueText(due) {
   return { text: `${date} · in ${d} ${d === 1 ? 'day' : 'days'}`, short: d <= 7 ? `in ${d}d` : date, cls: d <= 7 ? 'soon' : '' };
 }
 
-function progressBar(done, total, cls = '') {
+export function progressBar(done, total, cls = '') {
   const box = el('span', `prj-progress ${cls}`);
   const bar = el('span', 'bud-cat-track prj-bar'); const fill = el('i');
   fill.style.width = `${total ? (done / total) * 100 : 0}%`;

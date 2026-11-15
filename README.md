@@ -55,6 +55,11 @@ Mufka has four modes, switched at the top left (**Notes | Planner | Tasks | Draw
 - Move plans by **dragging** (to another day or time; drag the bottom edge to
   change the end), with the ⋯ menu, or with the keyboard (⌥←/→ a day, ⌥↑/↓ 15
   minutes). Every change can be undone with ⌘Z.
+- **Tasks with a due date** from your boards sit on top of their day; click one
+  to open it on its board.
+- **In the menu bar** (macOS) the plan going on now or the next one, with the
+  time left ("Tennis · in 25m"); its menu lists today's plans. On Windows the
+  tray icon has the same menu. Turn it off in Settings → Appearance.
 
 <p align="center"><img src="docs/screenshots/calendar-event.png" width="85%" alt="A Teams meeting from the calendar, with Join meeting"></p>
 
@@ -63,8 +68,9 @@ Mufka has four modes, switched at the top left (**Notes | Planner | Tasks | Draw
 ### Home — today
 
 Today's date, what you planned for it and today's meetings in time order
-(tick plans off here, **Join** a meeting), and the day's note. Nothing planned
-yet? Home offers to open the Planner.
+(tick plans off here, **Join** a meeting), the board tasks due today, late or
+in progress, and the day's note. Nothing planned yet? Home offers to open the
+Planner.
 
 <p align="center"><img src="docs/screenshots/home.png" width="85%" alt="Home: today's plans and meetings, and the daily note"></p>
 
@@ -85,8 +91,8 @@ yet? Home offers to open the Planner.
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
-- **Templates:** start a note from one of eleven — daily note, meeting notes,
-  project, project board, book notes, habit tracker, budget, travel plan,
+- **Templates:** start a note from one of twelve — daily note, meeting notes,
+  project, project board, book notes, reading shelf, habit tracker, budget, travel plan,
   weekly to-do (with a review of the week), job search and job application — or from your own `Templates` folder (Obsidian-compatible). Copy the
   built-in ones there to make them yours.
 - **Budget** pages: add income and expenses with a small form and a card works
@@ -102,6 +108,15 @@ yet? Home offers to open the Planner.
 - **Projects:** a project note shows its status (Planning, Active, Done or on
   hold, one click to change), how much of its checklist is done and when it is
   due; a project board shows them all by status, with what is late.
+- **Books:** a book note shows its cover beside the title, the shelf it is on
+  (To read, Reading, Finished), its author and dates, and stars to rate it. The
+  **Reading shelf** is a bookcase: a shelf per status with the books standing
+  by their covers; drag one to another shelf. A cover is any image you add
+  (kept in the vault, never fetched from the internet).
+- **Trips:** a trip note counts down to it ("12 days to go", "Day 3 of 7") and
+  shows how much of the packing list is packed and how many bookings are done.
+- **Meetings:** a meeting note (and one from Wispr Flow) shows when and who,
+  and how many action items are done; each open one can go on a task board.
 - **Weekly to-do:** the week as seven columns of tasks; tick, add, change and
   drag them between days, move what is left to the next day, and start next
   week with the open ones. In the file they are a heading per day.
@@ -134,7 +149,7 @@ yet? Home offers to open the Planner.
 
 <p align="center"><img src="docs/screenshots/note.png" width="85%" alt="A note with the Details panel; the sidebar with coloured folders and icons"></p>
 
-<p align="center"><img src="docs/screenshots/templates.png" width="85%" alt="New note from a template: daily note, meeting notes, weekly review, project, book notes, recipe, habit tracker, budget, travel plan"></p>
+<p align="center"><img src="docs/screenshots/templates.png" width="85%" alt="New note from a template: daily note, meeting notes, project, project board, book notes, reading shelf, habit tracker, budget, travel plan, and more; behind it the Reading shelf"></p>
 
 ### Tasks — a board for each project
 
@@ -152,9 +167,11 @@ yet? Home offers to open the Planner.
   that in one dialog. Click a task to edit it in a panel.
 - **Move** by dragging, or on a focused task ⌥←/⌥→ (column) and ⌥↑/⌥↓; Delete
   removes it, ⌘Z undoes. Filter by text, type, priority or tag.
+- **Archive** Done's tasks from its ⋯ menu; "N archived" at the top lists them,
+  each with Restore.
 - **Each board is a Markdown note** in the `Tasks` folder, in the format of
-  Obsidian's **Kanban** plugin: open it in Obsidian and it is the same board;
-  change it there and Mufka follows.
+  Obsidian's **Kanban** plugin (the archive too): open it in Obsidian and it is
+  the same board; change it there and Mufka follows.
 
 <p align="center"><img src="docs/screenshots/tasks.png" width="85%" alt="A task board: To do, In progress, Test and Done with tasks marked Feature, Bug and Chore, priorities, due dates and sub-task counts"></p>
 

@@ -2,51 +2,62 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createSenderCheck } from '../lib/ipc-guard.mjs';
 
-const source = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+const root = fileURLToPath(new URL('..', import.meta.url));
+const rendererFile = path.join(root, 'out/renderer/index.html');
 function fixture(devUrl) {
-  const root = fileURLToPath(new URL('..', import.meta.url));
-  const frame = { url: pathToFileURL(path.join(root, 'out/renderer/index.html')).href };
+  const frame = { url: pathToFileURL(rendererFile).href };
   const event = { sender: { id: 7, mainFrame: frame }, senderFrame: frame };
-  const handles = new Map(); const sync = new Map(); const writes = [];
-  const ctx = vm.createContext({ path, fileURLToPath, URL, __dirname: path.join(root, 'out/main'),
-    process: { env: { ELECTRON_RENDERER_URL: devUrl } }, app: { isPackaged: false }, appRenderers: new Set([7]),
-    ipcMain: { handle: (name, fn) => handles.set(name, fn), on: (name, fn) => sync.set(name, fn) },
-    readStore: () => 'plans', writeStore: data => writes.push(data), readNoteRel: rel => ({ rel }),
-    writeNoteRel: () => { writes.push('note'); return { ok: true }; },
-  });
-  for (const name of ['trustedSender', 'assertTrustedSender']) {
-    const start = source.indexOf(`function ${name}(`);
-    if (start >= 0) vm.runInContext(source.slice(start, source.indexOf('\n}', start) + 2), ctx);
-  }
-  const start = source.indexOf("ipcMain.on('mufka:isPackaged'");
-  const end = source.indexOf('// Security: no page', start);
-  vm.runInContext(source.slice(start, end), ctx);
-  return { ctx, event, handles, sync, writes };
+  const guard = createSenderCheck({ appRenderers: new Set([7]), isPackaged: () => false, devUrl: () => devUrl, rendererFile });
+  const calls = [];
+  const write = guard.wrap((rel, text) => { calls.push([rel, text]); return { ok: true }; });
+  return { guard, event, write, calls };
 }
-test('registered main-frame app IPC still reads and saves', async () => {
-  const { event, handles, writes } = fixture();
-  assert.equal(await handles.get('planner:load')(event), 'plans');
-  assert.ok((await handles.get('planner:save')(event, { items: [] })).ok);
-  assert.equal((await handles.get('notes:read')(event, 'note.md')).rel, 'note.md');
-  assert.equal(writes.length, 1);
+
+test('the app window\'s main frame is answered', async () => {
+  const { guard, event, write, calls } = fixture();
+  assert.equal(guard.trustedSender(event), true);
+  assert.doesNotThrow(() => guard.assertTrustedSender(event));
+  assert.deepEqual(await write(event, 'note.md', 'text'), { ok: true });
+  assert.deepEqual(calls, [['note.md', 'text']]);
 });
-test('unregistered windows, child frames, missing frames and navigated pages cannot invoke privileged IPC', async () => {
+
+test('unregistered windows, child frames, missing frames and navigated pages are refused', async () => {
   for (const alter of [e => { e.sender.id = 99; }, e => { e.senderFrame = { url: e.senderFrame.url }; },
-    e => { e.senderFrame = null; }, e => { e.senderFrame.url = 'https://evil.invalid/index.html'; }]) {
-    const { event, handles, writes } = fixture(); alter(event);
-    assert.match((await handles.get('notes:write')(event, 'note.md', 'bad')).error || '', /unauthorized/);
-    await assert.rejects(async () => handles.get('planner:save')(event, {}), /unauthorized/);
-    await assert.rejects(async () => handles.get('planner:load')(event), /unauthorized/);
-    assert.equal(writes.length, 0);
+    e => { e.senderFrame = null; }, e => { e.senderFrame.url = 'https://evil.invalid/index.html'; },
+    e => { e.senderFrame.url = pathToFileURL(path.join(root, 'out/renderer/other.html')).href; e.sender.mainFrame = e.senderFrame; }]) {
+    const { guard, event, write, calls } = fixture(); alter(event);
+    assert.equal(guard.trustedSender(event), false);
+    assert.throws(() => guard.assertTrustedSender(event), /unauthorized/);
+    assert.match((await write(event, 'note.md', 'bad')).error || '', /unauthorized/);
+    assert.equal(calls.length, 0);
   }
 });
-test('development IPC requires the exact loaded dev origin and app path', async () => {
-  const { event, handles } = fixture('http://localhost:5173');
+
+test('development IPC requires the exact loaded dev origin and app path', () => {
+  const { guard, event } = fixture('http://localhost:5173');
   event.senderFrame.url = 'http://localhost:5173/index.html';
-  assert.equal(await handles.get('planner:load')(event), 'plans');
+  assert.equal(guard.trustedSender(event), true);
   event.senderFrame.url = 'http://localhost:5173/other.html';
-  await assert.rejects(async () => handles.get('planner:load')(event), /unauthorized/);
+  assert.equal(guard.trustedSender(event), false);
+  event.senderFrame.url = 'http://localhost:5174/index.html';
+  assert.equal(guard.trustedSender(event), false);
+});
+
+// Every IPC handler main.js registers goes through the guard: wrap(...), or a
+// handler that checks the sender first.
+test('every IPC handler in main.js checks its sender', () => {
+  const source = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  const regs = [...source.matchAll(/ipcMain\.(handle|on)\('([^']+)',\s*([^\n]*)/g)];
+  assert.ok(regs.length > 50, `only ${regs.length} handlers found`);
+  const unguarded = regs.filter(([, , , rest]) => {
+    if (/^wrap\(/.test(rest)) return false;
+    // An inline handler: its first statement checks the sender.
+    const at = source.indexOf(rest);
+    const head = source.slice(at, at + 300);
+    return !/^(?:async )?\(?(\w+)[^)]*\)? => \{?\s*(?:\{\s*)?(?:assertTrustedSender\(\1\)|event\.returnValue = trustedSender\(\1\))/.test(head.replace(/\n\s*/g, ' '));
+  }).map(([, , name]) => name);
+  assert.deepEqual(unguarded, []);
 });

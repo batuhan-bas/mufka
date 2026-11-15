@@ -61,6 +61,11 @@ shell.showItemInFolder = (p) => { shellCalls.push(['reveal', p]); };
 let lastMessage = null;
 dialog.showMessageBox = async (...args) => { lastMessage = (args.length > 1 ? args[1] : args[0]).message; return { response: 0 }; };
 
+// A window macOS counts as covered (another Space, a full-screen app, the
+// machine in use) gets no animation frames, so guides and the graph would
+// never draw; keep it rendering like a visible one.
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 require('../out/main/index.js'); // the build: npm test runs `npm run build` first
 
 const notesDir = path.join(tmp, 'Documents', 'Mufka');
@@ -228,6 +233,9 @@ app.whenReady().then(() => setTimeout(async () => {
   wc.on('dom-ready', killAnim);
   killAnim();
   win.show(); win.focus(); wc.focus();
+  // Behind other windows (the machine in use while the test runs) Chromium
+  // slows timers and animation frames, so the graph would not settle in time.
+  wc.setBackgroundThrottling(false);
   await sleep(1800);
 
   let failedStep = null;
@@ -275,10 +283,15 @@ app.whenReady().then(() => setTimeout(async () => {
       await js(`document.querySelector('.pl-scroll').scrollTop = 17 * 48`); await sleep(150);
       const at = await js(`(()=>{const c=document.querySelector('.pl-col[data-drop-day="${todayK}"]');const b=c.getBoundingClientRect();return {x:Math.round(b.x+b.width/2),y:Math.round(b.top+20*48+20)};})()`);
       BrowserWindow.getAllWindows()[0].focus(); await sleep(100);
-      // two small moves: a hover needs a move into the slot, not just a position
-      wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y - 3 }); await sleep(60);
-      wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y });
-      assert(await waitFor('!!document.querySelector(".pl-col .pl-hint:not([hidden])")', 2000), 'no hover hint');
+      // two small moves: a hover needs a move into the slot, not just a position.
+      // Tried again if the real pointer (someone using the Mac) moved it away.
+      let hinted = false;
+      for (let i = 0; i < 3 && !hinted; i++) {
+        wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y - 3 }); await sleep(60);
+        wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y });
+        hinted = await waitFor('!!document.querySelector(".pl-col .pl-hint:not([hidden])")', 1000);
+      }
+      assert(hinted, 'no hover hint');
       wc.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'left', clickCount: 1 });
       wc.sendInputEvent({ type: 'mouseUp', x: at.x, y: at.y, button: 'left', clickCount: 1 });
       wc.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'left', clickCount: 2 });
@@ -548,7 +561,8 @@ app.whenReady().then(() => setTimeout(async () => {
       await treeRowMenu('Kutu'); await clickMenuItem('New note'); await treeType('N1');
       await press('2', ['meta']); await sleep(200); // back to tree
       if ((await js(`${treeRow('Kutu')}?.querySelector('.tri')?.textContent`)) !== '▾') { await clickTreeRow('Kutu'); await sleep(150); }
-      const g = await js(`(() => {
+      // Guides are drawn on the next animation frame, which a busy machine delays.
+      const measure = () => js(`(() => {
         const row = ${treeRow('Kutu')};
         const kids = [...document.querySelectorAll('.tree-row')].filter(r => r.dataset.rel && r.dataset.rel.startsWith('Kutu/'));
         const span = kids.length ? (kids[kids.length-1].offsetTop + kids[kids.length-1].offsetHeight) - (row.offsetTop + row.offsetHeight) : 0;
@@ -556,6 +570,8 @@ app.whenReady().then(() => setTimeout(async () => {
         const guide = [...document.querySelectorAll('.tree-guide')].find(x => Math.abs(x.offsetTop - want) < 3);
         return { found: !!guide, h: guide ? guide.offsetHeight : 0, span, pe: guide ? getComputedStyle(guide).pointerEvents : null, total: document.querySelectorAll('.tree-guide').length };
       })()`);
+      let g = await measure();
+      for (let i = 0; i < 30 && !(g.found && g.h >= g.span - 2 && g.span > 0); i++) { await sleep(100); g = await measure(); }
       assert(g.found && g.h >= g.span - 2 && g.span > 0, `guide does not span children: ${JSON.stringify(g)}`);
       assert(g.pe === 'none', 'guide is not click-through');
       const before = g.total;
@@ -800,6 +816,27 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => fs.readFileSync(blokPath, 'utf8') === src.replace('- [ ] alt gorev', '- [x] alt gorev'), 3000), 'nested task did not toggle exactly its line');
     });
 
+    // 34b. Another app (an AI client over MCP) adds to the note while a block
+    //      is being edited: saving the block keeps both. A change elsewhere in
+    //      the note is saved over, with a warning (the version history has it).
+    await step('34b', 'outside addition kept while editing; other change warns', async () => {
+      await setNoteSource('ilk\n\nikinci');
+      await clickBlock('ikinci');
+      assert(await waitFor(`document.getElementById('block-editor')?.value==='ikinci'`, 2500), 'block editor did not open');
+      await press('End'); await typeText(' ek');
+      fs.writeFileSync(blokPath, 'ilk\n\nikinci\n- Claude ekledi\n'); // what append_to_note writes
+      await press('Escape');
+      assert(await waitFor2(() => fs.readFileSync(blokPath, 'utf8') === 'ilk\n\nikinci ek\n- Claude ekledi\n', 3000), `addition lost: ${JSON.stringify(fs.readFileSync(blokPath, 'utf8'))}`);
+      assert(await waitFor('document.querySelector(".note-body")?.textContent.includes("Claude ekledi")', 2500), 'addition not shown');
+      await setNoteSource('bir\n\niki');
+      await clickBlock('iki');
+      assert(await waitFor(`document.getElementById('block-editor')?.value==='iki'`, 2500), 'block editor did not open (2)');
+      await press('End'); await typeText(' degisti');
+      fs.writeFileSync(blokPath, 'tamamen baska\n');
+      await press('Escape');
+      assert(await waitFor2(() => fs.readFileSync(blokPath, 'utf8') === 'bir\n\niki degisti', 3000), `not saved: ${JSON.stringify(fs.readFileSync(blokPath, 'utf8'))}`);
+      assert(await waitFor('(document.getElementById("toast")?.textContent || "").includes("changed outside Mufka")', 2000), 'no warning');
+    });
     // 35. Open an existing folder (an Obsidian vault) as the vault: its notes
     //     show, nothing is added to it, new notes go there; the home folder is
     //     refused; switching back restores the default vault.
@@ -997,7 +1034,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await sleep(800);
       await clickSel('#graph-btn');
       const api = 'document.querySelector(".graph-view")?.graphApi';
-      assert(await waitFor(`${api}?.ids().includes("Graf/G1.md") && ${api}.settled()`, 8000), 'graph did not show and settle');
+      assert(await waitFor(`${api}?.ids().includes("Graf/G1.md") && ${api}.settled()`, 20000), 'graph did not show and settle');
       assert((await js('document.getElementById("graph-btn").getAttribute("aria-current")')) === 'page', 'graph place not selected');
       const p = await js(`${api}.screenPos("Graf/G3.md")`);
       assert(p, 'G3 has no position');
@@ -1419,7 +1456,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('#mode-planner'); await clickSel('#mode-notes');
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "G2"', 3000), 'Notes did not return to the last note');
       // guides: a depth class per level
-      assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 2000), 'no coloured guide');
+      assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 5000), `no coloured guide: ${await js(`JSON.stringify({ mode: document.body.className, folders: [...document.querySelectorAll('.side-notes .folder-row')].map(r => r.dataset.rel + (r.getAttribute('aria-expanded') === 'true' ? '+' : '')), rows: document.querySelectorAll('.side-notes .tree-row').length, guides: document.querySelectorAll('.tree-guide').length, sideHidden: getComputedStyle(document.getElementById('sidebar')).display })`)}`);
     });
 
     await step(55, 'Settings (⌘, or the gear): calendar and Wispr Flow connections shown, offline', async () => {
@@ -1515,7 +1552,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.querySelectorAll(".swatch").length === 8', 2000), 'no colour swatches');
       await clickSel('.swatch[aria-label="Pink"]');
       assert(await waitFor(`${row('Tarifler')}.style.getPropertyValue('--row-c') === '#e07bb5'`, 2000), 'folder did not turn pink');
-      assert(await js(`[...document.querySelectorAll('.tree-guide')].some(g => /224, 123, 181|e07bb5/i.test(g.style.background))`), 'guide is not pink');
+      assert(await waitFor(`[...document.querySelectorAll('.tree-guide')].some(g => /224, 123, 181|e07bb5/i.test(g.style.background))`, 3000), 'guide is not pink');
       // Kept in the vault like Obsidian's own settings, and not shown as a folder.
       const styleFile = path.join(vault, '.mufka', 'tree.json');
       const saved = () => { try { return JSON.parse(fs.readFileSync(styleFile, 'utf8')).items; } catch { return null; } };
@@ -1701,7 +1738,12 @@ app.whenReady().then(() => setTimeout(async () => {
         await humanClickEval(`document.querySelector('.side-notes .side-btn[aria-label="New folder"]')`, 'New folder');
         assert(await waitFor('!!document.getElementById("tree-edit")', 2000), `round ${round}: no name field for the folder`);
         assert(await js('document.activeElement?.id') === 'tree-edit', `round ${round}: the folder name field lost focus to ${await js('document.activeElement?.id || document.activeElement?.className')}`);
-        await typeText(`Klasor ${round}`); await enter();
+        // A redraw while the name is half typed (an async refresh landing,
+        // e.g. the new note's backlinks) keeps the text and the focus.
+        await typeText('Klas');
+        await js('window.__mufkaRender(); true');
+        assert(await js('document.activeElement?.id') === 'tree-edit', `round ${round}: a redraw took the focus from the folder name to ${await js('document.activeElement?.id || document.activeElement?.className')}`);
+        await typeText(`or ${round}`); await enter();
         assert(await waitFor(`!!(${row(`Klasor ${round}`)})`, 3000), `round ${round}: folder not made; rows ${await js(`[...document.querySelectorAll('.tree-row')].map(r => r.dataset.rel || r.className).join('|')`)}; edit ${await js('document.getElementById("tree-edit")?.value')}; active ${await js('document.activeElement?.id || document.activeElement?.className')}`);
       }
     });
@@ -1810,6 +1852,95 @@ app.whenReady().then(() => setTimeout(async () => {
       await sleep(300);
       await clickEval(`[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === 'Sprint')`, 'Sprint row');
       assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true" && !!document.querySelector(".tk-col")', 3000), 'board note did not open as a board');
+    });
+
+    // 64b. A board task with a due date shows on its day in the Planner and on
+    //      Home; clicking it opens its board with the task's dialog.
+    await step('64b', 'a task due today shows in the Planner and on Home, and opens its board', async () => {
+      await sleep(1700); // past Mufka's own last write of the board
+      fs.writeFileSync(boardFile, boardText().replace('## To do\n\n', `## To do\n\n- [ ] Due in the planner @{${todayK}} !P1\n`));
+      await clickSel('#mode-planner');
+      const chip = `[...document.querySelectorAll('.pl-board-task')].find(c => c.textContent === 'Due in the planner')`;
+      assert(await waitFor(`!!(${chip}) && ${chip}.closest('[data-drop-day]')?.dataset.dropDay === ${JSON.stringify(todayK)} && ${chip}.classList.contains('p1')`, 4000), `task not on today: ${await js('[...document.querySelectorAll(".pl-board-task")].map(c => c.textContent).join("|")')}`);
+      await clickEval(chip, 'planner task');
+      assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true"', 3000), 'the board did not open');
+      assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Due in the planner"', 3000), 'the task dialog did not open');
+      await press('Escape'); await sleep(200);
+      // Home lists it under Tasks, with its board; a click opens it too.
+      await press('T', ['meta']);
+      const row = `[...document.querySelectorAll('.home-task')].find(r => r.querySelector('.plan-title')?.textContent === 'Due in the planner')`;
+      assert(await waitFor(`!!(${row}) && ${row}.textContent.includes('Sprint') && ${row}.closest('.section')?.querySelector('.section-title')?.textContent === 'Tasks'`, 3000), `not on Home: ${await js('[...document.querySelectorAll(".home-task")].map(r => r.textContent).join("|")')}`);
+      await clickEval(`${row}.querySelector('.agenda-open')`, 'Home task');
+      assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Due in the planner"', 3000), 'Home did not open the task');
+      await press('Escape'); await sleep(200);
+    });
+
+    // 64c. A Wispr Flow meeting note's open to-dos can go on a board: the New
+    //      task dialog comes filled in, linking back to the meeting; once the
+    //      board has it, the note says so.
+    await step('64c', 'a meeting to-do goes on a board through the New task dialog', async () => {
+      fs.mkdirSync(path.join(tvault, 'Meetings'), { recursive: true });
+      fs.writeFileSync(path.join(tvault, 'Meetings', 'Kickoff.md'), '---\nsource: Wispr Flow\nwispr_meeting: "k1"\n---\n\n# Kickoff\n\n## Tasks\n\n- [ ] Send the deck\n- [x] Book the room\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Kickoff'); await enter();
+      const btn = `[...document.querySelectorAll('.meeting-task-btn')].find(b => b.closest('li').textContent.includes('Send the deck'))`;
+      assert(await waitFor(`!!(${btn}) && document.querySelectorAll('.meeting-task-btn').length === 1`, 3000), `no Add to board button: ${await js('document.querySelector(".note-body")?.textContent')}`);
+      await clickEval(btn, 'Add to board');
+      assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Send the deck" && document.querySelector(".tk-panel-body")?.value === "From [[Kickoff]]"', 3000), 'the New task dialog is not filled in');
+      await clickEval(`[...document.querySelectorAll('.tk-panel button')].find(b => b.textContent === 'Add task')`, 'Add task');
+      assert(await waitFor2(() => boardText().includes('- [ ] Send the deck\n  From [[Kickoff]]') || /Send the deck[\s\S]*From \[\[Kickoff\]\]/.test(boardText()), 3000), `task not saved:\n${boardText()}`);
+      await press('O', ['meta']); await typeText('Kickoff'); await enter();
+      assert(await waitFor(`[...document.querySelectorAll('.meeting-task-on')].some(s => s.textContent === 'On Sprint') && !document.querySelector('.meeting-task-btn')`, 3000), 'the note does not say the board has it');
+    });
+
+    // 64d. Done's tasks go to the board's archive (Obsidian Kanban's
+    //      "## Archive"); the archive lists them and one comes back to Done.
+    await step('64d', 'done tasks are archived and one is restored', async () => {
+      await sleep(1700); // past Mufka's own last write of the board
+      fs.writeFileSync(boardFile, boardText().replace('**Complete**\n', '**Complete**\n- [ ] Old finished one\n'));
+      await clickEval(`[...document.querySelectorAll('.board-row')].find(r => r.querySelector('.board-name')?.textContent === 'Sprint')`, 'Sprint board');
+      assert(await waitFor(`[...document.querySelectorAll('.tk-card-title')].some(t => t.textContent === 'Old finished one')`, 4000), 'the done task is not on the board');
+      const doneCol = `[...document.querySelectorAll('.tk-col')].find(c => c.classList.contains('complete'))`;
+      await clickEval(`${doneCol}.querySelector('[data-menu-anchor]')`, 'Done column menu');
+      await clickEval(`[...document.querySelectorAll('.menu-item')].find(m => m.textContent.startsWith('Archive done tasks'))`, 'Archive done tasks');
+      assert(await waitFor2(() => /\*\*\*\n\n## Archive\n\n[\s\S]*- \[x\] Old finished one/.test(boardText()), 3000), `not archived in the file:\n${boardText()}`);
+      assert(await waitFor(`!${doneCol}.querySelector('.tk-card') && /archived/.test(document.querySelector('.tk-archived')?.textContent || '')`, 3000), 'Done still has tasks, or no archived link');
+      await clickSel('.tk-archived');
+      const row = `[...document.querySelectorAll('.tk-archive-row')].find(r => r.textContent.includes('Old finished one'))`;
+      assert(await waitFor(`!!(${row})`, 2000), 'the archive does not list it');
+      await clickEval(`${row}.querySelector('button')`, 'Restore');
+      assert(await waitFor(`[...${doneCol}.querySelectorAll('.tk-card-title')].some(t => t.textContent === 'Old finished one')`, 3000), 'not back in Done');
+      assert(await waitFor2(() => !/- \[x\] Old finished one\n[\s\S]*%% kanban:settings/.test(boardText().split('## Archive')[1] || ''), 3000), `still in the archive:\n${boardText()}`);
+    });
+
+    // 64e. Template pages: a book stands on the Reading shelf with its cover
+    //      image and moves to Reading from its note (the start day written);
+    //      a trip counts down; a meeting shows who and its action items; the
+    //      tree shows a note's page icon.
+    await step('64e', 'books on the shelf with covers, a trip, a meeting, page icons', async () => {
+      const dir = path.join(tvault, 'Library');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'dune.png'), makePng(20, 30));
+      fs.writeFileSync(path.join(dir, 'Dune.md'), '---\ntype: book\nicon: 📚\nauthor: Frank Herbert\nstatus: To read\nimage: "[[dune.png]]"\n---\n## In one sentence\n');
+      fs.writeFileSync(path.join(dir, 'Shelf.md'), '---\ntype: book-shelf\n---\n```books\nfolder: Library\n```\n');
+      const d = new Date(); d.setDate(d.getDate() + 10);
+      const from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      fs.writeFileSync(path.join(dir, 'Rome.md'), `---\ntype: trip\ndestination: Rome\nfrom: ${from}\n---\n## Packing list\n- [x] Passport\n- [ ] Adapter\n`);
+      fs.writeFileSync(path.join(dir, 'Standup.md'), '---\ntype: meeting\ndate: 2026-11-16\ntime: 09:30\nattendees: [Ayse, Can]\n---\n## Action items\n- [x] One\n- [ ] Two\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Shelf'); await enter();
+      const dune = `[...document.querySelectorAll('.book-shelf[data-stage="To read"] .book-item')].find(b => b.textContent.includes('Dune'))`;
+      assert(await waitFor(`!!(${dune}) && !!${dune}.querySelector('img[src]')`, 4000), `Dune not on To read with its cover: ${await js('[...document.querySelectorAll(".book-shelf")].map(s => s.dataset.stage + ":" + s.textContent).join(" | ")')}`);
+      await clickEval(dune, 'Dune on the shelf');
+      assert(await waitFor('!!document.querySelector(".book-head img") && document.querySelector(".note-title")?.textContent === "Dune"', 3000), 'the book note has no cover head');
+      await clickEval(`[...document.querySelectorAll('.book-strip .job-step')].find(s => s.textContent === 'Reading')`, 'Reading');
+      assert(await waitFor2(() => { const t = fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8'); return /status: Reading/.test(t) && new RegExp(`started: ${todayK}`).test(t); }, 3000), `not moved to Reading:\n${fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8')}`);
+      assert(await js(`[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === 'Dune')?.querySelector('.tree-emoji')?.textContent === '📚'`), 'the tree does not show the page icon');
+      await press('O', ['meta']); await typeText('Rome'); await enter();
+      assert(await waitFor('/10 days to go/.test(document.querySelector(".trip-strip")?.textContent || "") && /1\\/2/.test(document.querySelector(".trip-strip")?.textContent || "")', 3000), `trip strip: ${await js('document.querySelector(".trip-strip")?.textContent')}`);
+      await press('O', ['meta']); await typeText('Standup'); await enter();
+      assert(await waitFor('/Ayse, Can/.test(document.querySelector(".meeting-strip")?.textContent || "") && /1\\/2/.test(document.querySelector(".meeting-strip")?.textContent || "")', 3000), `meeting strip: ${await js('document.querySelector(".meeting-strip")?.textContent')}`);
+      assert(await js('document.querySelectorAll(".meeting-task-btn").length === 1'), 'the open action item has no Add to board');
     });
 
     // 65. File recovery: a saved change keeps the text it replaced; the
@@ -2252,7 +2383,7 @@ app.whenReady().then(() => setTimeout(async () => {
     // 81. Settings → AI clients (MCP): off by default; turning it on and
     //     allowing writes is saved to settings.json; the copied config starts
     //     this app's MCP server with ELECTRON_RUN_AS_NODE.
-    await step(81, 'settings: AI clients (MCP) switches and copied config; updates switch', async () => {
+    await step(81, 'settings: AI clients (MCP) switches and copied config; updates and menu bar switches', async () => {
       await press(',', ['meta']);
       assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row")', 3000), 'no AI clients section');
       const box = (k) => `document.querySelector('.mcp-row input[data-mcp="${k}"]')`;
@@ -2280,6 +2411,13 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => JSON.parse(fs.readFileSync(settingsFile, 'utf8')).autoUpdate === false, 3000), 'autoUpdate off not saved');
       await clickEval(upd, 'automatic updates on');
       assert(await waitFor2(() => !('autoUpdate' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'autoUpdate on should clear the key');
+      // Today's plan in the menu bar / tray: on by default, off is saved.
+      const bar = 'document.querySelector(\'.menubar-row input[data-menubar="on"]\')';
+      assert(await waitFor(`${bar}?.checked === true`, 2000), 'menu bar switch not on by default');
+      await clickEval(bar, 'menu bar off');
+      assert(await waitFor2(() => JSON.parse(fs.readFileSync(settingsFile, 'utf8')).menubar === false, 3000), 'menu bar off not saved');
+      await clickEval(bar, 'menu bar on');
+      assert(await waitFor2(() => !('menubar' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'menu bar on should clear the key');
       await clickEval(box('enabled'), 'disable MCP');
       assert(await waitFor2(() => saved().enabled === false, 3000), 'not turned off');
       await press('Escape');

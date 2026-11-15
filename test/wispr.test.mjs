@@ -50,6 +50,7 @@ test('tools are found by name pattern', () => {
 });
 
 import { splitTruncated, transcriptLines, meetingTitle, meetingNote, syncAction } from '../lib/wispr.mjs';
+import { meetingTodos } from '../lib/meetings.mjs';
 
 test('cut-off fields give the offset to continue from', () => {
   assert.deepEqual(splitTruncated('Ali: hi\nVeli: hello\n\n(...truncated, 1052 chars remaining; continue with view_transcript.start_char=200...)'),
@@ -105,4 +106,15 @@ test('sync: new meetings are created; edited or deleted notes are left alone', (
   assert.equal(syncAction(newer, known, { edited: true }), 'skip');
   assert.equal(syncAction(newer, known, { missing: true }), 'skip');
   assert.equal(syncAction({}, null), 'skip');
+});
+
+test('meetingTodos: the open to-dos under Tasks of a Wispr meeting note', () => {
+  const note = meetingNote({ id: 'm1', title: 'Planning', summary: 'We planned.', todos: ['Send the deck', { text: 'Book the room', done: true }, { text: 'Call the bank', assignee: 'Ayse' }], content: '- [ ] my own line' });
+  assert.deepEqual(meetingTodos(note).map((t) => t.text), ['Send the deck', 'Ayse: Call the bank']);
+  const lines = note.split('\n');
+  for (const t of meetingTodos(note)) assert.ok(lines[t.line].endsWith(t.text));
+  // Not a Wispr note: nothing.
+  assert.deepEqual(meetingTodos('# Notes\n\n## Tasks\n\n- [ ] something\n'), []);
+  // Windows line endings.
+  assert.deepEqual(meetingTodos(note.replace(/\n/g, '\r\n')).map((t) => t.text), ['Send the deck', 'Ayse: Call the bank']);
 });

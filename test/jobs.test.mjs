@@ -73,3 +73,9 @@ test('notes saved with Windows line endings (CRLF)', async () => {
   const { scanTags } = await import('../lib/tags.mjs');
   assert.deepEqual(scanTags('---\r\ntags: [gezi/izmir]\r\n---\r\nText #iş\r\n'), ['gezi/izmir', 'iş']);
 });
+
+test('scanTags leaves out colour codes in text, keeps them in the frontmatter', async () => {
+  const { scanTags } = await import('../lib/tags.mjs');
+  assert.deepEqual(scanTags('Renk #1e2025, #fff ve #1e2025cc; #proje #cafe #abcdeg'), ['proje', 'cafe', 'abcdeg']);
+  assert.deepEqual(scanTags('---\ntags: [ff0000]\n---\n#ff0000'), ['ff0000']);
+});

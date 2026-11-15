@@ -13,7 +13,7 @@ import { keyLabel } from '../lib/keys.mjs';
 import {
   parseCard, composeCard, urlLabel, addCard, updateCard, removeCard, moveCard,
   addColumn, renameColumn, removeColumn, moveColumn, setCompleteColumn, cardMatches, boardTags,
-  isDefaultColumn, missingDefaults, addDefaultColumn,
+  isDefaultColumn, missingDefaults, addDefaultColumn, archivedTasks, archiveDone, restoreArchived,
   CARD_TYPES, PRIORITIES,
 } from '../lib/kanban.mjs';
 import { icon } from './icons.js';
@@ -28,6 +28,7 @@ let dialogOpen = false;
 let drag = null;         // { kind: 'card', col, card } | { kind: 'col', col }
 let scrollLeft = 0;
 let focusAfter = null;   // { col, card } to focus after the next render
+let openAfter = null;    // { rel, col, card, draft } whose dialog opens after the next render
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function btn(cls, label, fn, title) {
@@ -40,12 +41,15 @@ function btn(cls, label, fn, title) {
 
 // True while a field of the board is open: the renderer must not rebuild it.
 export function tasksEditing() { return renaming !== null || dialogOpen; }
+// The Planner opens a task: its board is shown, then the task's dialog.
+// card null with a draft ({ title, body }): the New task dialog, filled in.
+export function openTaskAfterRender(rel, col, card, draft = null) { openAfter = { rel, col, card, draft }; }
 
 function today() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-function prettyDue(key) {
+export function prettyDue(key) {
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);
   const sameYear = y === new Date().getFullYear();
@@ -87,6 +91,10 @@ export function renderTasks(container, api) {
   root.append(live);
   container.append(root);
   cols.scrollLeft = scrollLeft;
+  const opening = openAfter && openAfter.rel === api.rel ? openAfter : null;
+  openAfter = null;
+  if (opening && opening.card == null && opening.draft) taskForm(board, api, { ci: Math.max(0, board.columns.findIndex((c) => !c.complete)), draft: opening.draft });
+  else if (opening && board.columns[opening.col]?.cards[opening.card]) taskForm(board, api, { ci: opening.col, ki: opening.card });
   requestAnimationFrame(() => {
     const field = root.querySelector('.tk-col-rename');
     if (field) { field.focus(); field.select(); return; }
@@ -115,6 +123,8 @@ function header(board, api) {
   const done = board.columns.filter((c) => c.complete).reduce((n, c) => n + c.cards.length, 0);
   const count = el('span', 'tk-count', `${total} ${total === 1 ? 'task' : 'tasks'}${done ? ` · ${done} done` : ''}`);
   head.append(title, count);
+  const archived = archivedTasks(board).length;
+  if (archived) head.append(btn('tk-archived', `${archived} archived`, () => archiveDialog(board, api), 'Show the archived tasks'));
 
   const tools = el('div', 'tk-tools');
   const search = document.createElement('input');
@@ -239,7 +249,10 @@ function columnMenu(board, ci, api) {
   const col = board.columns[ci];
   const close = api.closeMenu;
   const fixed = isDefaultColumn(col.title);
+  // Done's tasks (and ticked ones elsewhere) go to the board's archive.
+  const doneCount = board.columns.reduce((n, c) => n + c.cards.filter((k) => c.complete || k.checked).length, 0);
   return [
+    ...(col.complete && doneCount ? [{ label: `Archive done tasks (${doneCount})`, fn: () => { close(); api.save(archiveDone(board), K(`${doneCount} ${doneCount === 1 ? 'task' : 'tasks'} archived. ⌘Z undoes.`)); } }] : []),
     ...(fixed ? [] : [
       { label: 'Rename', fn: () => { close(); renaming = ci; api.refresh(); } },
       { label: col.complete ? 'Tasks here are not done' : 'Tasks here are done', fn: () => { close(); api.save(setCompleteColumn(board, ci, !col.complete), col.complete ? `${col.title}: not done` : `${col.title}: tasks are done`); } },
@@ -367,11 +380,43 @@ function clearMarks() {
   document.querySelectorAll('.tasks .drop-before, .tasks .drop-after, .tasks .drop-end').forEach((n) => n.classList.remove('drop-before', 'drop-after', 'drop-end'));
 }
 
+// The board's archived tasks (Obsidian Kanban's "## Archive"): each can go
+// back to Done.
+function archiveDialog(board, api) {
+  dialogOpen = true;
+  const restore = document.activeElement;
+  const layer = el('div', 'tk-layer modal');
+  const panel = el('div', 'tk-panel tk-modal tk-archive');
+  panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-label', 'Archived tasks');
+  const close = () => { dialogOpen = false; layer.remove(); document.removeEventListener('keydown', onKey, true); if (restore && restore.isConnected) restore.focus(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); api.refresh(); } };
+  document.addEventListener('keydown', onKey, true);
+  const head = el('div', 'tk-panel-head');
+  head.append(el('h2', 'tk-modal-heading', 'Archived tasks'));
+  const x = btn('icon-btn-sq tk-panel-close', '×', () => { close(); api.refresh(); }, 'Close (Esc)');
+  x.setAttribute('aria-label', 'Close');
+  head.append(x);
+  const list = el('ul', 'tk-archive-list');
+  archivedTasks(board).forEach((text, i) => {
+    const c = parseCard(text);
+    const li = el('li', 'tk-archive-row');
+    li.append(el('span', 'tk-archive-title', c.title || 'Untitled'));
+    if (c.due) li.append(el('span', 'tk-archive-due', prettyDue(c.due)));
+    li.append(btn('btn quiet', 'Restore', () => { close(); api.save(restoreArchived(board, i), `${c.title || 'Task'} is back in Done`); }, 'Put it back in Done'));
+    list.append(li);
+  });
+  panel.append(head, el('p', 'tk-archive-note', 'Kept at the end of the board\'s note, where Obsidian\'s Kanban plugin shows them too.'), list);
+  layer.append(panel);
+  layer.addEventListener('mousedown', (e) => { if (e.target === layer) { close(); api.refresh(); } });
+  document.body.append(layer);
+  x.focus();
+}
+
 // A task with all its fields. Editing (`ki` given) opens a panel on the right;
 // "New task" opens the same fields in a dialog in the middle.
-function taskForm(board, api, { ci = 0, ki = null } = {}) {
+function taskForm(board, api, { ci = 0, ki = null, draft = null } = {}) {
   const isNew = ki === null;
-  const card = isNew ? { checked: false, text: '' } : board.columns[ci] && board.columns[ci].cards[ki];
+  const card = isNew ? { checked: false, text: draft ? composeCard(draft) : '' } : board.columns[ci] && board.columns[ci].cards[ki];
   if (!card) return;
   const c = parseCard(card.text);
   dialogOpen = true;

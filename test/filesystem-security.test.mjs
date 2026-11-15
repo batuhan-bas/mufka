@@ -3,24 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import * as np from '../lib/notespath.mjs';
-import * as bm from '../lib/bookmarks.mjs';
-import * as at from '../lib/attach.mjs';
-import { vaultLayout } from '../lib/layout.mjs';
+import { createVaultIO, fontResponse } from '../lib/vault-io.mjs';
 
-// Exercise original main-process helpers; only Electron trash is replaced.
-const source = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
-function original(name) {
-  const single = source.match(new RegExp(`^(?:async )?function ${name}\\([^\\n]*\\) \\{[^\\n]*\\}$`, 'm'));
-  if (single) return single[0];
-  const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
-  if (start < 0) return '';
-  const end = source.indexOf('\n}', start);
-  assert.ok(end >= 0, `missing end of ${name}`);
-  return source.slice(start, end + 2);
-}
+// The vault's file access as main.js uses it (lib/vault-io.mjs); only what
+// main owns is faked here — Electron's shell, settings, file recovery.
 function fixture(t) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mufka-fs-security-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -28,19 +16,21 @@ function fixture(t) {
   fs.mkdirSync(root); fs.mkdirSync(outside);
   const trashed = []; const opened = []; const revealed = [];
   let settings = {};
-  const ctx = vm.createContext({ fs, path, np, bm, at, randomUUID, vaultLayout,
-    notesRoot: () => root, noteOwnWrite: () => {}, readSettings: () => settings,
-    keepBefore: () => {}, keepDeleted: () => {}, // file recovery (lib/history.mjs has its own tests)
+  // Tests change these mid-way (the vault switched, other unused files).
+  const env = {
+    notesRoot: () => root, readSettings: () => settings,
     writeSettings: patch => { settings = { ...settings, ...patch }; },
-    isDir: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
     shell: { trashItem: async p => { trashed.push(p); }, openPath: async p => { opened.push(p); return ''; }, showItemInFolder: p => revealed.push(p) },
-    attachUnused: () => ['unused.pdf'], cleanableAttachDir: () => 'Attachments',
+    attachUnused: () => ['unused.pdf'], cleanableAttachDir: () => 'Attachments', randomUUID,
+  };
+  const ctx = createVaultIO({
+    notesRoot: () => env.notesRoot(), readSettings: () => env.readSettings(), writeSettings: patch => env.writeSettings(patch),
+    isDir: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
+    noteOwnWrite: () => {}, keepBefore: () => {}, keepDeleted: () => {}, // file recovery (lib/history.mjs has its own tests)
+    shell: env.shell, attachUnused: () => env.attachUnused(), cleanableAttachDir: () => env.cleanableAttachDir(),
+    uuid: () => env.randomUUID(),
   });
-  for (const name of ['writeFileAtomic', 'checkedVaultPath', 'readJson', 'obsidianSettings',
-    'bookmarksRead', 'bookmarksWrite', 'layout', 'dailyRoot', 'ensureNotesDirs', 'safeAbs',
-    'readDaily', 'writeDaily', 'deleteDaily', 'mutationAbs', 'isGunlukRoot',
-    'attachAbs', 'attachTrash', 'attachOpen', 'trashNote', 'trashFolder']) vm.runInContext(original(name), ctx);
-  return { root, outside, ctx, trashed, opened, revealed };
+  return { root, outside, ctx, env, trashed, opened, revealed };
 }
 test('daily directory symlink cannot read or overwrite outside the vault', t => {
   const { root, outside, ctx } = fixture(t);
@@ -76,10 +66,10 @@ test('atomic writer removes its temp file after rename failure', t => {
   assert.deepEqual(fs.readdirSync(root), ['directory']);
 });
 test('atomic writer refuses an existing randomized temp path', t => {
-  const { root, outside, ctx } = fixture(t);
+  const { root, outside, ctx, env } = fixture(t);
   const note = path.join(root, 'note.md'); const victim = path.join(outside, 'private.txt');
   fs.writeFileSync(note, 'before'); fs.writeFileSync(victim, 'private');
-  ctx.randomUUID = () => 'collision';
+  env.randomUUID = () => 'collision';
   fs.symlinkSync(victim, `${note}.collision.tmp`);
   assert.throws(() => ctx.writeFileAtomic(note, 'after'), /EEXIST/);
   assert.equal(fs.readFileSync(victim, 'utf8'), 'private');
@@ -138,14 +128,14 @@ test('attachment cleanup cannot delete paths or referenced files outside its eli
   assert.deepEqual(trashed, [path.join(root, 'Attachments', 'unused.pdf')]);
 });
 test('attachment cleanup stays in its original vault when selection changes during trash', async t => {
-  const { root, outside, ctx, trashed } = fixture(t);
+  const { root, outside, ctx, trashed, env } = fixture(t);
   for (const vault of [root, outside]) {
     fs.mkdirSync(path.join(vault, 'Attachments'));
     for (const name of ['one.pdf', 'two.pdf']) fs.writeFileSync(path.join(vault, 'Attachments', name), 'file');
   }
   fs.writeFileSync(path.join(outside, 'note.md'), '[used](Attachments/two.pdf)');
-  ctx.attachUnused = () => ['one.pdf', 'two.pdf'];
-  ctx.shell.trashItem = async p => { trashed.push(p); ctx.notesRoot = () => outside; };
+  env.attachUnused = () => ['one.pdf', 'two.pdf'];
+  env.shell.trashItem = async p => { trashed.push(p); env.notesRoot = () => outside; };
   await ctx.attachTrash(['one.pdf', 'two.pdf']);
   assert.deepEqual(trashed, [path.join(root, 'Attachments', 'one.pdf'), path.join(root, 'Attachments', 'two.pdf')]);
 });
@@ -182,20 +172,16 @@ test('unknown files, executable modes, bundle internals and disguised aliases ar
   assert.deepEqual(opened, []); assert.equal(revealed.length, rels.length);
 });
 test('ordinary PDF opens and OS open failure reaches the caller', async t => {
-  const { root, ctx, opened } = fixture(t);
+  const { root, ctx, opened, env } = fixture(t);
   const file = path.join(root, 'report.pdf'); fs.writeFileSync(file, 'file');
   await ctx.attachOpen('report.pdf'); assert.deepEqual(opened, [fs.realpathSync(file)]);
-  ctx.shell.openPath = async () => 'No application';
+  env.shell.openPath = async () => 'No application';
   await assert.rejects(() => ctx.attachOpen('report.pdf'), /No application/);
 });
 test('attachment protocol constrains active SVG document responses', async t => {
   const { root, ctx } = fixture(t);
   fs.writeFileSync(path.join(root, 'marker.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>marker()</script></svg>');
-  let handler;
-  Object.assign(ctx, { URL, Response, ATTACH_SCHEME: 'mufka-att', ATTACH_MIME: { '.svg': 'image/svg+xml' },
-    protocol: { handle: (_scheme, fn) => { handler = fn; } } });
-  vm.runInContext(original('registerAttachProtocol'), ctx); ctx.registerAttachProtocol();
-  const response = await handler({ url: 'mufka-att://v/marker.svg' });
+  const response = await ctx.attachResponse('mufka-att://v/marker.svg');
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-security-policy') || '', /script-src 'none'/);
   assert.match(response.headers.get('content-security-policy') || '', /sandbox/);
@@ -210,10 +196,7 @@ test('the font scheme serves only font files from the Excalidraw folder', async 
   fs.writeFileSync(path.join(fonts, 'Virgil.woff2'), 'font');
   fs.writeFileSync(path.join(base, 'renderer', 'excalidraw', 'note.txt'), 'text');
   fs.writeFileSync(path.join(base, 'secret.woff2'), 'secret');
-  let handler;
-  const ctx = vm.createContext({ fs, path, np, URL, Response, FONT_SCHEME: 'mufka-font', __dirname: path.join(base, 'main'),
-    protocol: { handle: (_scheme, fn) => { handler = fn; } } });
-  vm.runInContext(original('registerFontProtocol'), ctx); ctx.registerFontProtocol();
+  const handler = (request) => fontResponse(request.url, path.join(base, 'renderer', 'excalidraw'));
   const ok = await handler({ url: 'mufka-font://excalidraw/fonts/Virgil/Virgil.woff2' });
   assert.equal(ok.status, 200);
   assert.equal(ok.headers.get('content-type'), 'font/woff2');
@@ -221,4 +204,17 @@ test('the font scheme serves only font files from the Excalidraw folder', async 
   assert.equal((await handler({ url: 'mufka-font://excalidraw/note.txt' })).status, 404, 'not a font');
   assert.equal((await handler({ url: 'mufka-font://excalidraw/..%2F..%2Fsecret.woff2' })).status, 404, 'outside the folder');
   assert.equal((await handler({ url: 'mufka-font://excalidraw/fonts/Missing.woff2' })).status, 404);
+});
+
+test('an editor save keeps text another app added meanwhile', t => {
+  const { ctx } = fixture(t);
+  ctx.writeDaily('2026-11-15', 'plan\n', '');
+  fs.appendFileSync(ctx.dailyRoot() + '/2026-11-15.md', '- from Claude\n'); // append_to_note
+  assert.deepEqual(ctx.writeDaily('2026-11-15', 'plan edited\n', 'plan\n'), { ok: true, merged: 'plan edited\n- from Claude\n' });
+  assert.equal(ctx.readDaily('2026-11-15').content, 'plan edited\n- from Claude\n');
+  fs.writeFileSync(ctx.dailyRoot() + '/2026-11-15.md', 'rewritten elsewhere\n');
+  assert.deepEqual(ctx.writeDaily('2026-11-15', 'mine\n', 'plan edited\n- from Claude\n'), { ok: true, conflict: true });
+  assert.equal(ctx.readDaily('2026-11-15').content, 'mine\n');
+  // A save without a base (not an editor) just writes.
+  assert.deepEqual(ctx.writeDaily('2026-11-15', 'plain\n'), { ok: true });
 });
