@@ -25,7 +25,8 @@ import { createHistory } from './lib/history.mjs';
 import { createVaultCache } from './lib/vault-cache.mjs';
 import { autoUpdatesOn } from './lib/updates.mjs';
 import { migrate } from './lib/migrate.mjs';
-import { todayPlans, menubarTitle, menubarRows } from './lib/menubar.mjs';
+import { todayPlans, todayEvents, mergeDay, menubarTitle, menubarRows, menubarTasks } from './lib/menubar.mjs';
+import { isBoard, parseBoard, dayTasks } from './lib/kanban.mjs';
 import { attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
 import * as cal from './lib/calendar.mjs';
@@ -122,13 +123,49 @@ function trayIcon() {
   }
   return nativeImage.createFromPath(path.join(__dirname, '../../build/icon.png')).resize({ width: 32, height: 32, quality: 'best' });
 }
-// Bring Mufka forward (a window again if it was closed) on this week's planner.
-function openPlannerFromTray() {
+// Bring Mufka forward (a window again if it was closed) and do a menu action
+// there: this week's planner, or a task on its board.
+function openFromTray(action = 'planner', arg) {
   const win = BrowserWindow.getAllWindows()[0] || createWindow();
   if (win.isMinimized()) win.restore();
   win.show(); win.focus();
-  const go = () => win.webContents.send('menu:action', 'planner');
+  const go = () => win.webContents.send('menu:action', action, arg);
   if (win.webContents.isLoading()) win.webContents.once('did-finish-load', go); else go();
+}
+const openPlannerFromTray = () => openFromTray('planner');
+// Today's calendar events for the menu (asked at most every 10 minutes, and
+// again when the calendars change) and board tasks due today or late (read at
+// most every 5 minutes).
+let trayEvents = { day: '', at: 0, events: [], asking: false };
+let trayTasks = { day: '', at: 0, tasks: [] };
+const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function trayCalendar(now) {
+  const day = localDay(now);
+  if (trayEvents.asking || (trayEvents.day === day && Date.now() - trayEvents.at < 10 * 60 * 1000)) return trayEvents.day === day ? trayEvents.events : [];
+  if (!Object.keys(PROVIDERS).some((id) => calState(id).tokens)) { trayEvents = { day, at: Date.now(), events: [], asking: false }; return []; }
+  trayEvents.asking = true;
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
+  calendarEvents(from.toISOString(), to.toISOString())
+    .then((res) => { trayEvents = { day, at: Date.now(), events: res.events || [], asking: false }; })
+    .catch(() => { trayEvents = { ...trayEvents, day, at: Date.now(), asking: false }; })
+    .finally(() => { if (tray) updateTray(); });
+  return trayEvents.day === day ? trayEvents.events : [];
+}
+function trayBoardTasks(now) {
+  const day = localDay(now);
+  if (trayTasks.day === day && Date.now() - trayTasks.at < 5 * 60 * 1000) return trayTasks.tasks;
+  const tasks = [];
+  try {
+    const templates = layout().templates ? `${layout().templates}/` : null;
+    for (const n of collectNotes()) {
+      if ((templates && n.rel.startsWith(templates)) || !isBoard(n.content)) continue;
+      const board = n.rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+      for (const t of dayTasks(parseBoard(n.content), day, true)) tasks.push({ ...t, rel: n.rel, board });
+    }
+  } catch { /* the vault cannot be read now: no tasks this time */ }
+  trayTasks = { day, at: Date.now(), tasks };
+  return tasks;
 }
 function updateTray() {
   if (!menubarOn()) { if (tray) { tray.destroy(); tray = null; } return; }
@@ -138,14 +175,17 @@ function updateTray() {
     if (process.platform === 'win32') tray.on('click', () => tray.popUpContextMenu());
   }
   const now = new Date();
-  const plans = todayPlans(savedPlans(), now);
+  const plans = mergeDay(todayPlans(savedPlans(), now), todayEvents(trayCalendar(now), now));
   const title = menubarTitle(plans, now);
   if (process.platform === 'darwin') tray.setTitle(title ? ` ${title}` : '', { fontType: 'monospacedDigit' });
   tray.setToolTip(title ? `Mufka · ${title}` : 'Mufka');
   const rows = menubarRows(plans, now);
+  const tasks = menubarTasks(trayBoardTasks(now));
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Today', enabled: false },
     ...(rows.length ? rows.map((r) => ({ label: r.label, enabled: !r.past, click: openPlannerFromTray })) : [{ label: 'Nothing planned', enabled: false }]),
+    ...(tasks.length ? [{ type: 'separator' }, { label: 'Tasks', enabled: false },
+      ...tasks.map((t) => ({ label: t.label, click: () => openFromTray('open-task', { rel: t.task.rel, ci: t.task.ci, ki: t.task.ki }) }))] : []),
     { type: 'separator' },
     { label: 'Open the planner', click: openPlannerFromTray },
     { label: process.platform === 'darwin' ? 'Hide from the menu bar' : 'Hide from the tray', click: () => { writeSettings({ menubar: false }); updateTray(); } },
@@ -1346,6 +1386,8 @@ async function calendarEvents(from, to) {
 // Tell the windows to drop their events and ask again.
 function calendarsChanged() {
   eventCache.clear();
+  trayEvents = { day: '', at: 0, events: [], asking: false };
+  if (tray) updateTray();
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send('calendar:changed');
 }
 

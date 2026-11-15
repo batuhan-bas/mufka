@@ -1687,6 +1687,9 @@ app.whenReady().then(() => setTimeout(async () => {
       for (let t = 0; t < 30 && !totals; t++) { const v = await stats(); totals = v[1].replace(/\D/g, '') === '12505' && v[2].startsWith('−'); if (!totals) await sleep(100); }
       assert(totals, `totals not updated: ${await stats()}`);
       assert(await js('!!document.querySelector(".note-body td .bud-chip")'), 'category not shown as a chip');
+      // The Expenses table has a Total row (on screen only) with the same sum.
+      assert(await waitFor('[...document.querySelectorAll(".note-body tr.bud-total")].some(r => r.querySelector(".bud-total-label")?.textContent === "Total" && r.querySelector(".bud-total-amount")?.textContent.replace(/\\D/g, "") === "12505")', 3000), `no Total row: ${await js('[...document.querySelectorAll(".note-body tr.bud-total")].map(r => r.textContent).join(" | ")')}`);
+      assert(!/Total/.test(fs.readFileSync(file, 'utf8')), 'the Total row went into the file');
       // The icon can be changed from the page; the next month starts from the card.
       assert(await clickUntil('document.querySelector(".note-icon")', '!!document.querySelector(".emoji-grid")', 'page icon'), 'icon picker did not open');
       await clickEval('[...document.querySelectorAll(".emoji-choice")].find(b => b.textContent === "🚀")', 'rocket');
@@ -1862,6 +1865,19 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('#mode-planner');
       const chip = `[...document.querySelectorAll('.pl-board-task')].find(c => c.textContent === 'Due in the planner')`;
       assert(await waitFor(`!!(${chip}) && ${chip}.closest('[data-drop-day]')?.dataset.dropDay === ${JSON.stringify(todayK)} && ${chip}.classList.contains('p1')`, 4000), `task not on today: ${await js('[...document.querySelectorAll(".pl-board-task")].map(c => c.textContent).join("|")')}`);
+      // Dragged to 15:00 it becomes a plan for that hour; the task stays.
+      await js(`(() => {
+        const c = ${chip}; const col = document.querySelector('.pl-col[data-drop-day="${todayK}"]');
+        document.querySelector('.pl-scroll').scrollTop = 12 * 48;
+        const dt = new DataTransfer(); const b = col.getBoundingClientRect();
+        const at = { bubbles: true, cancelable: true, dataTransfer: dt, clientX: b.x + b.width / 2, clientY: b.top + 15 * 48 + 6 };
+        c.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
+        col.dispatchEvent(new DragEvent('dragover', at)); col.dispatchEvent(new DragEvent('drop', at));
+        c.dispatchEvent(new DragEvent('dragend', { bubbles: true }));
+        return true; })()`);
+      const plans = () => { try { return JSON.parse(fs.readFileSync(path.join(tmp, 'planlar.json'), 'utf8')).items; } catch { return []; } };
+      assert(await waitFor2(() => plans().some((p) => p.title === 'Due in the planner' && p.key === todayK && p.time === '15:00' && p.endTime === '16:00'), 3000), `no plan at 15:00: ${JSON.stringify(plans().filter((p) => p.title.includes('planner')))}`);
+      assert(boardText().includes('Due in the planner'), 'the task left its board');
       await clickEval(chip, 'planner task');
       assert(await waitFor('document.getElementById("mode-tasks").getAttribute("aria-pressed") === "true"', 3000), 'the board did not open');
       assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Due in the planner"', 3000), 'the task dialog did not open');

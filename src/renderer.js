@@ -3011,7 +3011,8 @@ function decorateBudgetBlock(el, rel, src, b) {
   const t = budgetTables(src);
   const kind = t.income && t.income.start === b.start ? 'income' : t.expenses && t.expenses.start === b.start ? 'expenses' : null;
   if (!kind) return;
-  decorateBudgetTable(el, t[kind].columns, { money: moneyFormat(budgetSettings(code).currency), colourOf: categoryColours(src, code) });
+  const rows = t[kind].rows;
+  decorateBudgetTable(el, t[kind].columns, { money: moneyFormat(budgetSettings(code).currency), colourOf: categoryColours(src, code), total: rows.length ? rows.reduce((s, r) => s + r.amount, 0) : null });
   el.append(addButton(kind, (k) => addBudgetEntry(rel, k)));
 }
 
@@ -5574,7 +5575,9 @@ async function importBackup() {
 // --- menu + shortcuts ---
 
 if (plansApi.onMenu) {
-  plansApi.onMenu((action) => {
+  plansApi.onMenu((action, arg) => {
+    // The menu bar's task: its board, with the task open.
+    if (action === 'open-task' && arg && arg.rel) { plannerApi.openTask(arg); return; }
     if (action === 'export') exportBackup();
     else if (action === 'import') importBackup();
     else if (action === 'new-note') newNote();

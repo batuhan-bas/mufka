@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { todayPlans, menubarTitle, menubarRows, duration } from '../lib/menubar.mjs';
+import { todayPlans, menubarTitle, menubarRows, duration, todayEvents, mergeDay, menubarTasks } from '../lib/menubar.mjs';
 
 const at = (h, m) => new Date(2026, 10, 16, h, m); // Monday 16 Nov 2026
 const plan = (o) => ({ id: o.title, scope: 'day', key: '2026-11-16', ...o });
@@ -52,4 +52,25 @@ test('menu rows, with plans already over marked', () => {
 
 test('duration', () => {
   assert.deepEqual([5, 60, 80, 600].map(duration), ['5m', '1h', '1h 20m', '10h']);
+});
+
+test('calendar events join the plans; an event can be the next thing', () => {
+  const events = [
+    { title: 'Standup call', allDay: false, start: new Date(2026, 10, 16, 9, 0).toISOString(), end: new Date(2026, 10, 16, 9, 15).toISOString() },
+    { title: 'Holiday', allDay: true, startDate: '2026-11-16', endDate: '2026-11-17' },
+    { title: 'Tomorrow', allDay: false, start: new Date(2026, 10, 17, 9, 0).toISOString(), end: new Date(2026, 10, 17, 10, 0).toISOString() },
+  ];
+  const ev = todayEvents(events, at(8, 0));
+  assert.deepEqual(ev.map((e) => [e.title, e.time, e.kind]), [['Holiday', '', 'event'], ['Standup call', '09:00', 'event']]);
+  const day = mergeDay(todayPlans([plan({ title: 'Tennis', time: '18:00', endTime: '19:00' }), plan({ title: 'Read' })], at(8, 0)), ev);
+  assert.deepEqual(day.map((x) => x.title), ['Standup call', 'Tennis', 'Read', 'Holiday']);
+  assert.equal(menubarTitle(day, at(8, 0)), 'Standup call · in 1h');
+  assert.equal(menubarTitle(day, at(9, 5)), 'Standup call · 10m left');
+  assert.deepEqual(menubarRows(day, at(8, 0)).map((r) => r.label), ['09:00–09:15  📅 Standup call', '18:00–19:00  Tennis', 'Read', '📅 Holiday']);
+});
+
+test('menu tasks: late ones first, then due today, by priority', () => {
+  const t = (title, why, priority = null) => ({ title, why, priority, board: 'Sprint' });
+  assert.deepEqual(menubarTasks([t('Doing', 'doing'), t('Today', 'due'), t('Urgent today', 'due', 'P1'), t('Old', 'late')]).map((x) => x.label),
+    ['Old · late', 'P1 · Urgent today · Sprint', 'Today · Sprint']);
 });

@@ -157,7 +157,9 @@ export function addButton(kind, onAdd) {
 
 // The income or expenses table as `container` shows it: amounts as money,
 // categories as coloured chips. The note keeps the plain text.
-export function decorateBudgetTable(container, columns, { money, colourOf }) {
+// total: what the table adds up to (the same sum as the card), shown in a
+// Total row under it; null for none. The note's text is not changed.
+export function decorateBudgetTable(container, columns, { money, colourOf, total = null }) {
   for (const tr of container.querySelectorAll('tr')) {
     const cells = tr.children;
     const amount = cells[columns.amount];
@@ -171,6 +173,18 @@ export function decorateBudgetTable(container, columns, { money, colourOf }) {
       cat.replaceChildren(el('span', `bud-chip ${colourOf(name)}`, name));
     }
   }
+  const table = container.querySelector('table');
+  const width = table && table.querySelector('tr') ? table.querySelector('tr').children.length : 0;
+  if (total == null || !width || table.querySelector('tfoot')) return;
+  const foot = document.createElement('tfoot');
+  const tr = el('tr', 'bud-total');
+  for (let i = 0; i < width; i += 1) {
+    const td = el('td', i === columns.amount ? 'bud-total-amount' : '', i === columns.amount ? money(total) : '');
+    if (i === 0 && i !== columns.amount) { td.textContent = 'Total'; td.className = 'bud-total-label'; }
+    tr.append(td);
+  }
+  foot.append(tr);
+  table.append(foot);
 }
 
 const today = () => {

@@ -23,7 +23,7 @@ const HOUR = 48;        // px per hour in the grid
 const NARROW = 620;     // below this pane width: list layout (7 columns get too thin)
 
 let scrollTop = null;   // keep the grid's scroll across re-renders
-let drag = null;        // { p, fromKey } while dragging
+let drag = null;        // { p, fromKey } (a plan) or { task } (a board task) while dragging
 let editing = null;     // id of the plan being edited inline
 let resizing = false;   // true while a block's bottom edge is dragged
 
@@ -243,6 +243,15 @@ function boardTaskChip(t, api, late) {
   c.title = `${t.title} · ${late ? 'late' : 'due'} · ${t.board}${t.priority ? ` · ${t.priority}` : ''}`;
   c.setAttribute('aria-label', `Task ${late ? 'late' : 'due'}: ${t.title}, on the board ${t.board}`);
   c.addEventListener('click', (e) => { e.stopPropagation(); api.openTask(t); });
+  // Dragged to an hour it becomes a plan then (the task stays on its board).
+  c.draggable = true;
+  c.addEventListener('dragstart', (e) => {
+    drag = { task: t };
+    e.dataTransfer.effectAllowed = 'copy';
+    try { e.dataTransfer.setData('text/plain', t.title); } catch { /* ignore */ }
+    c.classList.add('dragging');
+  });
+  c.addEventListener('dragend', () => { drag = null; c.classList.remove('dragging'); document.querySelectorAll('.pl-drop').forEach((z) => z.classList.remove('pl-drop')); });
   return c;
 }
 
@@ -399,8 +408,19 @@ function dropZone(zone, api, target) {
     if (!drag) return;
     e.preventDefault(); e.stopPropagation();
     zone.classList.remove('pl-drop');
-    const { p } = drag; drag = null;
     const t = target(e);
+    // A board task: a new plan with its title, at the hour (an hour long) or
+    // as a to-do of the day or week.
+    if (drag.task) {
+      const { title } = drag.task; drag = null;
+      if (t.scope === 'week') { api.add({ scope: 'week', key: t.key, title }); return; }
+      const date = new Date(`${t.key}T12:00:00`);
+      if (t.untimed) { api.add({ scope: 'day', date, title }); return; }
+      const at = snap(t.at, 30);
+      api.add({ scope: 'day', date, title, time: toTime(at), endTime: toTime(at + 60) });
+      return;
+    }
+    const { p } = drag; drag = null;
     if (t.scope === 'week') { api.update(p, { scope: 'week', key: t.key, time: '', endTime: '' }, `${p.title} moved to this week`); return; }
     if (t.untimed) { api.update(p, { scope: 'day', key: t.key, time: '', endTime: '' }, `${p.title} moved to ${t.key}`); return; }
     const times = p.time ? moveTo(p, t.at) : { time: toTime(snap(t.at, 30)), endTime: toTime(snap(t.at, 30) + 60) };
