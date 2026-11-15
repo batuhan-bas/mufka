@@ -32,6 +32,8 @@ import { jobStrip, jobsBoard, openJobDialog } from './jobs-view.js';
 import { weekBoard, focusNewTask } from './weekly-view.js';
 import { projectStrip, projectsBoard, openProjectDialog } from './projects-view.js';
 import { projectOf, projectsSettings, mayBeProject } from '../lib/projects.mjs';
+import { bookOf, mayBeBook, bookShelves, bookStats, stageChanges } from '../lib/books.mjs';
+import { bookHead, bookcase, openBookDialog } from './books-view.js';
 import { weekDays, addWeekTask, editWeekTask, moveWeekTask, moveOpenToNextDay, nextWeekTodoText } from '../lib/weekly.mjs';
 import { jobOf, jobsSettings, mayBeJob, jobNoteName, setJobStatus, DEFAULT_STAGES } from '../lib/jobs.mjs';
 import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
@@ -2664,6 +2666,7 @@ function noteRenderOptions(rel) {
       jobs: (code, _meta, { src }) => jobsBlock(rel, code, src),
       week: (_code, _meta, { src }) => weekBlock(rel, src),
       projects: (code) => projectsBlock(rel, code),
+      books: (code) => booksBlock(rel, code),
     },
     embedDrawing,
   };
@@ -2838,6 +2841,65 @@ function projectsBlock(rel, code) {
         props: [['status', 'Planning'], ['due', p.due]],
       });
       if (made) await openNote(made);
+    }),
+  });
+}
+
+// --- books (lib/books.mjs, src/books-view.js) ---
+const vaultBooks = () => vaultItems(mayBeBook, bookOf);
+// The address of a book's cover image, '' when it has none (or it is missing).
+function bookCoverUrl(book) {
+  if (!book.image) return '';
+  const dir = folderOf(book.rel);
+  const att = resolveAttachment(book.image, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+  return att.url && att.isImage ? att.url : '';
+}
+// An image put in the attachments of the folder `dir`: picked, pasted or
+// dropped. { name, url } or null.
+const coverInto = (dir) => {
+  const took = async (res) => {
+    const f = Array.isArray(res) ? res.find((x) => x && x.isImage) : (res && res.files ? res.files.find((x) => x && x.isImage) : res);
+    if (!f || f.error || !f.isImage) { if (res && !res.canceled) showToast(f && f.error ? f.error : 'That is not an image'); return null; }
+    await refreshAttachList();
+    const att = resolveAttachment(f.name, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+    return { name: f.name, url: att.url || '' };
+  };
+  return {
+    pick: async () => took(await notesApi.attachPick(dir)),
+    paste: async () => took(await notesApi.attachPaste(dir)),
+    files: async (paths) => took(await notesApi.attachAddFiles(paths, dir)),
+  };
+};
+// "Add cover" on a book: an image file picked for it.
+async function addBookCover(book) {
+  const img = await coverInto(folderOf(book.rel)).pick();
+  if (!img) return;
+  await changeNoteText(book.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
+  render();
+}
+// A book moved to another shelf: its status, and the day it was started or
+// finished when not written yet.
+function moveBook(book, stage) {
+  return changeNoteText(book.rel, (text) => stageChanges(book, stage, dayKey(new Date()))
+    .reduce((t, [k, v]) => (k === 'status' ? setJobStatus(t, v, setProp) : setProp(t, k, v)), text));
+}
+function booksBlock(rel, code) {
+  const settings = projectsSettings(code); // the same settings: folder, template
+  const books = vaultBooks();
+  const folder = settings.folder || (rel ? folderOf(rel) : '');
+  return bookcase(bookShelves(books), bookStats(books), {
+    urlOf: bookCoverUrl,
+    onOpen: (to) => openNote(to),
+    onMove: (to, stage) => { const b = books.find((x) => x.rel === to); if (b) moveBook(b, stage); },
+    onCover: (b) => addBookCover(b),
+    onNew: () => openBookDialog({ cover: coverInto(folder), pathOf: (f) => notesApi.pathForFile(f) }, async (b) => {
+      const today = dayKey(new Date());
+      const made = await noteFromTemplate({
+        folder, name: b.title, template: settings.template, builtin: 'book',
+        props: [['author', b.author], ['status', b.stage], ['image', b.image ? `[[${b.image}]]` : ''],
+          ['started', b.stage !== 'To read' ? today : ''], ['finished', b.stage === 'Finished' ? today : '']],
+      });
+      if (made) { render(); showToast(`Added ${b.title}`); }
     }),
   });
 }
@@ -3447,9 +3509,26 @@ function forgetTreeStyles(rel) {
   state.treeOrder = forgetOrder(state.treeOrder, rel);
   saveTreeStyles();
 }
+// A note's own page icon (icon: in its properties), by path; worked out again
+// only when the vault's notes change.
+let pageIcons = { notes: null, byRel: new Map() };
+function pageIconOf(rel) {
+  if (pageIcons.notes !== state.vaultNotes) {
+    const byRel = new Map();
+    for (const n of state.vaultNotes) {
+      if (!/^---\r?\n/.test(n.content) || !/^icon:/m.test(n.content)) continue;
+      const ic = noteLook(n.content).icon;
+      if (ic) byRel.set(n.rel, ic);
+    }
+    pageIcons = { notes: state.vaultNotes, byRel };
+  }
+  return pageIcons.byRel.get(rel) || '';
+}
+// The icon picked for the row in the tree, else (a note) its page icon, else
+// `fallback`.
 function treeIcon(rel, fallback) {
   const wrap = elem('span', 'tree-icon');
-  const v = state.treeStyles[rel] && state.treeStyles[rel].icon;
+  const v = (state.treeStyles[rel] && state.treeStyles[rel].icon) || (fallback === 'tiFileText' ? pageIconOf(rel) : '');
   if (v && !isIconId(v)) wrap.append(elem('span', 'tree-emoji', v));
   else wrap.append(icon(v || fallback, { size: 15 }));
   return wrap;
@@ -4412,7 +4491,8 @@ function renderBlockEditor(container, scope) {
 function renderNotePane() {
   if (!state.openNote) { contentEl.append(hint('Choose a note, or create one with "New note".')); return; }
   const pane = elem('div', 'note-pane');
-  pane.append(pageHead());
+  // A book's head is its cover (below); its page icon is for the tree.
+  if (!(isTemplateNote(state.openNote) ? null : bookOf(state.openNote, state.noteContent))) pane.append(pageHead());
 
   // The folder path is in the toolbar title. The inline title is the file
   // name (click to rename); it steps aside when the note already starts with
@@ -4425,9 +4505,17 @@ function renderNotePane() {
   const firstLine = first ? blockText(state.noteContent, first).split('\n')[0] : '';
   if (state.noteView === 'blocks' && foldTR(firstLine.replace(/^#\s+/, '').trim()) === foldTR(noteTitleOf(state.openNote)) && /^#\s/.test(firstLine)) header.classList.add('dup');
   header.append(h);
-  pane.append(header);
-  const job = isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
-  const project = job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
+  // A book: its cover beside the title, with its shelf and facts.
+  const book = isTemplateNote(state.openNote) ? null : bookOf(state.openNote, state.noteContent);
+  if (book) {
+    pane.append(bookHead(book, bookCoverUrl(book), header, {
+      onStage: (stage) => moveBook(book, stage),
+      onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
+      onCover: () => addBookCover(book),
+    }));
+  } else pane.append(header);
+  const job = book || isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
+  const project = book || job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
   if (project) pane.append(projectStrip(project, { onStage: (stage) => changeNoteText(state.openNote, (text) => setJobStatus(text, stage, setProp)) }));
   if (job) {
     pane.append(jobStrip(job, {
