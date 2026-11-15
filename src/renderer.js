@@ -334,7 +334,8 @@ function restoreFocus() {
       const pos = state.blockCaretPos; state.blockCaretPos = null;
       try { el.setSelectionRange(pos, pos); } catch { /* ignore */ }
     } else if (el.id === 'tree-edit') {
-      el.select(); // the suggested name ("Untitled", "New folder") is replaced by typing
+      // The suggested name ("Untitled", "New folder") is replaced by typing.
+      if (!(state.treeEdit && state.treeEdit.typed)) el.select();
     } else if (typeof el.value === 'string') { const v = el.value; el.value = ''; el.value = v; }
   }
 }
@@ -502,6 +503,11 @@ function renderSidebar() {
   // out of the search field.
   const act = document.activeElement;
   const typing = act && act.id === 'ara-input' ? { start: act.selectionStart, end: act.selectionEnd } : null;
+  // Nor out of a name being typed for a new note or folder: the field is
+  // rebuilt with what was typed, and removing the old one must not commit it.
+  const naming = act && act.id === 'tree-edit' && state.treeEdit;
+  if (naming) state.treeEdit.typed = { value: act.value, start: act.selectionStart, end: act.selectionEnd };
+  state.rebuildingSidebar = true;
   sideEl.replaceChildren();
   renderSearchField();
   if (state.araQuery.trim()) renderSearchResults();
@@ -512,11 +518,17 @@ function renderSidebar() {
     renderDrawingsSection();
     renderNotesSection();
   }
+  state.rebuildingSidebar = false;
   sideEl.scrollTop = scroll;
   if (typing) {
     const f = document.getElementById('ara-input');
     f.focus();
     try { f.setSelectionRange(typing.start, typing.end); } catch { /* ignore */ }
+  }
+  const named = naming && document.getElementById('tree-edit');
+  if (named) {
+    named.focus();
+    try { named.setSelectionRange(state.treeEdit.typed.start, state.treeEdit.typed.end); } catch { /* ignore */ }
   }
 }
 
@@ -3526,13 +3538,15 @@ function treeEditRow(depth) {
   row.style.paddingLeft = `${8 + depth * 16}px`;
   const input = document.createElement('input');
   input.className = 'tree-edit-input'; input.id = 'tree-edit'; input.maxLength = 120;
-  input.value = treeEditDefault();
-  input.addEventListener('focus', () => input.select(), { once: true });
+  const typed = state.treeEdit && state.treeEdit.typed;
+  input.value = typed ? typed.value : treeEditDefault();
+  // The suggested name is selected so typing replaces it (not a name being typed).
+  input.addEventListener('focus', () => { if (!typed) input.select(); }, { once: true });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); commitTreeEdit(input.value); }
     if (e.key === 'Escape') { e.preventDefault(); state.treeEdit = null; render(); }
   });
-  input.addEventListener('blur', () => { if (state.treeEdit) commitTreeEdit(input.value); });
+  input.addEventListener('blur', () => { if (state.treeEdit && !state.rebuildingSidebar) commitTreeEdit(input.value); });
   row.append(input);
   return row;
 }
@@ -5563,3 +5577,5 @@ boot().catch((e) => { console.error('boot failed', e); render(); });
 
 // Dev-only test hook; never present in packaged builds.
 if (!plansApi.isPackaged) window.__mufkaCheckDue = checkDue;
+// The test redraws the page when an async refresh would, at a chosen moment.
+if (!plansApi.isPackaged) window.__mufkaRender = render;

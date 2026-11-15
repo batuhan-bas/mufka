@@ -1,4 +1,4 @@
-// Verifies the dev-only window.__mufkaCheckDue hook is ABSENT when the app
+// Verifies the dev-only window.__mufkaCheckDue and __mufkaRender hooks are ABSENT when the app
 // reports as packaged. Uses its own window + stub IPC so isPackaged can be true.
 
 const { app, BrowserWindow, ipcMain } = require('electron');
@@ -33,7 +33,7 @@ app.whenReady().then(() => {
   const wc = win.webContents;
   wc.on('console-message', ({ level, message }) => { if (level === 'warning' || level === 'error') { sawError = true; console.log('[ERR]', message); } });
   win.loadFile(path.join(__dirname, '..', 'out', 'renderer', 'index.html')).then(() => setTimeout(async () => {
-    const hook = await wc.executeJavaScript('typeof window.__mufkaCheckDue');
+    const hook = await wc.executeJavaScript('typeof window.__mufkaCheckDue === typeof window.__mufkaRender ? typeof window.__mufkaCheckDue : "mixed"');
     console.log('[HOOK]', hook);
     if (hook !== 'undefined') sawError = true;
     fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -1443,7 +1443,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('#mode-planner'); await clickSel('#mode-notes');
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "G2"', 3000), 'Notes did not return to the last note');
       // guides: a depth class per level
-      assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 2000), 'no coloured guide');
+      assert(await waitFor('!!document.querySelector(".tree-guide.depth-0")', 2000), `no coloured guide: ${await js(`JSON.stringify({ mode: document.body.className, folders: [...document.querySelectorAll('.side-notes .folder-row')].map(r => r.dataset.rel + (r.getAttribute('aria-expanded') === 'true' ? '+' : '')), rows: document.querySelectorAll('.side-notes .tree-row').length, guides: document.querySelectorAll('.tree-guide').length, sideHidden: getComputedStyle(document.getElementById('sidebar')).display })`)}`);
     });
 
     await step(55, 'Settings (⌘, or the gear): calendar and Wispr Flow connections shown, offline', async () => {
@@ -1725,7 +1725,12 @@ app.whenReady().then(() => setTimeout(async () => {
         await humanClickEval(`document.querySelector('.side-notes .side-btn[aria-label="New folder"]')`, 'New folder');
         assert(await waitFor('!!document.getElementById("tree-edit")', 2000), `round ${round}: no name field for the folder`);
         assert(await js('document.activeElement?.id') === 'tree-edit', `round ${round}: the folder name field lost focus to ${await js('document.activeElement?.id || document.activeElement?.className')}`);
-        await typeText(`Klasor ${round}`); await enter();
+        // A redraw while the name is half typed (an async refresh landing,
+        // e.g. the new note's backlinks) keeps the text and the focus.
+        await typeText('Klas');
+        await js('window.__mufkaRender(); true');
+        assert(await js('document.activeElement?.id') === 'tree-edit', `round ${round}: a redraw took the focus from the folder name to ${await js('document.activeElement?.id || document.activeElement?.className')}`);
+        await typeText(`or ${round}`); await enter();
         assert(await waitFor(`!!(${row(`Klasor ${round}`)})`, 3000), `round ${round}: folder not made; rows ${await js(`[...document.querySelectorAll('.tree-row')].map(r => r.dataset.rel || r.className).join('|')`)}; edit ${await js('document.getElementById("tree-edit")?.value')}; active ${await js('document.activeElement?.id || document.activeElement?.className')}`);
       }
     });
