@@ -5360,7 +5360,7 @@ function openSettings() {
   handyRow.dataset.conn = 'handy';
   const handyText = elem('div', 'conn-text');
   handyText.append(elem('span', 'conn-name', 'Handy'),
-    elem('span', 'conn-note', 'Dictation on your computer, free and offline: speak and the text goes where the caret is. In a note, the microphone button (or ⇧⌘D) starts and stops it.'));
+    elem('span', 'conn-note', 'Dictation on your computer, free and offline: speak and the text goes where the caret is. Use Handy\'s own shortcut (⌥Space by default) anywhere, or in a note the microphone button (⇧⌘D). File → New Note from Audio… turns a recording or an audio file into a note.'));
   const handySide = elem('div', 'conn-side');
   handyRow.append(handyText, handySide);
   section.append(handyRow);
