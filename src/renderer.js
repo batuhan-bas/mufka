@@ -4610,8 +4610,10 @@ function blockTextarea(scope, b, edit) {
   });
   // An empty note is shown being edited, but it only takes the focus when
   // nothing else has it (a menu, a name field): it never pulls it back.
+  // Nor does any editor take it from a new note's or folder's name being typed.
   const a = document.activeElement;
-  if (!edit.auto || !a || a === document.body || a.id === 'block-editor') state.focus = 'block-editor';
+  const naming = a && a.id === 'tree-edit' && state.treeEdit;
+  if (!naming && (!edit.auto || !a || a === document.body || a.id === 'block-editor')) state.focus = 'block-editor';
   state.blockCaretPos = caretOffset(text, edit.caret);
   return ta;
 }

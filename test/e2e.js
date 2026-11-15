@@ -1998,6 +1998,8 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('/Delete Wall sketch/.test(document.querySelector(".plan-dialog")?.textContent || "")', 2000), 'delete was not asked');
       await clickEval(`[...document.querySelectorAll('.plan-dialog button')].find(b => b.textContent === 'Delete')`, 'Delete');
       assert(await waitFor2(() => !fs.existsSync(path.join(tvault, 'Excalidraw', 'Wall sketch.excalidraw.md')), 3000), 'drawing not deleted');
+    });
+
     // 64g. Images in drawings are files of their own, as in Obsidian's
     //      Excalidraw plugin: one listed under "## Embedded Files" shows (in a
     //      note's ![[embed]] too); an image kept inside an older drawing moves
