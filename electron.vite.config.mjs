@@ -25,6 +25,17 @@ function excalidrawFonts() {
   };
 }
 
+// The dev server adds the CSS that modules import (Excalidraw's) as inline
+// <style> tags, which the page's policy (style-src 'self') blocks; the build
+// writes them to files. So only `npm run dev` allows inline styles.
+function devInlineStyles() {
+  return {
+    name: 'mufka-dev-inline-styles',
+    apply: 'serve',
+    transformIndexHtml: (html) => html.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'"),
+  };
+}
+
 export default defineConfig({
   main: {
     build: {
@@ -49,7 +60,7 @@ export default defineConfig({
   },
   renderer: {
     root,
-    plugins: [excalidrawFonts()],
+    plugins: [excalidrawFonts(), devInlineStyles()],
     build: {
       rollupOptions: {
         input: {
