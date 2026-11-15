@@ -44,6 +44,7 @@ import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder, pastedImageName } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
 import { meetingTodos, meetingOf } from '../lib/meetings.mjs';
+import { wavFromSamples, voiceNoteName, voiceNoteText, HANDY_RATE } from '../lib/audio.mjs';
 import { tripOf } from '../lib/trips.mjs';
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
@@ -343,6 +344,126 @@ function focusNoteEditor() {
   startNewBlock('note', blocks.length ? blocks[blocks.length - 1].start : -1, 0);
   document.getElementById('block-editor')?.focus();
 }
+// --- Voice: a new note from a recording or an audio file (Handy writes it) --
+// The audio is decoded and resampled here (Web Audio) to the 16 kHz mono WAV
+// Handy's --transcribe-file reads (lib/audio.mjs); main runs Handy and can
+// keep the recording with the note.
+async function wavFor(bytes) {
+  const ctx = new AudioContext();
+  let decoded;
+  try { decoded = await ctx.decodeAudioData(bytes.slice(0)); } finally { ctx.close(); }
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * HANDY_RATE)), HANDY_RATE);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const out = await off.startRendering();
+  return wavFromSamples(out.getChannelData(0));
+}
+function openVoiceNote() {
+  if (!voice.handy) { showToast('Handy is not installed: see Settings → Voice'); return; }
+  const layer = elem('div', 'palette-layer');
+  const box = elem('div', 'palette plan-dialog voice-dialog');
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'New note from audio');
+  box.append(elem('div', 'plan-dialog-title', 'New note from audio'),
+    elem('p', 'voice-lede', 'Handy turns it into text on your computer, with the model chosen in Handy; the note opens when it is done.'));
+  const choices = elem('div', 'voice-choices');
+  const card = (title, sub, ic) => {
+    const b = elem('button', 'btn voice-choice'); b.type = 'button';
+    if (ic) b.append(icon(ic, { size: 16 }));
+    b.append(elem('b', null, title), elem('span', null, sub));
+    return b;
+  };
+  const recordBtn = card('Record now', 'Speak; stop when you are done', 'mic');
+  const fileBtn = card('Choose a file…', 'm4a, mp3, wav, webm, ogg');
+  choices.append(recordBtn, fileBtn);
+  const status = elem('div', 'voice-status');
+  const keepLabel = elem('label', 'voice-keep');
+  const keep = document.createElement('input'); keep.type = 'checkbox'; keep.checked = true;
+  keepLabel.append(keep, document.createTextNode('Keep the recording with the note'));
+  const actions = elem('div', 'plan-dialog-actions');
+  const cancel = elem('button', 'btn quiet', 'Cancel'); cancel.type = 'button';
+  actions.append(cancel);
+  box.append(choices, status, keepLabel, actions);
+  const picker = document.createElement('input');
+  picker.type = 'file'; picker.accept = 'audio/*,.m4a,.mp3,.wav,.webm,.ogg,.oga,.flac,.aac'; picker.hidden = true;
+  box.append(picker);
+  let busy = false; let recorder = null; let stream = null; let tick = null; let closed = false;
+  const restore = document.activeElement;
+  const stopMic = () => { clearInterval(tick); if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; };
+  const close = () => {
+    closed = true;
+    if (recorder && recorder.state !== 'inactive') { recorder.onstop = null; recorder.stop(); }
+    stopMic();
+    if (busy) notesApi.cancelTranscribe();
+    layer.remove(); document.removeEventListener('keydown', onKey, true);
+    if (restore && restore.isConnected) restore.focus();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  document.addEventListener('keydown', onKey, true);
+  cancel.addEventListener('click', close);
+  const say = (text, cls = '') => { status.className = `voice-status ${cls}`; status.textContent = text; };
+  // The audio's bytes and name → the note (the recording kept when asked).
+  const finish = async (bytes, name, date) => {
+    busy = true;
+    recordBtn.disabled = true; fileBtn.disabled = true;
+    say(`${name} · reading it…`, 'busy');
+    let wav;
+    try { wav = await wavFor(bytes); } catch { busy = false; say('That file could not be read as audio', 'error'); recordBtn.disabled = false; fileBtn.disabled = false; return; }
+    say(`${name} · Handy is writing it down…`, 'busy');
+    const res = await notesApi.transcribe(wav);
+    busy = false;
+    if (closed) return;
+    if (!res || res.error) { say(res && res.error ? res.error : 'Handy could not write it down', 'error'); recordBtn.disabled = false; fileBtn.disabled = false; return; }
+    const folder = targetFolder();
+    const base = name.replace(/\.[^.]*$/, '');
+    let audio = '';
+    if (keep.checked) {
+      const saved = await notesApi.saveAudio(folder, name, bytes);
+      if (saved && !saved.error) { audio = saved.name; await refreshAttachList(); }
+    }
+    const made = await notesApi.create(folder, base);
+    if (!made || !made.rel) { say('Could not create the note', 'error'); return; }
+    await notesApi.write(made.rel, voiceNoteText({ date, audio, text: res.text }));
+    close();
+    await refreshTree();
+    await openNote(made.rel, 'oku', { keepTab: true });
+    showToast(res.text ? 'Voice note ready' : 'Handy heard no words in it');
+  };
+  fileBtn.addEventListener('click', () => picker.click());
+  picker.addEventListener('change', async () => {
+    const f = picker.files && picker.files[0];
+    if (!f) return;
+    finish(await f.arrayBuffer(), f.name, new Date(f.lastModified || Date.now()));
+  });
+  recordBtn.addEventListener('click', async () => {
+    if (recorder) { recorder.stop(); return; }
+    if (!(await notesApi.micAccess())) { say('Mufka may not use the microphone: allow it in System Settings → Privacy & Security → Microphone', 'error'); return; }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { say('The microphone could not be opened', 'error'); return; }
+    const chunks = [];
+    const started = new Date();
+    recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      stopMic();
+      recordBtn.querySelector('b').textContent = 'Record now';
+      recorder = null;
+      const bytes = await new Blob(chunks, { type: 'audio/webm' }).arrayBuffer();
+      finish(bytes, `${voiceNoteName(started)}.webm`, started);
+    };
+    recorder.start(1000);
+    fileBtn.disabled = true;
+    recordBtn.classList.add('recording');
+    recordBtn.querySelector('b').textContent = 'Stop';
+    const shown = () => { const s = Math.floor((Date.now() - started) / 1000); say(`● Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, 'rec'); };
+    shown(); tick = setInterval(shown, 1000);
+  });
+  layer.append(box);
+  layer.addEventListener('mousedown', (e) => { if (e.target === layer && !busy && !recorder) close(); });
+  document.body.append(layer);
+  recordBtn.focus();
+}
+
 async function toggleDictation() {
   if (!voice.handy) { showToast('Handy is not installed: see Settings → Voice'); return; }
   if (!voice.dictating) {
@@ -1925,7 +2046,8 @@ function commandList() {
     { label: 'Create new note', hint: '⌘N', run: newNote },
     { label: 'Create new folder', run: newFolder },
     { label: 'Open the week planner', hint: '⌘1', run: () => openPlanner(new Date()) },
-    ...(voice.handy ? [{ label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() }] : []),
+    ...(voice.handy ? [{ label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() },
+      { label: 'New note from audio…', run: () => openVoiceNote() }] : []),
     { label: 'New plan', hint: '⇧⌘P', run: () => plannerApi.newPlan(new Date()) },
     { label: 'Open tasks', hint: '⌘3', run: () => openTasks() },
     { label: 'New task board', run: () => newTaskBoard() },
@@ -5864,6 +5986,7 @@ if (plansApi.onMenu) {
     if (action === 'export') exportBackup();
     else if (action === 'import') importBackup();
     else if (action === 'new-note') newNote();
+    else if (action === 'voice-note') openVoiceNote();
     else if (action === 'tab:takvim') setTab('takvim');
     else if (action === 'tab:notlar') setTab('notlar');
     else if (action === 'tasks') openTasks();

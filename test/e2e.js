@@ -2067,6 +2067,33 @@ app.whenReady().then(() => setTimeout(async () => {
       await press('Escape');
     });
 
+    // 64i. A new note from an audio file: decoded to the 16 kHz mono WAV that
+    //      Handy reads (a stand-in answers here as Handy's --json does), the
+    //      text becomes a note, the recording is kept and plays in it.
+    await step('64i', 'new note from an audio file: text from Handy, the recording kept and playable', async () => {
+      if (process.platform === 'win32') return; // the stand-in is a shell script
+      const handy = path.join(tmp, 'Handy');
+      const log = path.join(tmp, 'handy2.log');
+      fs.writeFileSync(handy, `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$1" = "--transcribe-file" ]; then head -c 4 "$2" >> "${log}"; echo '{"audio_secs":0.5,"text":"Call the bank on Monday."}'; fi\n`, { mode: 0o755 });
+      process.env.MUFKA_HANDY_PATH = handy;
+      BrowserWindow.getAllWindows()[0].emit('focus');
+      // Half a second of a 440 Hz tone, as a 44.1 kHz WAV (any audio the page can decode).
+      const rate = 44100; const n = rate / 2; const wav = Buffer.alloc(44 + n * 2);
+      wav.write('RIFF', 0); wav.writeUInt32LE(36 + n * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+      wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(n * 2, 40);
+      for (let i = 0; i < n; i++) wav.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 8000), 44 + i * 2);
+      await sleep(400);
+      await press('P', ['meta']); await typeText('New note from audio'); await enter();
+      assert(await waitFor('!!document.querySelector(".voice-dialog input[type=file]")', 3000), 'no New note from audio dialog');
+      await js(`(() => { const bin = Uint8Array.from(atob(${JSON.stringify(wav.toString('base64'))}), c => c.charCodeAt(0)); const dt = new DataTransfer(); dt.items.add(new File([bin], 'Bank memo.wav', { type: 'audio/wav' })); const p = document.querySelector('.voice-dialog input[type=file]'); p.files = dt.files; p.dispatchEvent(new Event('change')); return true; })()`);
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bank memo"', 8000), `no voice note: ${await js('document.querySelector(".voice-status")?.textContent')}`);
+      const note = () => { const f = fs.readdirSync(tvault, { recursive: true }).find((p) => String(p).endsWith('Bank memo.md')); return f ? fs.readFileSync(path.join(tvault, f), 'utf8') : ''; };
+      assert(/type: voice-note[\s\S]*!\[\[Bank memo\.wav\]\]\n\nCall the bank on Monday\./.test(note()), `note text:\n${note()}`);
+      assert(/--transcribe-file .*\.wav --json\nRIFF/.test(fs.readFileSync(log, 'utf8')), `asked Handy: ${fs.readFileSync(log, 'utf8')}`);
+      assert(await waitFor('!!document.querySelector(".note-body audio.att-audio")', 3000), 'the recording does not play in the note');
+      delete process.env.MUFKA_HANDY_PATH;
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.

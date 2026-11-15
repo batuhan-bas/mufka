@@ -97,6 +97,10 @@ Planner.
   installed, the microphone in a note's top bar (or **⇧⌘D**) starts and stops
   it, and what you say is typed where the caret is. Settings → Voice shows
   whether Handy is there.
+- **New note from audio** (File menu or ⌘P, with Handy): record, or pick an
+  audio file (m4a, mp3, wav, webm, ogg…); Handy writes it down on your
+  computer and it opens as a note, the recording kept with it (it plays in the
+  note, as `![[memo.m4a]]` does anywhere).
 - **Right-click** a note, folder, board or drawing in the sidebar (or use its
   ⋯): duplicate, move to a folder, copy its path (in the vault or on the
   computer) or a `[[link]]`, reveal it in Finder, rename, delete. Folders also
