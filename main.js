@@ -112,7 +112,7 @@ function writeStore(data) {
 function handyPath() {
   const home = app.getPath('home');
   const places = process.env.MUFKA_HANDY_PATH ? [process.env.MUFKA_HANDY_PATH]
-    : process.platform === 'darwin' ? ['/Applications/Handy.app/Contents/MacOS/Handy', path.join(home, 'Applications/Handy.app/Contents/MacOS/Handy')]
+    : process.platform === 'darwin' ? ['/Applications/Handy.app/Contents/MacOS/handy', path.join(home, 'Applications/Handy.app/Contents/MacOS/handy')]
       : process.platform === 'win32' ? [path.join(process.env.LOCALAPPDATA || '', 'Handy', 'handy.exe'), path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Handy', 'handy.exe'), path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Handy', 'handy.exe')]
         : ['/usr/bin/handy', '/usr/local/bin/handy'];
   return places.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } }) || null;
@@ -120,7 +120,7 @@ function handyPath() {
 function handyRunning(bin) {
   try {
     if (process.platform === 'win32') return /handy\.exe/i.test(spawnSync('tasklist', ['/FI', `IMAGENAME eq ${path.basename(bin)}`, '/NH'], { encoding: 'utf8', timeout: 3000 }).stdout || '');
-    return spawnSync('pgrep', ['-f', bin], { timeout: 3000 }).status === 0;
+    return spawnSync('pgrep', ['-if', bin], { timeout: 3000 }).status === 0;
   } catch { return false; }
 }
 const runDetached = (bin, args) => spawn(bin, args, { detached: true, stdio: 'ignore' }).unref();
