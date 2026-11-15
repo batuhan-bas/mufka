@@ -56,7 +56,7 @@ Mufka has four modes, switched at the top left (**Notes | Planner | Tasks | Draw
   change the end), with the ⋯ menu, or with the keyboard (⌥←/→ a day, ⌥↑/↓ 15
   minutes). Every change can be undone with ⌘Z.
 - **Tasks with a due date** from your boards sit on top of their day; click one
-  to open it on its board.
+  to open it on its board, or drag it to an hour to plan it then.
 - **In the menu bar** (macOS) the plan going on now or the next one, with the
   time left ("Tennis · in 25m"); its menu lists today's plans. On Windows the
   tray icon has the same menu. Turn it off in Settings → Appearance.
