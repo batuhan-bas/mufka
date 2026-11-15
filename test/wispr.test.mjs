@@ -49,7 +49,8 @@ test('tools are found by name pattern', () => {
   assert.equal(findTool(undefined, /x/), null);
 });
 
-import { splitTruncated, transcriptLines, meetingTitle, meetingNote, syncAction, meetingTodos } from '../lib/wispr.mjs';
+import { splitTruncated, transcriptLines, meetingTitle, meetingNote, syncAction } from '../lib/wispr.mjs';
+import { meetingTodos } from '../lib/meetings.mjs';
 
 test('cut-off fields give the offset to continue from', () => {
   assert.deepEqual(splitTruncated('Ali: hi\nVeli: hello\n\n(...truncated, 1052 chars remaining; continue with view_transcript.start_char=200...)'),

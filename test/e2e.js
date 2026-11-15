@@ -1913,6 +1913,36 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => !/- \[x\] Old finished one\n[\s\S]*%% kanban:settings/.test(boardText().split('## Archive')[1] || ''), 3000), `still in the archive:\n${boardText()}`);
     });
 
+    // 64e. Template pages: a book stands on the Reading shelf with its cover
+    //      image and moves to Reading from its note (the start day written);
+    //      a trip counts down; a meeting shows who and its action items; the
+    //      tree shows a note's page icon.
+    await step('64e', 'books on the shelf with covers, a trip, a meeting, page icons', async () => {
+      const dir = path.join(tvault, 'Library');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'dune.png'), makePng(20, 30));
+      fs.writeFileSync(path.join(dir, 'Dune.md'), '---\ntype: book\nicon: 📚\nauthor: Frank Herbert\nstatus: To read\nimage: "[[dune.png]]"\n---\n## In one sentence\n');
+      fs.writeFileSync(path.join(dir, 'Shelf.md'), '---\ntype: book-shelf\n---\n```books\nfolder: Library\n```\n');
+      const d = new Date(); d.setDate(d.getDate() + 10);
+      const from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      fs.writeFileSync(path.join(dir, 'Rome.md'), `---\ntype: trip\ndestination: Rome\nfrom: ${from}\n---\n## Packing list\n- [x] Passport\n- [ ] Adapter\n`);
+      fs.writeFileSync(path.join(dir, 'Standup.md'), '---\ntype: meeting\ndate: 2026-11-16\ntime: 09:30\nattendees: [Ayse, Can]\n---\n## Action items\n- [x] One\n- [ ] Two\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Shelf'); await enter();
+      const dune = `[...document.querySelectorAll('.book-shelf[data-stage="To read"] .book-item')].find(b => b.textContent.includes('Dune'))`;
+      assert(await waitFor(`!!(${dune}) && !!${dune}.querySelector('img[src]')`, 4000), `Dune not on To read with its cover: ${await js('[...document.querySelectorAll(".book-shelf")].map(s => s.dataset.stage + ":" + s.textContent).join(" | ")')}`);
+      await clickEval(dune, 'Dune on the shelf');
+      assert(await waitFor('!!document.querySelector(".book-head img") && document.querySelector(".note-title")?.textContent === "Dune"', 3000), 'the book note has no cover head');
+      await clickEval(`[...document.querySelectorAll('.book-strip .job-step')].find(s => s.textContent === 'Reading')`, 'Reading');
+      assert(await waitFor2(() => { const t = fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8'); return /status: Reading/.test(t) && new RegExp(`started: ${todayK}`).test(t); }, 3000), `not moved to Reading:\n${fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8')}`);
+      assert(await js(`[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === 'Dune')?.querySelector('.tree-emoji')?.textContent === '📚'`), 'the tree does not show the page icon');
+      await press('O', ['meta']); await typeText('Rome'); await enter();
+      assert(await waitFor('/10 days to go/.test(document.querySelector(".trip-strip")?.textContent || "") && /1\\/2/.test(document.querySelector(".trip-strip")?.textContent || "")', 3000), `trip strip: ${await js('document.querySelector(".trip-strip")?.textContent')}`);
+      await press('O', ['meta']); await typeText('Standup'); await enter();
+      assert(await waitFor('/Ayse, Can/.test(document.querySelector(".meeting-strip")?.textContent || "") && /1\\/2/.test(document.querySelector(".meeting-strip")?.textContent || "")', 3000), `meeting strip: ${await js('document.querySelector(".meeting-strip")?.textContent')}`);
+      assert(await js('document.querySelectorAll(".meeting-task-btn").length === 1'), 'the open action item has no Add to board');
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.

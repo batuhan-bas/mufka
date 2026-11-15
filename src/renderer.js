@@ -34,6 +34,8 @@ import { projectStrip, projectsBoard, openProjectDialog } from './projects-view.
 import { projectOf, projectsSettings, mayBeProject } from '../lib/projects.mjs';
 import { bookOf, mayBeBook, bookShelves, bookStats, stageChanges } from '../lib/books.mjs';
 import { bookHead, bookcase, openBookDialog } from './books-view.js';
+import { tripStrip } from './trips-view.js';
+import { meetingStrip } from './meetings-view.js';
 import { weekDays, addWeekTask, editWeekTask, moveWeekTask, moveOpenToNextDay, nextWeekTodoText } from '../lib/weekly.mjs';
 import { jobOf, jobsSettings, mayBeJob, jobNoteName, setJobStatus, DEFAULT_STAGES } from '../lib/jobs.mjs';
 import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
@@ -41,7 +43,8 @@ import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMont
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
-import { meetingTodos } from '../lib/wispr.mjs';
+import { meetingTodos, meetingOf } from '../lib/meetings.mjs';
+import { tripOf } from '../lib/trips.mjs';
 import { icon } from './icons.js';
 import { openPalette, closePalette, isPaletteOpen, paletteKeepsEditor } from './palette.js';
 import { attachHoverPreview, hidePreview } from './hover-preview.js';
@@ -4517,6 +4520,14 @@ function renderNotePane() {
   const job = book || isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
   const project = book || job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
   if (project) pane.append(projectStrip(project, { onStage: (stage) => changeNoteText(state.openNote, (text) => setJobStatus(text, stage, setProp)) }));
+  // A trip: its countdown, where and when, packing; a meeting: when, who,
+  // action items.
+  const plain = !(book || job || project) && !isTemplateNote(state.openNote);
+  const trip = plain ? tripOf(state.openNote, state.noteContent) : null;
+  if (trip) pane.append(tripStrip(trip));
+  const meeting = plain && !trip ? meetingOf(state.openNote, state.noteContent) : null;
+  const mStrip = meeting && meetingStrip(meeting);
+  if (mStrip) pane.append(mStrip);
   if (job) {
     pane.append(jobStrip(job, {
       stages: jobStages(),

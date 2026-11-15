@@ -28,7 +28,7 @@ test('dates come out as expected', () => {
   assert.match(fill('daily'), /date: 2026-10-17/);
   assert.match(fill('todo'), /week: 2026-W42/);
   assert.match(fill('budget'), /month: 2026-10/);
-  assert.match(fill('meeting'), /- \*\*When:\*\* Saturday, 17 October 2026 · 09:05/);
+  assert.match(fill('meeting'), /date: 2026-10-17\ntime: 09:05/);
   assert.equal(applyTemplate(BUILTIN_TEMPLATES.find((x) => x.id === 'meeting').title, { date }), '2026-10-17 Meeting');
 });
 
