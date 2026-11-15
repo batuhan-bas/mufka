@@ -63,6 +63,9 @@ contextBridge.exposeInMainWorld('notes', {
   attachPaste: (noteDir) => ipcRenderer.invoke('attach:paste', noteDir),
   attachPick: (noteDir) => ipcRenderer.invoke('attach:pick', noteDir),
   attachAddFiles: (paths, noteDir) => ipcRenderer.invoke('attach:addFiles', paths, noteDir),
+  // A drawing's images (lib/drawing.mjs "Embedded Files").
+  attachReadImage: (rel) => ipcRenderer.invoke('attach:readImage', rel),
+  attachWriteImage: (noteDir, name, dataURL) => ipcRenderer.invoke('attach:writeImage', noteDir, name, dataURL),
   // File.path was removed in Electron 32; this is its replacement for files
   // dropped from Finder.
   pathForFile: (file) => webUtils.getPathForFile(file),

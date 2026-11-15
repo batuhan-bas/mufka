@@ -41,7 +41,7 @@ import { jobOf, jobsSettings, mayBeJob, jobNoteName, setJobStatus, DEFAULT_STAGE
 import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, nextWeekText } from '../lib/habits.mjs';
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
-import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder } from '../lib/drawing.mjs';
+import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder, pastedImageName } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
 import { meetingTodos, meetingOf } from '../lib/meetings.mjs';
 import { tripOf } from '../lib/trips.mjs';
@@ -1381,9 +1381,32 @@ function drawingMenu() {
     } },
   ];
 }
+// A drawing's images as files of their own (lib/drawing.mjs "Embedded Files"):
+// read from the vault for the editor, and written to the drawing's
+// attachments when one is added.
+const drawingImages = {
+  async load(rel, embedded) {
+    const dir = folderOf(rel);
+    const out = {};
+    await Promise.all(Object.entries(embedded).map(async ([id, name]) => {
+      const att = resolveAttachment(name, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+      if (!att.rel || !att.isImage) return;
+      const img = await notesApi.attachReadImage(att.rel);
+      if (img && !img.error) out[id] = { id, mimeType: img.mimeType, dataURL: img.dataURL, created: Date.now() };
+    }));
+    return out;
+  },
+  async store(rel, file, n) {
+    const res = await notesApi.attachWriteImage(folderOf(rel), pastedImageName(new Date(), n, file.mimeType), file.dataURL);
+    if (!res || res.error) { showToast(res && res.error ? res.error : 'Could not save the image'); return null; }
+    await refreshAttachList();
+    return res.name;
+  },
+};
 function drawApi() {
   const d = state.drawing;
   return {
+    images: drawingImages,
     rel: d ? d.rel : null,
     text: d ? d.content : '',
     folder: drawingFolder(null),
@@ -2603,7 +2626,7 @@ function embedDrawing(target) {
   if (!rel) return null;
   const known = (state.vaultNotes.find((n) => n.rel === rel) || {}).content ?? state.noteCache.get(rel);
   if (known == null) return null;
-  return drawingPreview(known, () => openDraw(rel));
+  return drawingPreview(known, () => openDraw(rel), drawingImages, rel);
 }
 
 function wikiExists(target) {

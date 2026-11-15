@@ -2,7 +2,7 @@
 // plugin's format (lib/drawing.mjs). The editor (src/draw-app.js) loads on
 // first use and stays mounted while the same drawing is shown; every change is
 // written back to the note after a short pause.
-import { parseDrawing, serializeDrawing } from '../lib/drawing.mjs';
+import { parseDrawing, serializeDrawing, embeddedFiles } from '../lib/drawing.mjs';
 import { icon } from './icons.js';
 
 const SAVE_DELAY_MS = 600;
@@ -36,16 +36,47 @@ const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-
 const prefersDark = () => !darkQuery || darkQuery.matches;
 if (darkQuery) darkQuery.addEventListener('change', () => { if (live && live.handle && live.handle.setTheme) live.handle.setTheme(prefersDark() ? 'dark' : 'light'); });
 
-// live: the mounted drawing — { rel, host, handle, text, timer, pending }.
+// live: the mounted drawing — { rel, host, handle, text, timer, pending,
+// embedded (its images that are files: { fileId: name }), saving (a promise),
+// save, images }.
 let live = null;
 
+// The scene of a note with its images read from their files (images.load).
+async function sceneWithImages(text, rel, images) {
+  const scene = parseDrawing(text);
+  const embedded = embeddedFiles(text);
+  if (images && Object.keys(embedded).length) {
+    const loaded = await images.load(rel, embedded).catch(() => ({}));
+    scene.files = { ...scene.files, ...loaded };
+  }
+  return scene;
+}
+
+// Save what is pending: an image added in the editor is first written to the
+// vault as a file of its own (images.store), then the note lists it.
 function flush() {
   if (!live || !live.pending) return;
   clearTimeout(live.timer);
   const scene = live.pending;
   live.pending = null;
-  live.text = serializeDrawing(scene, live.text);
-  live.save(live.rel, live.text);
+  const mine = live;
+  mine.saving = mine.saving.then(async () => {
+    const embedded = { ...mine.embedded };
+    if (mine.images) {
+      const used = new Set((scene.elements || []).filter((e) => e && !e.isDeleted && e.type === 'image' && e.fileId).map((e) => e.fileId));
+      let n = 0;
+      for (const id of used) {
+        const f = scene.files && scene.files[id];
+        if (embedded[id] || !f || !f.dataURL) continue;
+        const name = await mine.images.store(mine.rel, f, n).catch(() => null);
+        n += 1;
+        if (name) embedded[id] = name;
+      }
+    }
+    mine.embedded = embedded;
+    mine.text = serializeDrawing(scene, mine.text, embedded);
+    await mine.save(mine.rel, mine.text);
+  }).catch(() => {});
 }
 
 // Leave the drawing: save what is pending and take the editor down.
@@ -59,8 +90,10 @@ export function closeDrawing() {
 // The note changed on disk: show it, unless it is what we last wrote.
 export function drawingChanged(rel, text) {
   if (!live || live.rel !== rel || text === live.text || live.pending) return;
-  live.text = text;
-  if (live.handle) live.handle.replace(parseDrawing(text));
+  const mine = live;
+  mine.text = text;
+  mine.embedded = embeddedFiles(text);
+  sceneWithImages(text, rel, mine.images).then((scene) => { if (live === mine && mine.handle && mine.text === text) mine.handle.replace(scene); });
 }
 
 function emptyState(container, api) {
@@ -81,19 +114,19 @@ function emptyState(container, api) {
 }
 
 // api: { rel, text, folder, save(rel, text), newDrawing(), menu: [{ label, run }],
-// openLink(url) }
+// openLink(url), images: { load(rel, embedded) → files, store(rel, file, n) → name } }
 export function renderDraw(container, api) {
   if (!api.rel) { closeDrawing(); emptyState(container, api); return; }
   if (live && live.rel !== api.rel) closeDrawing();
   if (!live) {
     const host = document.createElement('div');
     host.className = 'draw-host';
-    live = { rel: api.rel, host, handle: null, text: api.text, timer: null, pending: null, save: api.save };
+    live = { rel: api.rel, host, handle: null, text: api.text, timer: null, pending: null, save: api.save, images: api.images, embedded: embeddedFiles(api.text), saving: Promise.resolve() };
     const mine = live;
-    loadApp().then((mod) => {
+    Promise.all([loadApp(), sceneWithImages(api.text, api.rel, api.images)]).then(([mod, scene]) => {
       if (live !== mine) return;
       mine.handle = mod.mountDrawing(host, {
-        scene: parseDrawing(api.text),
+        scene,
         theme: prefersDark() ? 'dark' : 'light',
         menu: api.menu,
         onLink: api.openLink,
@@ -111,16 +144,17 @@ export function renderDraw(container, api) {
   container.append(live.host);
 }
 
-// A drawing as an image for a note (![[Sketch.excalidraw]]). `onOpen` opens it in Draw.
-export function drawingPreview(text, onOpen) {
+// A drawing as an image for a note (![[Sketch.excalidraw]]). `onOpen` opens it in
+// Draw; `images` (with the drawing's `rel`) reads its images from their files.
+export function drawingPreview(text, onOpen, images = null, rel = '') {
   const box = document.createElement('div');
   box.className = 'draw-embed';
   box.title = 'Open in Draw';
   box.append(Object.assign(document.createElement('p'), { className: 'dv-empty', textContent: 'Drawing…' }));
   box.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onOpen(); });
   box.addEventListener('mousedown', (e) => e.stopPropagation());
-  loadApp()
-    .then((mod) => mod.drawingSvg(parseDrawing(text), prefersDark()))
+  Promise.all([loadApp(), sceneWithImages(text, rel, images)])
+    .then(([mod, scene]) => mod.drawingSvg(scene, prefersDark()))
     .then((svg) => {
       const img = document.createElement('img');
       img.className = 'draw-embed-img';

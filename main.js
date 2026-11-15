@@ -19,7 +19,7 @@ import * as bm from './lib/bookmarks.mjs';
 import * as ts from './lib/treestyle.mjs';
 import { resolveVaultRoot, vaultChoiceError, defaultNotesPlace, moveNotesFolder } from './lib/vault.mjs';
 import { isExternalChange } from './lib/watch.mjs';
-import { createVaultIO, fontResponse } from './lib/vault-io.mjs';
+import { createVaultIO, fontResponse, ATTACH_MIME } from './lib/vault-io.mjs';
 import { createSenderCheck } from './lib/ipc-guard.mjs';
 import { createHistory } from './lib/history.mjs';
 import { createVaultCache } from './lib/vault-cache.mjs';
@@ -430,6 +430,31 @@ function copyIntoAttachments(srcAbs, suggestedName, noteDir) {
   const name = uniqueAttachName(suggestedName || path.basename(srcAbs), dirAbs);
   fs.copyFileSync(srcAbs, path.join(dirAbs, name));
   return { rel: dirRel ? `${dirRel}/${name}` : name, name, isImage: at.isImageName(name) };
+}
+
+// Images of drawings (lib/drawing.mjs "Embedded Files"): an image of the vault
+// read as a data: URL for the editor, and an image the editor holds written to
+// the attachments of `noteDir`. Images only, the vault's paths checked.
+const DRAW_IMAGE = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/svg+xml': '.svg' };
+function attachReadImage(rel) {
+  const abs = attachAbs(rel);
+  const mime = ATTACH_MIME[path.extname(abs).toLowerCase()];
+  if (!mime || !mime.startsWith('image/')) throw new Error('Not an image');
+  if (fs.statSync(abs).size > at.MAX_ATTACH_BYTES) throw new Error('File too large (50 MB max)');
+  return { mimeType: mime, dataURL: `data:${mime};base64,${fs.readFileSync(abs).toString('base64')}` };
+}
+function attachWriteImage(noteDir, name, dataURL) {
+  const m = /^data:(image\/(?:png|jpeg|gif|webp|svg\+xml));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataURL || ''));
+  if (!m) throw new Error('Not an image');
+  const bytes = Buffer.from(m[2], 'base64');
+  if (bytes.length > at.MAX_ATTACH_BYTES) throw new Error('File too large (50 MB max)');
+  const ext = DRAW_IMAGE[m[1]];
+  const base = String(name || 'Pasted Image').replace(/\.[^.]*$/, '');
+  const dirRel = attachDirRel(noteDir);
+  const dirAbs = attachDirAbs(noteDir);
+  const file = uniqueAttachName(`${base}${ext}`, dirAbs);
+  writeFileAtomic(checkedVaultPath(path.join(dirAbs, file)), bytes);
+  return { rel: dirRel ? `${dirRel}/${file}` : file, name: file, isImage: true };
 }
 
 function attachAddFiles(paths, noteDir) {
@@ -1792,6 +1817,8 @@ ipcMain.handle('attach:list', wrap(() => vaultFiles()));
 ipcMain.handle('attach:paste', wrap((noteDir) => attachPaste(noteDir)));
 ipcMain.handle('attach:pick', wrap((noteDir) => attachPick(noteDir)));
 ipcMain.handle('attach:addFiles', wrap((paths, noteDir) => attachAddFiles(paths, noteDir)));
+ipcMain.handle('attach:readImage', wrap((rel) => attachReadImage(rel)));
+ipcMain.handle('attach:writeImage', wrap((noteDir, name, dataURL) => attachWriteImage(noteDir, name, dataURL)));
 ipcMain.handle('notes:layout', wrap(() => layout()));
 ipcMain.handle('bookmarks:list', wrap(() => bm.bookmarkedPaths(bookmarksRead())));
 ipcMain.handle('treestyle:read', wrap(() => treeStyleRead()));

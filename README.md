@@ -189,7 +189,8 @@ Planner.
   text, images and its library, in the app's light or dark theme.
 - **Each drawing is a note** in the `Excalidraw` folder, in the format of
   Obsidian's **Excalidraw** plugin, so it opens there too. Changes save as you
-  draw.
+  draw. Images in a drawing are files of their own in the attachments folder
+  (listed under "Embedded Files", as the plugin keeps them).
 - **In notes:** `![[Sketch.excalidraw]]` shows the drawing; click it to open
   it in Draw.
 - Nothing is fetched from the internet: the fonts come with the app.
