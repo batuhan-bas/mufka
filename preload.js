@@ -73,6 +73,9 @@ contextBridge.exposeInMainWorld('notes', {
   // Appearance: 'system' | 'light' | 'dark'.
   theme: () => ipcRenderer.invoke('theme:get'),
   setTheme: (choice) => ipcRenderer.invoke('theme:set', choice),
+  // Today's plan in the macOS menu bar / Windows tray: on or off.
+  menubar: () => ipcRenderer.invoke('menubar:get'),
+  setMenubar: (on) => ipcRenderer.invoke('menubar:set', on),
   // AI clients (MCP): { enabled, allowWrite, allowTicks, json, command }; set takes any of the three switches.
   mcp: () => ipcRenderer.invoke('mcp:get'),
   setMcp: (patch) => ipcRenderer.invoke('mcp:set', patch),

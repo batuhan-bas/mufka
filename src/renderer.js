@@ -4623,7 +4623,17 @@ function appearanceSection() {
   }
   notesApi.theme().then((cur) => { seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === (typeof cur === 'string' ? cur : 'system')))); });
   row.append(tx, seg);
-  sec.append(row);
+  // Today's plan next to the clock (main.js draws it, lib/menubar.mjs).
+  const bar = elem('div', 'conn-row menubar-row');
+  const l = elem('label', 'mcp-toggle');
+  const on = document.createElement('input'); on.type = 'checkbox'; on.dataset.menubar = 'on';
+  l.append(on, elem('span', null, plansApi.isMac
+    ? 'Show today\'s plan in the menu bar: the next one and the time until it'
+    : 'Show today\'s plan in the system tray'));
+  on.addEventListener('change', async () => { const res = await notesApi.setMenubar(on.checked); if (typeof res === 'boolean') on.checked = res; });
+  notesApi.menubar().then((cur) => { on.checked = cur === true; });
+  bar.append(l);
+  sec.append(row, bar);
   return sec;
 }
 // AI clients (MCP): whether Claude Desktop, Claude Code, Cursor… may use the

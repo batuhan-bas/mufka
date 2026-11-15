@@ -2294,7 +2294,7 @@ app.whenReady().then(() => setTimeout(async () => {
     // 81. Settings → AI clients (MCP): off by default; turning it on and
     //     allowing writes is saved to settings.json; the copied config starts
     //     this app's MCP server with ELECTRON_RUN_AS_NODE.
-    await step(81, 'settings: AI clients (MCP) switches and copied config; updates switch', async () => {
+    await step(81, 'settings: AI clients (MCP) switches and copied config; updates and menu bar switches', async () => {
       await press(',', ['meta']);
       assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row")', 3000), 'no AI clients section');
       const box = (k) => `document.querySelector('.mcp-row input[data-mcp="${k}"]')`;
@@ -2322,6 +2322,13 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => JSON.parse(fs.readFileSync(settingsFile, 'utf8')).autoUpdate === false, 3000), 'autoUpdate off not saved');
       await clickEval(upd, 'automatic updates on');
       assert(await waitFor2(() => !('autoUpdate' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'autoUpdate on should clear the key');
+      // Today's plan in the menu bar / tray: on by default, off is saved.
+      const bar = 'document.querySelector(\'.menubar-row input[data-menubar="on"]\')';
+      assert(await waitFor(`${bar}?.checked === true`, 2000), 'menu bar switch not on by default');
+      await clickEval(bar, 'menu bar off');
+      assert(await waitFor2(() => JSON.parse(fs.readFileSync(settingsFile, 'utf8')).menubar === false, 3000), 'menu bar off not saved');
+      await clickEval(bar, 'menu bar on');
+      assert(await waitFor2(() => !('menubar' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'menu bar on should clear the key');
       await clickEval(box('enabled'), 'disable MCP');
       assert(await waitFor2(() => saved().enabled === false, 3000), 'not turned off');
       await press('Escape');

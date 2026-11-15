@@ -2,7 +2,7 @@
 // never touches the filesystem directly; it talks through the preload bridge.
 // Bundled by electron-vite into out/main/index.js.
 
-import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net, session } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, Tray, shell, nativeTheme, clipboard, nativeImage, protocol, safeStorage, net, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -24,6 +24,8 @@ import { createSenderCheck } from './lib/ipc-guard.mjs';
 import { createHistory } from './lib/history.mjs';
 import { createVaultCache } from './lib/vault-cache.mjs';
 import { autoUpdatesOn } from './lib/updates.mjs';
+import { migrate } from './lib/migrate.mjs';
+import { todayPlans, menubarTitle, menubarRows } from './lib/menubar.mjs';
 import { attachmentsDirFor, hiddenAttachmentsFolder } from './lib/layout.mjs';
 import * as wp from './lib/wispr.mjs';
 import * as cal from './lib/calendar.mjs';
@@ -97,6 +99,62 @@ function readStore() {
 // over the real file. A crash mid-write leaves the original intact.
 function writeStore(data) {
   writeFileAtomic(dataPath(), JSON.stringify(data, null, 2));
+  if (tray) updateTray();
+}
+
+// --- menu bar (macOS) / system tray (Windows): today's plans ----------------
+// Next to the icon the plan going on now or the next one ("Tennis · in 25m",
+// macOS only); the menu lists today's plans (lib/menubar.mjs). On unless
+// settings.json has menubar: false (Settings → Appearance).
+let tray = null;
+const menubarOn = () => readSettings().menubar !== false;
+// The plans as saved, read without readStore's corrupt-file copy (this runs
+// every minute).
+function savedPlans() {
+  try { return migrate(JSON.parse(fs.readFileSync(dataPath(), 'utf8'))).items || []; } catch { return []; }
+}
+function trayIcon() {
+  if (process.platform === 'darwin') {
+    // Black on transparent; macOS tints it for light and dark menu bars (and @2x).
+    const img = nativeImage.createFromPath(path.join(__dirname, '../../build/trayTemplate.png'));
+    img.setTemplateImage(true);
+    return img;
+  }
+  return nativeImage.createFromPath(path.join(__dirname, '../../build/icon.png')).resize({ width: 32, height: 32, quality: 'best' });
+}
+// Bring Mufka forward (a window again if it was closed) on this week's planner.
+function openPlannerFromTray() {
+  const win = BrowserWindow.getAllWindows()[0] || createWindow();
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+  const go = () => win.webContents.send('menu:action', 'planner');
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', go); else go();
+}
+function updateTray() {
+  if (!menubarOn()) { if (tray) { tray.destroy(); tray = null; } return; }
+  if (!tray) {
+    tray = new Tray(trayIcon());
+    // Windows opens a tray icon's menu on the right button only.
+    if (process.platform === 'win32') tray.on('click', () => tray.popUpContextMenu());
+  }
+  const now = new Date();
+  const plans = todayPlans(savedPlans(), now);
+  const title = menubarTitle(plans, now);
+  if (process.platform === 'darwin') tray.setTitle(title ? ` ${title}` : '', { fontType: 'monospacedDigit' });
+  tray.setToolTip(title ? `Mufka · ${title}` : 'Mufka');
+  const rows = menubarRows(plans, now);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Today', enabled: false },
+    ...(rows.length ? rows.map((r) => ({ label: r.label, enabled: !r.past, click: openPlannerFromTray })) : [{ label: 'Nothing planned', enabled: false }]),
+    { type: 'separator' },
+    { label: 'Open the planner', click: openPlannerFromTray },
+    { label: process.platform === 'darwin' ? 'Hide from the menu bar' : 'Hide from the tray', click: () => { writeSettings({ menubar: false }); updateTray(); } },
+  ]));
+}
+// On every minute, so the countdown and the day stay right.
+function startTray() {
+  updateTray();
+  setTimeout(() => { updateTray(); setInterval(updateTray, 60000).unref(); }, 60000 - (Date.now() % 60000) + 50).unref();
 }
 
 
@@ -1669,6 +1727,8 @@ ipcMain.handle('update:set', wrap((patch) => {
   if (patch && patch.auto) checkForUpdates();
   return updateInfo();
 }));
+ipcMain.handle('menubar:get', wrap(() => menubarOn()));
+ipcMain.handle('menubar:set', wrap((on) => { writeSettings({ menubar: on ? undefined : false }); updateTray(); return menubarOn(); }));
 ipcMain.handle('update:check', wrap(() => { checkForUpdates(); return updateInfo(); }));
 ipcMain.handle('update:install', wrap(() => {
   if (updater && updateState.state === 'ready') setImmediate(() => updater.quitAndInstall());
@@ -1759,6 +1819,7 @@ app.whenReady().then(() => {
   buildMenu();
   wisprSchedule();
   initUpdates();
+  startTray();
   const win = createWindow();
   win.webContents.once('did-finish-load', () => warnIfVaultMissing(win));
   app.on('activate', () => {
