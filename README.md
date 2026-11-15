@@ -93,6 +93,10 @@ Planner.
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
+- **Dictate with [Handy](https://handy.computer)** (free, offline): with Handy
+  installed, the microphone in a note's top bar (or **⇧⌘D**) starts and stops
+  it, and what you say is typed where the caret is. Settings → Voice shows
+  whether Handy is there.
 - **Right-click** a note, folder, board or drawing in the sidebar (or use its
   ⋯): duplicate, move to a folder, copy its path (in the vault or on the
   computer) or a `[[link]]`, reveal it in Finder, rename, delete. Folders also

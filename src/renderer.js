@@ -303,11 +303,63 @@ function renderPaneActions() {
   renderPaneTitle();
   if (state.contentView === 'note' && state.openNote) {
     const title = noteTitleOf(state.openNote);
+    if (voice.handy) paneActionsEl.append(dictateButton());
     paneActionsEl.append(
       copyIconButton(() => state.noteContent),
       menuIconButton('menu-note', () => noteActionItems(title, () => state.noteContent, () => saveOpenNote())),
     );
   }
+}
+
+// --- Voice: dictation with Handy (main.js starts and stops it) -------------
+// Handy writes where the caret is, so the note keeps an editor focused: the
+// one open, else a new line at the note's end.
+const voice = { handy: false, dictating: null, timer: null }; // dictating: start time
+async function loadVoice() {
+  const s = await notesApi.voice().catch(() => null);
+  const was = voice.handy;
+  voice.handy = Boolean(s && s.handy && s.handy.installed);
+  if (was !== voice.handy) renderPaneActions();
+}
+const dictateTime = () => { const s = Math.floor((Date.now() - voice.dictating) / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+function dictateButton() {
+  const on = Boolean(voice.dictating);
+  const b = elem('button', `icon-btn-sq dictate-btn${on ? ' on' : ''}`);
+  b.type = 'button';
+  b.append(icon('mic'));
+  if (on) b.append(elem('span', 'dictate-time', dictateTime()));
+  b.title = K(on ? 'Stop dictating (⇧⌘D)' : 'Dictate with Handy (⇧⌘D)');
+  b.setAttribute('aria-label', on ? 'Stop dictating' : 'Dictate with Handy');
+  b.setAttribute('aria-pressed', String(on));
+  // Keep the caret in the editor: Handy types into whatever has the focus.
+  b.addEventListener('mousedown', (e) => e.preventDefault());
+  b.addEventListener('click', () => toggleDictation());
+  return b;
+}
+function focusNoteEditor() {
+  const open = document.getElementById('block-editor') || document.getElementById('note-editor');
+  if (open) { open.focus(); return; }
+  const blocks = parseBlocks(state.noteContent);
+  startNewBlock('note', blocks.length ? blocks[blocks.length - 1].start : -1, 0);
+  document.getElementById('block-editor')?.focus();
+}
+async function toggleDictation() {
+  if (!voice.handy) { showToast('Handy is not installed: see Settings → Voice'); return; }
+  if (!voice.dictating) {
+    if (!(state.contentView === 'note' && state.openNote)) { showToast('Open a note to dictate into'); return; }
+    focusNoteEditor();
+  }
+  const res = await notesApi.handyToggle();
+  if (!res || res.error) { showToast(res && res.error ? res.error : 'Could not reach Handy'); return; }
+  if (voice.dictating) {
+    voice.dictating = null; clearInterval(voice.timer); voice.timer = null;
+    showToast('Handy is writing it down');
+  } else {
+    voice.dictating = Date.now();
+    voice.timer = setInterval(() => { const t = document.querySelector('.dictate-time'); if (t) t.textContent = dictateTime(); }, 1000);
+  }
+  renderPaneActions();
+  document.getElementById('block-editor')?.focus();
 }
 
 // Re-render only the sidebar but keep the focused field (used while typing in
@@ -1873,6 +1925,7 @@ function commandList() {
     { label: 'Create new note', hint: '⌘N', run: newNote },
     { label: 'Create new folder', run: newFolder },
     { label: 'Open the week planner', hint: '⌘1', run: () => openPlanner(new Date()) },
+    ...(voice.handy ? [{ label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() }] : []),
     { label: 'New plan', hint: '⇧⌘P', run: () => plannerApi.newPlan(new Date()) },
     { label: 'Open tasks', hint: '⌘3', run: () => openTasks() },
     { label: 'New task board', run: () => newTaskBoard() },
@@ -5169,7 +5222,7 @@ function openSettings() {
   box.append(calSection);
 
   const section = elem('section', 'settings-section');
-  section.append(elem('h3', 'settings-heading', 'Meeting notes'));
+  section.append(elem('h3', 'settings-heading', 'Voice'));
   const row = elem('div', 'conn-row');
   row.dataset.conn = 'wispr';
   const text = elem('div', 'conn-text');
@@ -5180,6 +5233,26 @@ function openSettings() {
   const side = elem('div', 'conn-side');
   row.append(text, side);
   section.append(row);
+  // Handy: dictation (main.js finds it and starts / stops it).
+  const handyRow = elem('div', 'conn-row');
+  handyRow.dataset.conn = 'handy';
+  const handyText = elem('div', 'conn-text');
+  handyText.append(elem('span', 'conn-name', 'Handy'),
+    elem('span', 'conn-note', 'Dictation on your computer, free and offline: speak and the text goes where the caret is. In a note, the microphone button (or ⇧⌘D) starts and stops it.'));
+  const handySide = elem('div', 'conn-side');
+  handyRow.append(handyText, handySide);
+  section.append(handyRow);
+  const drawHandy = () => {
+    handySide.replaceChildren();
+    if (voice.handy) handySide.append(elem('span', 'conn-state ok', 'Installed'), elem('span', 'conn-info', 'Its own shortcut works too; set it in Handy'));
+    else {
+      const get = elem('button', 'btn', 'Get Handy ↗'); get.type = 'button';
+      get.addEventListener('click', () => notesApi.openExternal('https://handy.computer'));
+      handySide.append(elem('span', 'conn-state', 'Not installed'), get);
+    }
+  };
+  drawHandy();
+  loadVoice().then(drawHandy);
   box.append(section);
   box.append(mcpSection());
   box.append(updatesSection());
@@ -5817,6 +5890,7 @@ if (plansApi.onMenu) {
 }
 if (notesApi.onChanged) {
   notesApi.onChanged(async () => {
+    loadVoice(); // Handy may have been installed meanwhile (this runs when the window gets the focus)
     // Folder settings can change in Obsidian (.obsidian/*.json) or by adding a
     // Templates folder; re-read them with the tree.
     const lay = await notesApi.layout().catch(() => null);
@@ -5911,6 +5985,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Semicolon' && state.contentView === 'note' && state.openNote && state.noteView === 'blocks') { e.preventDefault(); startAddProperty('note'); return; }
   if (k === 'p' && e.shiftKey) { e.preventDefault(); plannerApi.newPlan(state.contentView === 'planner' && !isThisWeekShown() ? startOfWeek(state.weekDate) : new Date()); return; }
   if (k === 'o') { e.preventDefault(); openQuickSwitcher(); return; }
+  if (e.code === 'KeyD' && e.shiftKey && !e.altKey && voice.handy) { e.preventDefault(); toggleDictation(); return; }
   if (state.contentView === 'planner' && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); openPlanner(addDays(state.weekDate, e.key === 'ArrowLeft' ? -7 : 7)); return; }
   if (k === 'p') { e.preventDefault(); openCommandPalette(); return; }
   if (k === 'g') { e.preventDefault(); openGraph({ local: e.shiftKey, focus: true }); return; }
@@ -5977,6 +6052,7 @@ async function boot() {
   const res = await notesApi.readDaily(dayKey(now));
   const dailyText = res && !res.error ? res.content : null;
   state.dailyNote = { key: dayKey(now), content: dailyText, disk: dailyText };
+  loadVoice();
   // Tabs come back as they were left, when there were several.
   let savedTabs = null;
   try { savedTabs = JSON.parse(localStorage.getItem('mufka-tabs') || 'null'); } catch { /* none */ }

@@ -2036,6 +2036,37 @@ app.whenReady().then(() => setTimeout(async () => {
       await press('Escape');
     });
 
+    // 64h. Dictation with Handy (a stand-in that logs what Mufka asks of it):
+    //      the microphone in a note starts Handy hidden when it is not running,
+    //      then toggles its recording; the caret stays in the note; ⇧⌘D stops
+    //      it; Settings → Voice says Handy is installed.
+    await step('64h', 'dictate with Handy: start, the caret stays in the note, stop', async () => {
+      if (process.platform === 'win32') return; // the stand-in is a shell script (pgrep finds it)
+      const handy = path.join(tmp, 'Handy');
+      const log = path.join(tmp, 'handy.log');
+      fs.writeFileSync(handy, `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$1" = "--start-hidden" ]; then i=0; while [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done; fi\n`, { mode: 0o755 });
+      process.env.MUFKA_HANDY_PATH = handy;
+      const lines = () => { try { return fs.readFileSync(log, 'utf8').trim().split('\n'); } catch { return []; } };
+      fs.writeFileSync(path.join(tvault, 'Dictation.md'), '# Dictation\n\nFirst line\n');
+      await sleep(900);
+      BrowserWindow.getAllWindows()[0].emit('focus'); // Handy found when the window gets the focus
+      await press('O', ['meta']); await typeText('Dictation'); await enter();
+      assert(await waitFor('!!document.querySelector("#pane-actions .dictate-btn")', 4000), 'no microphone button');
+      await clickSel('#pane-actions .dictate-btn');
+      assert(await waitFor('document.activeElement?.id === "block-editor"', 2000), `the caret is not in the note: ${await js('document.activeElement?.id || document.activeElement?.className')}`);
+      assert(await waitFor2(() => lines().join('|') === '--start-hidden|--toggle-transcription', 6000), `asked Handy: ${lines().join('|')}`);
+      assert(await waitFor('document.querySelector("#pane-actions .dictate-btn.on .dictate-time")?.textContent.startsWith("0:")', 3000), 'not shown as listening');
+      await press('D', ['meta', 'shift']);
+      assert(await waitFor2(() => lines().join('|') === '--start-hidden|--toggle-transcription|--toggle-transcription', 4000), `stop sent: ${lines().join('|')}`);
+      assert(await waitFor('!document.querySelector("#pane-actions .dictate-btn.on")', 2000), 'still shown as listening');
+      await press(',', ['meta']);
+      assert(await waitFor('/Installed/.test(document.querySelector(\'[data-conn="handy"] .conn-side\')?.textContent || "")', 3000), 'Settings does not say Handy is installed');
+      await press('Escape');
+      require('child_process').spawnSync('pkill', ['-f', handy]);
+      delete process.env.MUFKA_HANDY_PATH;
+      await press('Escape');
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.

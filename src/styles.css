@@ -1802,3 +1802,8 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .board-row .menu-btn { margin-left: auto; padding: 0 4px; }
 .board-row .place-count + .menu-btn { margin-left: 0; }
 .board-row:hover .menu-btn, .board-row:focus-within .menu-btn { visibility: visible; }
+
+/* Dictation with Handy: the microphone in a note's top bar; red with the time while it listens. */
+.dictate-btn { display: inline-flex; align-items: center; gap: 5px; }
+.dictate-btn.on { width: auto; padding: 0 8px; color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.dictate-time { font-size: 12px; font-variant-numeric: tabular-nums; }
