@@ -202,6 +202,9 @@ async function studioTranscribe(data, name) {
   const file = AUDIO_EXT.has(ext) ? path.basename(String(name)) : 'recording.webm';
   const form = new FormData();
   form.append('audio', new Blob([bytes]), file);
+  // 'accurate' uses the speech-to-text model chosen in VoiceStudio; the
+  // default ('fast') always uses its small dictation model.
+  form.append('mode', 'accurate');
   studioJob = new AbortController();
   const timer = setTimeout(() => studioJob && studioJob.abort(), 60 * 60 * 1000);
   try {
