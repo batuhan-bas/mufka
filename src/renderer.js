@@ -857,8 +857,9 @@ function openGraph({ local = false, focus = false } = {}) {
 }
 // --- tabs and back / forward (lib/tabs.mjs, lib/navhistory.mjs) ---
 // Every way of opening something goes through navVisit. Each tab has its own
-// back/forward history (⌘[ / ⌘], the ‹ › in the pane bar). ⌘-click (or
-// ⌘Enter) opens the place in a new tab; ⌘W closes a tab, ⇧⌘[ ⇧⌘] switch.
+// back/forward history (⌘[ / ⌘], the ‹ › in the pane bar). A note opened
+// from another note gets its own tab (navVisit); ⌘-click (or ⌘Enter) opens
+// any place in a new tab; ⌘W closes a tab, ⇧⌘[ ⇧⌘] switch.
 
 const tabs = createTabs(() => createNavHistory());
 tabs.add(null);
@@ -878,6 +879,7 @@ let newTabAsk = 0;
 const askNewTab = (e) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.type === 'click' || e.key === 'Enter')) newTabAsk = Date.now(); };
 document.addEventListener('click', askNewTab, true);
 document.addEventListener('keydown', askNewTab, true);
+const docPlace = (loc) => !!(loc && loc.rel && (loc.view === 'note' || loc.view === 'tasks' || loc.view === 'draw'));
 function navVisit(to) {
   hidePreview();
   state.menu = null; // a row menu belongs to the pane it was opened on
@@ -887,6 +889,15 @@ function navVisit(to) {
     if (!sameLocation(from, to)) { tabs.active.loc = from; tabs.add(to); updateNavButtons(); return; }
   }
   newTabAsk = 0;
+  if (!navigating && docPlace(to)) {
+    // A note (board, drawing) opened from another one opens beside it, in a
+    // tab of its own, or goes to the tab already showing it. From Home, the
+    // Planner or the graph it opens in place.
+    const from = currentLocation();
+    const there = tabs.list.find((t) => t !== tabs.active && sameLocation(t.loc, to));
+    if (there) { tabs.active.loc = from; tabs.activate(there.id); updateNavButtons(); return; }
+    if (docPlace(from) && from.rel !== to.rel) { tabs.active.loc = from; tabs.add(to); updateNavButtons(); return; }
+  }
   if (!navigating) curNav().visit(currentLocation(), to);
   updateNavButtons();
 }
@@ -942,6 +953,18 @@ async function newTab(loc = { view: 'day', key: dayKey(new Date()) }) {
   tabs.add(loc);
   await goTo(loc);
 }
+// + in the tab strip (⌥⌘T): a new, empty note in a tab of its own, ready
+// to type in; it goes where ⌘N would put it.
+async function newNoteTab() {
+  const res = await notesApi.create(targetFolder(), 'Untitled');
+  if (!res || !res.rel) { showToast('Could not create the note'); return; }
+  await refreshTree();
+  flushActiveEditor();
+  tabs.active.loc = currentLocation();
+  tabs.add({ view: 'note', rel: res.rel });
+  navigating = true;
+  try { await openNote(res.rel, 'duzenle'); } finally { navigating = false; updateNavButtons(); }
+}
 async function reopenTab() {
   if (!tabs.canReopen) return;
   flushActiveEditor();
@@ -996,8 +1019,8 @@ function renderTabStrip() {
     tabStripEl.append(tab);
   });
   const plus = elem('button', 'tab-new', '+');
-  plus.type = 'button'; plus.title = K('New tab (⌥⌘T)'); plus.setAttribute('aria-label', 'New tab');
-  plus.addEventListener('click', () => newTab());
+  plus.type = 'button'; plus.title = K('New note in a new tab (⌥⌘T)'); plus.setAttribute('aria-label', 'New note in a new tab');
+  plus.addEventListener('click', () => newNoteTab());
   tabStripEl.append(plus);
 }
 function focusActiveTab() { tabStripEl.querySelector('.tab-item.active')?.focus(); }
@@ -2120,7 +2143,7 @@ function commandList() {
     { label: 'Find in this note', hint: '⌘F', when: noteOpen, run: () => findBar.open() },
     { label: 'Find and replace in this note', hint: '⌥⌘F', when: noteOpen, run: () => findBar.open({ replace: true }) },
     { label: 'Version history of this note', when: noteOpen, run: () => openNoteHistory() },
-    { label: 'New tab', hint: '⌥⌘T', run: () => newTab() },
+    { label: 'New tab', hint: '⌥⌘T', run: () => newNoteTab() },
     { label: 'Theme: light', run: () => setTheme('light') },
     { label: 'Theme: dark', run: () => setTheme('dark') },
     { label: 'Theme: follow the system', run: () => setTheme('system') },
@@ -6077,7 +6100,7 @@ if (plansApi.onMenu) {
     else if (action === 'draw') openDraw();
     else if (action === 'tab:ara') setTab('ara');
     else if (action === 'paste-plain') pastePlain();
-    else if (action === 'new-tab') newTab();
+    else if (action === 'new-tab') newNoteTab();
     else if (action === 'close-tab') closeTab();
     else if (action === 'reopen-tab') reopenTab();
     else if (action === 'toggle-sidebar') toggleSidebar();
@@ -6170,7 +6193,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Backslash' && e.shiftKey) { e.preventDefault(); toggleRightbar(); return; }
   if (e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { e.preventDefault(); switchTab(tabs.neighbour(e.code === 'BracketRight' ? 1 : -1)); return; }
   if (e.code === 'KeyW' && !e.shiftKey) { e.preventDefault(); closeTab(); return; }
-  if (e.code === 'KeyT' && e.altKey) { e.preventDefault(); newTab(); return; }
+  if (e.code === 'KeyT' && e.altKey) { e.preventDefault(); newNoteTab(); return; }
   if (k === '\\') { e.preventDefault(); toggleSidebar(); return; }
   if (k === '1') { e.preventDefault(); setTab('takvim'); return; }
   if (k === '2') { e.preventDefault(); setTab('notlar'); return; }

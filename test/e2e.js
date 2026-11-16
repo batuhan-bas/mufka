@@ -1115,16 +1115,24 @@ app.whenReady().then(() => setTimeout(async () => {
       const title = 'document.querySelector(".note-title")?.textContent';
       await press('O', ['meta']); await typeText('G1'); await enter();
       assert(await waitFor(`${title} === "G1"`, 3000), 'G1 did not open');
+      // A note opened from another note opens beside it in its own tab;
+      // opening one already in a tab goes to that tab.
+      const tabNames = 'JSON.stringify([...document.querySelectorAll("#tab-strip .tab-item")].map(t => (t.classList.contains("active") ? "*" : "") + t.textContent.replace("×", "")).filter(n => /Bahseden|G1|G3/.test(n)))';
+      assert(await waitFor(`${tabNames} === '["Bahseden","*G1"]'`, 3000), `G1 not in its own tab: ${await js(tabNames)}`);
       await press('O', ['meta']); await typeText('G3'); await enter();
-      assert(await waitFor(`${title} === "G3"`, 3000), 'G3 did not open');
+      assert(await waitFor(`${title} === "G3" && ${tabNames} === '["Bahseden","G1","*G3"]'`, 3000), `G3 not in its own tab: ${await js(tabNames)}`);
+      await press('O', ['meta']); await typeText('G1'); await enter();
+      assert(await waitFor(`${title} === "G1" && ${tabNames} === '["Bahseden","*G1","G3"]'`, 3000), `did not go to G1's tab: ${await js(tabNames)}`);
+      // Back and forward move within a tab: G1 → the Planner and back.
+      await clickSel('#mode-planner');
+      assert(await waitFor('!!document.querySelector(".planner")', 3000), 'Planner did not open');
       await press('[', ['meta']);
       assert(await waitFor(`${title} === "G1"`, 3000), 'Cmd+[ did not go back');
       await press(']', ['meta']);
-      assert(await waitFor(`${title} === "G3"`, 3000), 'Cmd+] did not go forward');
+      assert(await waitFor('!!document.querySelector(".planner")', 3000), 'Cmd+] did not go forward');
       await clickSel('#nav-back');
       assert(await waitFor(`${title} === "G1"`, 3000), 'back button did not go back');
-      await clickSel('#nav-back');
-      assert(await waitFor(`${title} === "Bahseden"`, 3000), 'second back wrong');
+      await clickSel('#mode-notes');
     });
 
     // 45. Autocomplete while typing: "[[" suggests notes (Enter inserts the
@@ -1951,7 +1959,7 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('!!document.querySelector(".book-head img") && document.querySelector(".note-title")?.textContent === "Dune"', 3000), 'the book note has no cover head');
       await clickEval(`[...document.querySelectorAll('.book-strip .job-step')].find(s => s.textContent === 'Reading')`, 'Reading');
       assert(await waitFor2(() => { const t = fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8'); return /status: Reading/.test(t) && new RegExp(`started: ${todayK}`).test(t); }, 3000), `not moved to Reading:\n${fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8')}`);
-      assert(await js(`[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === 'Dune')?.querySelector('.tree-emoji')?.textContent === '📚'`), 'the tree does not show the page icon');
+      assert(await js(`[...document.querySelectorAll('.tree-row')].some(r => r.querySelector('.tree-name')?.textContent === 'Dune' && r.querySelector('.tree-emoji')?.textContent === '📚')`), `the tree does not show the page icon: ${await js(`JSON.stringify([...document.querySelectorAll('.tree-row')].map(r => r.textContent).filter(t => /Dune|Library|Shelf/.test(t)))`)} sidebar=${await js('document.getElementById("mode-notes")?.getAttribute("aria-pressed")')}`);
       await press('O', ['meta']); await typeText('Rome'); await enter();
       assert(await waitFor('/10 days to go/.test(document.querySelector(".trip-strip")?.textContent || "") && /1\\/2/.test(document.querySelector(".trip-strip")?.textContent || "")', 3000), `trip strip: ${await js('document.querySelector(".trip-strip")?.textContent')}`);
       await press('O', ['meta']); await typeText('Standup'); await enter();
@@ -2158,6 +2166,8 @@ app.whenReady().then(() => setTimeout(async () => {
         q.focus();
         for (const ch of text) { q.webContents.sendInputEvent({ type: 'char', keyCode: ch }); await sleep(5); }
         await sleep(300);
+        // "Name: text" waits for the main process to find the note.
+        for (let i = 0; i < 30 && text.includes(':') && (await qjs('document.querySelector(".quick-to").textContent')) === "→ Today's daily note"; i++) await sleep(100);
         const chip = await qjs('document.querySelector(".quick-to").textContent');
         q.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); q.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); q.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
         for (let i = 0; i < 40 && !q.isDestroyed(); i++) await sleep(100);
@@ -2371,30 +2381,60 @@ app.whenReady().then(() => setTimeout(async () => {
     // 70. Tabs: ⌘Enter in the switcher opens a note in a new tab; ⇧⌘[ ⇧⌘]
     //     switch, each tab keeps its place; ⌘W closes; a closed tab reopens;
     //     the tabs are saved; one tab hides the strip.
-    await step(70, 'tabs: open in a new tab, switch, close, reopen', async () => {
+    await step(70, 'tabs: a note from a note opens beside it; switch, close, reopen', async () => {
+      const tabNames = 'JSON.stringify([...document.querySelectorAll("#tab-strip .tab-item")].map(t => (t.classList.contains("active") ? "*" : "") + t.textContent.replace("×", "")))';
+      const title = 'document.querySelector(".note-title")?.textContent';
       await press('O', ['meta']); await typeText('Bul'); await enter();
-      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul" && document.getElementById("tab-strip").hidden', 3000), 'one tab should hide the strip');
+      assert(await waitFor(`${title} === "Bul"`, 3000), 'Bul did not open');
+      // Earlier steps left tabs open: keep only this one.
+      if (!(await js('document.getElementById("tab-strip").hidden'))) {
+        await js(`(() => { const r = document.querySelector('#tab-strip .tab-item.active'); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 20, clientY: b.y + b.height / 2 })); return true; })()`);
+        await sleep(200);
+        await clickEval(`[...document.querySelectorAll('button, [role=menuitem]')].find(b => b.textContent.trim() === 'Close other tabs')`, 'Close other tabs');
+      }
+      assert(await waitFor(`${title} === "Bul" && document.getElementById("tab-strip").hidden`, 3000), 'one tab should hide the strip');
+      // A plain Enter opens Kod beside Bul.
       await press('O', ['meta']); await typeText('Kod');
       assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Kod"', 3000), 'Kod not in the switcher');
-      await press('Return', ['meta']);
-      const tabNames = 'JSON.stringify([...document.querySelectorAll("#tab-strip .tab-item")].map(t => (t.classList.contains("active") ? "*" : "") + t.textContent.replace("×", "")))';
-      assert(await waitFor(`${tabNames} === '["Bul","*Kod"]' && document.querySelector(".note-title")?.textContent === "Kod"`, 3000), `tabs: ${await js(tabNames)}`);
+      await enter();
+      assert(await waitFor(`${tabNames} === '["Bul","*Kod"]' && ${title} === "Kod"`, 3000), `tabs: ${await js(tabNames)}`);
       await press('[', ['meta', 'shift']);
-      assert(await waitFor(`${tabNames} === '["*Bul","Kod"]' && document.querySelector(".note-title")?.textContent === "Bul"`, 3000), `after ⇧⌘[: ${await js(tabNames)}`);
-      // This tab moves on; the other keeps its note.
+      assert(await waitFor(`${tabNames} === '["*Bul","Kod"]' && ${title} === "Bul"`, 3000), `after ⇧⌘[: ${await js(tabNames)}`);
+      // Kod is already open: going to it goes to its tab.
+      await press('O', ['meta']); await typeText('Kod'); await enter();
+      assert(await waitFor(`${tabNames} === '["Bul","*Kod"]'`, 3000), `not back to Kod's tab: ${await js(tabNames)}`);
+      await press('[', ['meta', 'shift']);
       await press('O', ['meta']); await typeText('Gecmis'); await enter();
-      assert(await waitFor(`${tabNames} === '["*Gecmis","Kod"]'`, 3000), `navigate in tab: ${await js(tabNames)}`);
+      assert(await waitFor(`${tabNames} === '["Bul","*Gecmis","Kod"]'`, 3000), `Gecmis not after Bul: ${await js(tabNames)}`);
+      // Within a tab, the Planner and back.
+      await clickSel('#mode-planner');
+      assert(await waitFor(`${tabNames} === '["Bul","*Planner","Kod"]'`, 3000), `Planner not in the tab: ${await js(tabNames)}`);
       await press('[', ['meta']);
-      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'back within the tab');
-      assert(await js('JSON.parse(localStorage.getItem("mufka-tabs")).tabs.length === 2'), 'tabs not saved');
+      assert(await waitFor(`${title} === "Gecmis"`, 3000), 'back within the tab');
+      assert(await js('JSON.parse(localStorage.getItem("mufka-tabs")).tabs.length === 3'), 'tabs not saved');
       await press('W', ['meta']);
-      assert(await waitFor(`document.getElementById("tab-strip").hidden && document.querySelector(".note-title")?.textContent === "Kod"`, 3000), 'close tab');
+      assert(await waitFor(`${tabNames} === '["Bul","*Kod"]' && ${title} === "Kod"`, 3000), `close tab: ${await js(tabNames)}`);
       await press('P', ['meta']); await typeText('reopen closed tab');
       assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Reopen closed tab"', 2000), 'reopen command missing');
       await enter();
-      assert(await waitFor(`${tabNames} === '["*Bul","Kod"]'`, 3000), `reopen: ${await js(tabNames)}`);
-      await clickEval(`[...document.querySelectorAll('#tab-strip .tab-item')].find(t => !t.classList.contains('active')).querySelector('.tab-close')`, 'close button');
-      assert(await waitFor('document.getElementById("tab-strip").hidden && document.querySelector(".note-title")?.textContent === "Bul"', 3000), 'close by ×');
+      assert(await waitFor(`${tabNames} === '["Bul","*Gecmis","Kod"]'`, 3000), `reopen: ${await js(tabNames)}`);
+      await press('[', ['meta', 'shift']);
+      assert(await waitFor(`${title} === "Bul"`, 3000), 'not on Bul');
+      for (let i = 0; i < 2; i++) {
+        await clickEval(`[...document.querySelectorAll('#tab-strip .tab-item')].find(t => !t.classList.contains('active')).querySelector('.tab-close')`, 'close button');
+        await sleep(200);
+      }
+      assert(await waitFor(`document.getElementById("tab-strip").hidden && ${title} === "Bul"`, 3000), 'close by ×');
+      // ⌥⌘T (the + in the strip): a new empty note in its own tab, ready to type in.
+      await press('T', ['meta', 'alt']);
+      assert(await waitFor(`${tabNames} === '["Bul","*Untitled"]' && document.activeElement?.id === "block-editor"`, 3000), `new note tab: ${await js(tabNames)}`);
+      const untitled = fs.readdirSync(notesDir, { recursive: true }).find((p) => path.basename(String(p)) === 'Untitled.md');
+      assert(untitled, 'no Untitled.md');
+      await typeText('yeni sekme');
+      await press('Escape'); await sleep(700);
+      assert(fs.readFileSync(path.join(notesDir, untitled), 'utf8').startsWith('yeni sekme'), 'typed text not saved');
+      await press('W', ['meta']);
+      assert(await waitFor(`document.getElementById("tab-strip").hidden && ${title} === "Bul"`, 3000), 'new note tab did not close');
     });
 
     // 71. The right pane: ⌥⌘Enter in the switcher opens a note there; its
