@@ -2171,6 +2171,48 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(fs.readFileSync(path.join(tvault, 'Groceries.md'), 'utf8') === '# Groceries\n\n- bread\n- oat milk\n', 'not added to Groceries');
     });
 
+    // 64m. Quick note dictation: the mic turns into a running Stop timer, a
+    //      second press (Enter) stops Handy, and what Handy types lands in
+    //      the box to be checked and added with Enter.
+    await step('64m', 'quick note mic shows listening, stops, and waits for Enter', async () => {
+      const handy = path.join(tmp, 'Handy');
+      const log = path.join(tmp, 'handy-quick.log');
+      fs.writeFileSync(handy, `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$1" = "--start-hidden" ]; then i=0; while [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done; fi\n`, { mode: 0o755 });
+      process.env.MUFKA_HANDY_PATH = handy;
+      try {
+        const item = Menu.getApplicationMenu().items.flatMap((m) => (m.submenu ? m.submenu.items : [])).find((i) => i.label === 'Quick Note…');
+        item.click();
+        let q = null;
+        for (let i = 0; i < 40 && !q; i++) { await sleep(100); q = BrowserWindow.getAllWindows().find((w) => w.webContents !== wc && !w.isDestroyed() && w.getSize()[1] < 200); }
+        assert(q, 'no quick note window');
+        const qjs = (c) => q.webContents.executeJavaScript(c);
+        const qwait = async (c, ms = 4000) => { for (let i = 0; i < ms / 100; i++) { if (await qjs(c).catch(() => false)) return true; await sleep(100); } return false; };
+        assert(await qwait('!!document.querySelector(".quick-mic") && !document.querySelector(".quick-mic").hidden'), 'no mic in the quick box');
+        assert(await qwait('/click the mic to speak/.test(document.querySelector(".quick-hint").textContent)'), 'hint does not mention the mic');
+        q.focus();
+        const r = await qjs('(() => { const b = document.querySelector(".quick-mic").getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; })()');
+        q.webContents.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+        q.webContents.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+        assert(await qwait('document.querySelector(".quick-mic").classList.contains("rec") && /Stop/.test(document.querySelector(".quick-mic").textContent)', 6000), 'mic did not turn into Stop');
+        assert(await qjs('/Listening/.test(document.querySelector(".quick-hint").textContent) && document.querySelector(".quick-input").placeholder.startsWith("Listening")'), 'not shown as listening');
+        q.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); q.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); q.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        assert(await qwait('document.querySelector(".quick-input").placeholder === "Writing it down…" && /writing down/.test(document.querySelector(".quick-hint").textContent)'), 'not shown as writing it down');
+        assert(!q.isDestroyed(), 'Enter while listening closed the box');
+        const toggles = fs.readFileSync(log, 'utf8').split('\n').filter((l) => l === '--toggle-transcription').length;
+        assert(toggles === 2, `Handy toggled ${toggles} times`);
+        q.webContents.insertText('Buy stamps');
+        assert(await qwait('/Check it/.test(document.querySelector(".quick-hint").textContent) && !document.querySelector(".quick-mic").classList.contains("wait")'), 'not asked to check the text');
+        q.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); q.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); q.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        for (let i = 0; i < 40 && !q.isDestroyed(); i++) await sleep(100);
+        assert(q.isDestroyed(), 'the quick note window did not close');
+        const f = fs.readdirSync(tvault, { recursive: true }).find((p) => path.basename(String(p)) === `${todayKey}.md`);
+        assert(/^- \d\d:\d\d Buy stamps$/m.test(fs.readFileSync(path.join(tvault, f), 'utf8')), 'dictated line not in the daily note');
+      } finally {
+        require('child_process').spawnSync('pkill', ['-f', handy]);
+        delete process.env.MUFKA_HANDY_PATH;
+      }
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.
