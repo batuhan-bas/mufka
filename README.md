@@ -8,8 +8,9 @@
 
 A week planner with times, repeating plans and your Outlook, Teams and Google
 calendars, task boards for your projects, drawings, and an Obsidian‑like
-Markdown notes vault with links, backlinks, Dataview queries, diagrams and a
-graph — local and private.
+Markdown notes vault with tabs, links, backlinks, Dataview queries, diagrams and
+a graph. Speak instead of typing, or jot a line from any app with a quick note —
+local and private.
 
 Made by [Calexis Labs](https://github.com/Calexis-Labs).
 
@@ -93,20 +94,22 @@ Planner.
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
-- **Dictate with [Handy](https://handy.computer)** (free, offline): with Handy
-  installed, the microphone in a note's top bar (or **⇧⌘D**) starts and stops
-  it, and what you say is typed where the caret is. Settings → Voice shows
-  whether Handy and VoiceStudio are there.
+- **Dictate with [Handy](https://handy.computer)** (free, offline): speak and
+  the text goes where the caret is. Use Handy's own shortcut (⌥Space by
+  default) anywhere, or in a note the microphone in its top bar (**⇧⌘D**).
+  Settings → Voice shows whether Handy and VoiceStudio are there.
 - **New note from audio** (File menu or ⌘P, with Handy or
   [VoiceStudio](https://voicestudio.sh)): record, or pick an audio file (m4a,
   mp3, wav, webm, ogg…); Handy or VoiceStudio writes it down on your computer
   and it opens as a note, the recording kept with it (it plays in the note, as
-  `![[memo.m4a]]` does anywhere). VoiceStudio is found while it runs; nothing
-  to set up.
-- **Quick note (⌃⌥N)** from any app: a small box; what you type (or dictate)
-  goes to today's daily note with the time, or start with a note's name
-  ("Groceries: oat milk") to add it to that note. Also in the File menu and the
-  menu bar.
+  `![[memo.m4a]]` does anywhere). VoiceStudio is found while it runs and
+  writes it down with the speech-to-text model you chose in it; nothing to set
+  up.
+- **Quick note (⌃⌥N)** from any app, without leaving it: a small box; what you
+  type goes to today's daily note with the time, or start with a note's name
+  ("Groceries: oat milk") to add it to that note. Its microphone dictates with
+  Handy: it shows a running **Stop** while it listens, and the text waits in
+  the box for Enter. Also in the File menu and the menu bar.
 - **Right-click** a note, folder, board or drawing in the sidebar (or use its
   ⋯): duplicate, move to a folder, copy its path (in the vault or on the
   computer) or a `[[link]]`, reveal it in Finder, rename, delete. Folders also
@@ -166,6 +169,12 @@ Planner.
   **Meetings** folder as a note: summary, tasks, your notes and the transcript.
   Read-only; it checks every 15 minutes. Wispr Flow's dictation also types
   straight into any note.
+
+<p align="center"><img src="docs/screenshots/quick-note.png" width="85%" alt="The quick note box over the app: a line on its way to today's daily note"></p>
+
+<p align="center"><img src="docs/screenshots/meeting.png" width="85%" alt="A meeting note: when and who, and its action items with Plan buttons that put them in the Planner on the day they name"></p>
+
+<p align="center"><img src="docs/screenshots/voice-note.png" width="70%" alt="New note from audio: record or choose a file, written down by Handy or VoiceStudio"></p>
 
 <p align="center"><img src="docs/screenshots/dataview.png" width="85%" alt="A project overview note: a Dataview table of sprints, a total from a dataviewjs script, a Mermaid flowchart and the open tasks"></p>
 
@@ -227,10 +236,13 @@ Planner.
   about 40 more), on screen and in PDF exports.
 - **Pasting from the web**, Google Docs or Mail gives Markdown: headings, bold,
   links, lists, tasks, tables and code. **⇧⌘V** pastes plain text.
-- **Tabs and two panes.** ⌘-click (or ⌘Enter in ⌘O) opens in a new tab, ⌘W
-  closes it, ⇧⌘[ / ⇧⌘] switch. ⌥⌘-click puts a note in a pane on the right:
-  its links, tasks and queries work there, and clicking its text swaps the
-  panes so you can edit it.
+- **Tabs and two panes.** A note opened while another is open (from the
+  sidebar, ⌘O or a link) opens beside it in a tab of its own, or goes to the
+  tab already showing it; from Home or the Planner it opens in place. **+** in
+  the tab strip (⌥⌘T) starts a new note in a new tab. ⌘-click opens anything
+  in a new tab, ⌘W closes one, ⇧⌘[ / ⇧⌘] switch. ⌥⌘-click puts a note in a
+  pane on the right: its links, tasks and queries work there, and clicking its
+  text swaps the panes so you can edit it.
 - **Properties** at the top of a note are edited in place: text, tags and lists
   as chips, numbers, dates and checkboxes (**⌘;** adds one, "Edit YAML" shows
   the source). **Aliases** work: `[[another name]]` links to the note, and ⌘O
@@ -308,7 +320,9 @@ asks GitHub, where it is released, whether there is a new version (Settings →
 Updates turns that off). The other exceptions
 are the connections you turn on yourself in **Settings**: your **Microsoft**
 and **Google** calendars (Mufka reads your events; it asks only for calendar
-read access) and **Wispr Flow** (Mufka reads your meetings). Mufka never sends
+read access) and **Wispr Flow** (Mufka reads your meetings). Dictation and
+notes from audio stay on your computer: Handy and VoiceStudio run there
+(VoiceStudio is reached only at `127.0.0.1`). Mufka never sends
 your notes or plans anywhere; with [AI clients](#use-your-notes-from-ai-clients)
 turned on, a client you run reads notes and sends what it reads to its own AI
 service. Sign-ins are kept encrypted (in the macOS Keychain, or by Windows for your user account);
@@ -316,7 +330,7 @@ service. Sign-ins are kept encrypted (in the macOS Keychain, or by Windows for y
 diagrams run in a sandbox that cannot read your files or reach the internet,
 and Draw's fonts come with the app. Details: the [privacy policy](https://mufka.app/privacy).
 
-<p align="center"><img src="docs/screenshots/settings.png" width="70%" alt="Settings: the Microsoft and Google calendars and Wispr Flow"></p>
+<p align="center"><img src="docs/screenshots/settings.png" width="70%" alt="Settings: the Microsoft and Google calendars, Wispr Flow, and Handy and VoiceStudio for voice"></p>
 
 | What | Where |
 |---|---|
@@ -376,10 +390,12 @@ On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 | ⇧⌘P | New plan |
 | ⌥⌘← / ⌥⌘→ | Previous / next week |
 | ⌘N | New note |
+| ⌃⌥N | Quick note, from any app |
+| ⇧⌘D | Dictate into the note with Handy (start / stop) |
 | ⌘O · ⌘P | Open a note · command palette |
 | ⌘-click · ⌘↵ in ⌘O | Open in a new tab |
 | ⌥⌘-click · ⌥⌘↵ in ⌘O | Open in the right pane |
-| ⌥⌘T · ⌘W | New tab · close tab (⇧⌘W closes the window) |
+| ⌥⌘T · ⌘W | New note in a new tab · close tab (⇧⌘W closes the window) |
 | ⇧⌘[ · ⇧⌘] | Previous · next tab |
 | ⌘F | Find in the open note (⌥⌘F: find and replace) |
 | ⇧⌘F | Search all notes and plans |
@@ -388,9 +404,9 @@ On Windows, Ctrl takes the place of ⌘ and Alt of ⌥.
 | ⇧⌘V | Paste as plain text |
 | ⌘G · ⇧⌘G | Graph · local graph |
 | ⌘E | Edit a note's raw Markdown |
-| ⌘, | Settings (calendar and Wispr Flow connections), also the gear next to the notes folder |
+| ⌘, | Settings (calendars, Wispr Flow, voice, AI clients), also the gear next to the notes folder |
 | ⇧⌘T | Insert a template |
-| ⌘[ · ⌘] | Back · forward |
+| ⌘[ · ⌘] | Back · forward (within a tab) |
 | ⌘\\ · ⇧⌘\\ | Sidebar · Details panel |
 | ⌘Z · ⇧⌘Z | Undo · redo |
 | ⌘/ | All shortcuts |
@@ -413,7 +429,10 @@ lives under `<userData>/history/`. The MCP server is `mcp/` (built to
 `ELECTRON_RUN_AS_NODE=1`), on the same `lib/` modules plus `lib/vaultfs.mjs`,
 which reads and writes the vault without Electron. Its MCP Apps view is
 `mcp/ui/`, built into one HTML file (`out/mcp-ui/view.html`) from Mufka's own
-renderer, boards and styles.
+renderer, boards and styles. The quick note box (⌃⌥N) is `src/quick.js`, a
+small window loaded from the same `index.html` (`#quick`, see `src/entry.js`).
+Voice talks to Handy through its command line and to VoiceStudio through its
+local HTTP server (`main.js`); for Handy a recording is decoded and written as a 16 kHz WAV (`lib/audio.mjs`).
 
 ```sh
 npm install              # dependencies, then downloads Electron (pnpm works too)
