@@ -2143,6 +2143,7 @@ app.whenReady().then(() => setTimeout(async () => {
         const note = fs.readFileSync(path.join(tvault, f), 'utf8');
         assert(/source: VoiceStudio[\s\S]*!\[\[Rent memo\.m4a\]\]\n\nPay the rent on Friday\./.test(note), `note text:\n${note}`);
         assert(/name="audio"; filename="Rent memo\.m4a"/.test(got), 'the audio was not sent as it is');
+        assert(/name="mode"\r\n\r\naccurate\r\n/.test(got), 'not asked for the model chosen in VoiceStudio');
       } finally {
         delete process.env.MUFKA_STUDIO_URL;
         server.close();
