@@ -2425,6 +2425,16 @@ app.whenReady().then(() => setTimeout(async () => {
         await sleep(200);
       }
       assert(await waitFor(`document.getElementById("tab-strip").hidden && ${title} === "Bul"`, 3000), 'close by ×');
+      // ⌥⌘T (the + in the strip): a new empty note in its own tab, ready to type in.
+      await press('T', ['meta', 'alt']);
+      assert(await waitFor(`${tabNames} === '["Bul","*Untitled"]' && document.activeElement?.id === "block-editor"`, 3000), `new note tab: ${await js(tabNames)}`);
+      const untitled = fs.readdirSync(notesDir, { recursive: true }).find((p) => path.basename(String(p)) === 'Untitled.md');
+      assert(untitled, 'no Untitled.md');
+      await typeText('yeni sekme');
+      await press('Escape'); await sleep(700);
+      assert(fs.readFileSync(path.join(notesDir, untitled), 'utf8').startsWith('yeni sekme'), 'typed text not saved');
+      await press('W', ['meta']);
+      assert(await waitFor(`document.getElementById("tab-strip").hidden && ${title} === "Bul"`, 3000), 'new note tab did not close');
     });
 
     // 71. The right pane: ⌥⌘Enter in the switcher opens a note there; its
