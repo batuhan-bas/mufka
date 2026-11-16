@@ -96,11 +96,17 @@ Planner.
 - **Dictate with [Handy](https://handy.computer)** (free, offline): with Handy
   installed, the microphone in a note's top bar (or **⇧⌘D**) starts and stops
   it, and what you say is typed where the caret is. Settings → Voice shows
-  whether Handy is there.
-- **New note from audio** (File menu or ⌘P, with Handy): record, or pick an
-  audio file (m4a, mp3, wav, webm, ogg…); Handy writes it down on your
-  computer and it opens as a note, the recording kept with it (it plays in the
-  note, as `![[memo.m4a]]` does anywhere).
+  whether Handy and VoiceStudio are there.
+- **New note from audio** (File menu or ⌘P, with Handy or
+  [VoiceStudio](https://voicestudio.sh)): record, or pick an audio file (m4a,
+  mp3, wav, webm, ogg…); Handy or VoiceStudio writes it down on your computer
+  and it opens as a note, the recording kept with it (it plays in the note, as
+  `![[memo.m4a]]` does anywhere). VoiceStudio is found while it runs; nothing
+  to set up.
+- **Quick note (⌃⌥N)** from any app: a small box; what you type (or dictate)
+  goes to today's daily note with the time, or start with a note's name
+  ("Groceries: oat milk") to add it to that note. Also in the File menu and the
+  menu bar.
 - **Right-click** a note, folder, board or drawing in the sidebar (or use its
   ⋯): duplicate, move to a folder, copy its path (in the vault or on the
   computer) or a `[[link]]`, reveal it in Finder, rename, delete. Folders also
@@ -130,7 +136,9 @@ Planner.
 - **Trips:** a trip note counts down to it ("12 days to go", "Day 3 of 7") and
   shows how much of the packing list is packed and how many bookings are done.
 - **Meetings:** a meeting note (and one from Wispr Flow) shows when and who,
-  and how many action items are done; each open one can go on a task board.
+  and how many action items are done; each open one can go on a task board,
+  and one that names a day ("by Friday", "tomorrow at 15:00", "25 Nov") can go
+  in the Planner on that day with one click.
 - **Weekly to-do:** the week as seven columns of tasks; tick, add, change and
   drag them between days, move what is left to the next day, and start next
   week with the open ones. In the file they are a heading per day.

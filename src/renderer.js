@@ -43,7 +43,7 @@ import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMont
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder, pastedImageName } from '../lib/drawing.mjs';
 import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
-import { meetingTodos, meetingOf } from '../lib/meetings.mjs';
+import { meetingTodos, meetingOf, todoWhen } from '../lib/meetings.mjs';
 import { wavFromSamples, voiceNoteName, voiceNoteText, HANDY_RATE } from '../lib/audio.mjs';
 import { tripOf } from '../lib/trips.mjs';
 import { icon } from './icons.js';
@@ -315,11 +315,13 @@ function renderPaneActions() {
 // --- Voice: dictation with Handy (main.js starts and stops it) -------------
 // Handy writes where the caret is, so the note keeps an editor focused: the
 // one open, else a new line at the note's end.
-const voice = { handy: false, dictating: null, timer: null }; // dictating: start time
+const voice = { handy: false, studio: false, dictating: null, timer: null }; // dictating: start time; studio: VoiceStudio installed or running
 async function loadVoice() {
   const s = await notesApi.voice().catch(() => null);
   const was = voice.handy;
   voice.handy = Boolean(s && s.handy && s.handy.installed);
+  voice.studio = Boolean(s && s.studio && (s.studio.installed || s.studio.running));
+  voice.studioRunning = Boolean(s && s.studio && s.studio.running);
   if (was !== voice.handy) renderPaneActions();
 }
 const dictateTime = () => { const s = Math.floor((Date.now() - voice.dictating) / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -360,13 +362,41 @@ async function wavFor(bytes) {
   const out = await off.startRendering();
   return wavFromSamples(out.getChannelData(0));
 }
+// Who writes it down: Handy (a WAV made here, its command line) or VoiceStudio
+// (the audio as it is, its local server). The last one chosen is remembered.
+const VOICE_ENGINES = { handy: 'Handy', studio: 'VoiceStudio' };
+const localGet = (k) => { try { return localStorage.getItem(`mufka-${k}`); } catch { return null; } };
+const localSet = (k, v) => { try { localStorage.setItem(`mufka-${k}`, v); } catch { /* ignore */ } };
+const VOICE_LEDE = {
+  handy: 'Handy turns it into text on your computer, with the model chosen in Handy; the note opens when it is done.',
+  studio: 'VoiceStudio turns it into text on your computer, with the model chosen in VoiceStudio; the note opens when it is done.',
+};
 function openVoiceNote() {
-  if (!voice.handy) { showToast('Handy is not installed: see Settings → Voice'); return; }
+  const engines = ['handy', 'studio'].filter((k) => voice[k]);
+  if (!engines.length) { showToast('Install Handy or VoiceStudio first: see Settings → Voice'); return; }
+  let engine = engines.includes(localGet('voiceEngine')) ? localGet('voiceEngine') : engines[0];
   const layer = elem('div', 'palette-layer');
   const box = elem('div', 'palette plan-dialog voice-dialog');
   box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'New note from audio');
-  box.append(elem('div', 'plan-dialog-title', 'New note from audio'),
-    elem('p', 'voice-lede', 'Handy turns it into text on your computer, with the model chosen in Handy; the note opens when it is done.'));
+  const lede = elem('p', 'voice-lede', VOICE_LEDE[engine]);
+  box.append(elem('div', 'plan-dialog-title', 'New note from audio'), lede);
+  if (engines.length > 1) {
+    const row = elem('div', 'voice-engine');
+    const seg = elem('div', 'voice-engine-seg');
+    seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Written down by');
+    for (const k of engines) {
+      const b = elem('button', null, VOICE_ENGINES[k]); b.type = 'button'; b.dataset.engine = k;
+      b.setAttribute('aria-pressed', String(k === engine));
+      b.addEventListener('click', () => {
+        if (busy) return;
+        engine = k; localSet('voiceEngine', k); lede.textContent = VOICE_LEDE[k];
+        seg.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.engine === k)));
+      });
+      seg.append(b);
+    }
+    row.append(elem('span', null, 'Written down by'), seg);
+    box.append(row);
+  }
   const choices = elem('div', 'voice-choices');
   const card = (title, sub, ic) => {
     const b = elem('button', 'btn voice-choice'); b.type = 'button';
@@ -407,14 +437,21 @@ function openVoiceNote() {
   const finish = async (bytes, name, date) => {
     busy = true;
     recordBtn.disabled = true; fileBtn.disabled = true;
-    say(`${name} · reading it…`, 'busy');
-    let wav;
-    try { wav = await wavFor(bytes); } catch { busy = false; say('That file could not be read as audio', 'error'); recordBtn.disabled = false; fileBtn.disabled = false; return; }
-    say(`${name} · Handy is writing it down…`, 'busy');
-    const res = await notesApi.transcribe(wav);
+    const who = VOICE_ENGINES[engine];
+    let res;
+    if (engine === 'studio') {
+      say(`${name} · VoiceStudio is writing it down…`, 'busy');
+      res = await notesApi.studioTranscribe(bytes, name);
+    } else {
+      say(`${name} · reading it…`, 'busy');
+      let wav;
+      try { wav = await wavFor(bytes); } catch { busy = false; say('That file could not be read as audio', 'error'); recordBtn.disabled = false; fileBtn.disabled = false; return; }
+      say(`${name} · Handy is writing it down…`, 'busy');
+      res = await notesApi.transcribe(wav);
+    }
     busy = false;
     if (closed) return;
-    if (!res || res.error) { say(res && res.error ? res.error : 'Handy could not write it down', 'error'); recordBtn.disabled = false; fileBtn.disabled = false; return; }
+    if (!res || res.error) { say(res && res.error ? res.error : `${who} could not write it down`, 'error'); recordBtn.disabled = false; fileBtn.disabled = false; return; }
     const folder = targetFolder();
     const base = name.replace(/\.[^.]*$/, '');
     let audio = '';
@@ -424,11 +461,11 @@ function openVoiceNote() {
     }
     const made = await notesApi.create(folder, base);
     if (!made || !made.rel) { say('Could not create the note', 'error'); return; }
-    await notesApi.write(made.rel, voiceNoteText({ date, audio, text: res.text }));
+    await notesApi.write(made.rel, voiceNoteText({ date, audio, text: res.text, source: who }));
     close();
     await refreshTree();
     await openNote(made.rel, 'oku', { keepTab: true });
-    showToast(res.text ? 'Voice note ready' : 'Handy heard no words in it');
+    showToast(res.text ? 'Voice note ready' : `${who} heard no words in it`);
   };
   fileBtn.addEventListener('click', () => picker.click());
   picker.addEventListener('change', async () => {
@@ -2046,8 +2083,8 @@ function commandList() {
     { label: 'Create new note', hint: '⌘N', run: newNote },
     { label: 'Create new folder', run: newFolder },
     { label: 'Open the week planner', hint: '⌘1', run: () => openPlanner(new Date()) },
-    ...(voice.handy ? [{ label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() },
-      { label: 'New note from audio…', run: () => openVoiceNote() }] : []),
+    ...(voice.handy ? [{ label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() }] : []),
+    ...(voice.handy || voice.studio ? [{ label: 'New note from audio…', run: () => openVoiceNote() }] : []),
     { label: 'New plan', hint: '⇧⌘P', run: () => plannerApi.newPlan(new Date()) },
     { label: 'Open tasks', hint: '⌘3', run: () => openTasks() },
     { label: 'New task board', run: () => newTaskBoard() },
@@ -4534,6 +4571,8 @@ function mountBlockMarkdown(container, bsrc, startLine, scope) {
 function addMeetingTaskButtons(container, startLine) {
   const todos = meetingTodos(state.noteContent);
   if (!todos.length) return;
+  const day = (meetingOf(state.openNote || '', state.noteContent) || {}).date || '';
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(day) ? parseDayKey(day) : new Date();
   const byLine = new Map(todos.map((t) => [t.line, t]));
   const boards = boardList().filter((b) => !isTemplateNote(b.rel));
   container.querySelectorAll('input.task-check').forEach((box) => {
@@ -4542,14 +4581,37 @@ function addMeetingTaskButtons(container, startLine) {
     if (!t || !li) return;
     const title = parseCard(t.text).title.toLowerCase();
     const on = boards.find((b) => parseBoard(b.content).columns.some((c) => c.cards.some((k) => parseCard(k.text).title.toLowerCase() === title)));
-    if (on) { li.append(elem('span', 'meeting-task-on', `On ${on.title}`)); return; }
-    const btn = elem('button', 'meeting-task-btn', 'Add to board');
-    btn.type = 'button';
-    btn.dataset.menuAnchor = `meeting-task-${t.line}`;
-    btn.title = 'Make it a task on a board';
-    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); addMeetingTask(t, boards, btn.dataset.menuAnchor); });
-    li.append(btn);
+    if (on) li.append(elem('span', 'meeting-task-on', `On ${on.title}`));
+    else {
+      const btn = elem('button', 'meeting-task-btn', 'Add to board');
+      btn.type = 'button';
+      btn.dataset.menuAnchor = `meeting-task-${t.line}`;
+      btn.title = 'Make it a task on a board';
+      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); addMeetingTask(t, boards, btn.dataset.menuAnchor); });
+      li.append(btn);
+    }
+    const when = todoWhen(t.text, base);
+    if (when) li.append(meetingPlanButton(t.text, when));
   });
+}
+// The day (and time) a meeting's to-do names (lib/meetings.mjs todoWhen): a
+// button that puts it in the Planner on that day, or where it already is.
+function meetingPlanButton(text, when) {
+  const label = [parseDayKey(when.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', ''), when.time].filter(Boolean).join(' · ');
+  const title = text.trim().toLowerCase();
+  if (state.store.items.some((p) => p.scope === 'day' && p.key === when.date && p.title.toLowerCase() === title)) {
+    return elem('span', 'meeting-task-on', `In Planner · ${label}`);
+  }
+  const btn = elem('button', 'meeting-task-btn', `Plan ${label}`);
+  btn.type = 'button';
+  btn.title = 'Put it in the Planner on that day';
+  btn.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    addPlan(parseDayKey(when.date), { title: text.trim(), time: when.time });
+    btn.replaceWith(elem('span', 'meeting-task-on', `In Planner · ${label}`));
+    showToast(`Added to the Planner · ${label}`);
+  });
+  return btn;
 }
 function addMeetingTask(todo, boards, anchor) {
   const go = (b) => {
@@ -5373,8 +5435,30 @@ function openSettings() {
       handySide.append(elem('span', 'conn-state', 'Not installed'), get);
     }
   };
-  drawHandy();
-  loadVoice().then(drawHandy);
+  // VoiceStudio: turns audio into a note (main.js finds its local server).
+  const studioRow = elem('div', 'conn-row');
+  studioRow.dataset.conn = 'voicestudio';
+  const studioText = elem('div', 'conn-text');
+  studioText.append(elem('span', 'conn-name', 'VoiceStudio'),
+    elem('span', 'conn-note', 'Turns a recording or an audio file into a note, on your computer, with the speech model chosen in VoiceStudio. Mufka finds it while it is running; nothing to set up.'));
+  const studioSide = elem('div', 'conn-side');
+  studioRow.append(studioText, studioSide);
+  section.append(studioRow);
+  const drawStudio = () => {
+    studioSide.replaceChildren();
+    if (voice.studioRunning) studioSide.append(elem('span', 'conn-state ok', 'Running'), elem('span', 'conn-info', 'Choose it in File → New Note from Audio…'));
+    else if (voice.studio) {
+      const open = elem('button', 'btn', 'Open VoiceStudio'); open.type = 'button';
+      open.addEventListener('click', async () => { await notesApi.openStudio(); setTimeout(() => loadVoice().then(drawStudio), 8000); });
+      studioSide.append(elem('span', 'conn-state', 'Not running'), open);
+    } else {
+      const get = elem('button', 'btn', 'Get VoiceStudio ↗'); get.type = 'button';
+      get.addEventListener('click', () => notesApi.openExternal('https://voicestudio.sh'));
+      studioSide.append(elem('span', 'conn-state', 'Not installed'), get);
+    }
+  };
+  drawHandy(); drawStudio();
+  loadVoice().then(() => { drawHandy(); drawStudio(); });
   box.append(section);
   box.append(mcpSection());
   box.append(updatesSection());

@@ -83,9 +83,17 @@ contextBridge.exposeInMainWorld('notes', {
   handyToggle: () => ipcRenderer.invoke('voice:handyToggle'),
   // A 16 kHz mono WAV (bytes) → { text } from Handy; cancel stops it.
   transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),
+  // The audio as it is (bytes, file name) → { text } from VoiceStudio's local server.
+  studioTranscribe: (data, name) => ipcRenderer.invoke('voice:studioTranscribe', data, name),
+  openStudio: () => ipcRenderer.invoke('voice:openStudio'),
   cancelTranscribe: () => ipcRenderer.invoke('voice:cancel'),
   saveAudio: (noteDir, name, data) => ipcRenderer.invoke('voice:saveAudio', noteDir, name, data),
   micAccess: () => ipcRenderer.invoke('voice:micAccess'),
+  // Quick note (⌃⌥N): where a line would go ({ to: note title | null for the
+  // daily note}), add it, close the box.
+  quickTarget: (text) => ipcRenderer.invoke('quick:target', text),
+  quickAdd: (text) => ipcRenderer.invoke('quick:add', text),
+  quickClose: () => ipcRenderer.invoke('quick:close'),
   menubar: () => ipcRenderer.invoke('menubar:get'),
   setMenubar: (on) => ipcRenderer.invoke('menubar:set', on),
   // AI clients (MCP): { enabled, allowWrite, allowTicks, json, command }; set takes any of the three switches.

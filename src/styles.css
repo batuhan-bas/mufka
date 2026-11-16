@@ -1811,6 +1811,11 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 /* New note from audio (Handy). */
 .voice-dialog { width: min(480px, calc(100vw - 32px)); }
 .voice-lede { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.voice-engine { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.voice-engine-seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+.voice-engine-seg button { font: inherit; font-size: 13px; padding: 3px 12px; border: 0; background: transparent; color: var(--text); cursor: pointer; }
+.voice-engine-seg button + button { border-left: 1px solid var(--line-strong); }
+.voice-engine-seg button[aria-pressed="true"] { background: var(--accent-fill, var(--accent)); color: #fff; }
 .voice-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .voice-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px; height: auto; text-align: left; }
 .voice-choice span { color: var(--muted); font-size: 12px; font-weight: 400; }
@@ -1819,3 +1824,20 @@ mark.ara-hit { background: var(--mark); color: inherit; border-radius: 2px; padd
 .voice-status.rec, .voice-status.error { color: var(--danger); }
 .voice-keep { display: flex; gap: 8px; align-items: center; font-size: 13px; margin-top: 10px; }
 .att-audio { display: block; width: 100%; max-width: 480px; margin: 4px 0; }
+
+/* Quick note (⌃⌥N, src/quick.js): the whole small window. */
+body.quick-page { margin: 0; overflow: hidden; background: var(--ground); }
+.quick-box { padding: 14px 16px 10px; -webkit-app-region: drag; }
+.quick-row { display: flex; align-items: center; gap: 10px; }
+.quick-row > * { -webkit-app-region: no-drag; }
+.quick-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 17px; padding: 6px 0; }
+.quick-input::placeholder { color: var(--muted); }
+.quick-to { font-size: 12.5px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.quick-hint { font-size: 12px; color: var(--muted); margin: 6px 0 0 42px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-hint.done { color: var(--green, var(--accent)); }
+.quick-hint.rec, .quick-hint.err { color: var(--danger); }
+.quick-hint b { color: var(--text); font-weight: 600; }
+.quick-mic.rec { width: auto; padding: 0 9px; gap: 6px; display: inline-flex; align-items: center; color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.quick-mic-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+.quick-mic-time { font-size: 12px; font-variant-numeric: tabular-nums; }
+.quick-mic.wait { opacity: .55; pointer-events: none; }

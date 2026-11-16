@@ -26,3 +26,27 @@ test('a meeting from Wispr Flow: its Tasks are the action items', () => {
   assert.deepEqual([m.date, m.time, m.attendees, m.actions], ['2026-11-16', '10:00–10:45', ['Ayşe', 'Can'], { done: 1, total: 2 }]);
   assert.deepEqual(meetingTodos(w).map((t) => t.text), ['Send the deck']);
 });
+
+test('todoWhen: the day (and time) an action item names, counted from the meeting', async () => {
+  const { todoWhen } = await import('../lib/meetings.mjs');
+  const mon = new Date(2026, 10, 16); // Monday 16 Nov 2026
+  const w = (t) => todoWhen(t, mon);
+  assert.deepEqual(w('Send the deck to Ayşe by Friday'), { date: '2026-11-20', time: '' });
+  assert.deepEqual(w('Call the designer tomorrow at 15:00'), { date: '2026-11-17', time: '15:00' });
+  assert.deepEqual(w('Book the room for 25 Nov 09:30'), { date: '2026-11-25', time: '09:30' });
+  assert.deepEqual(w('meet at 3pm on Wednesday'), { date: '2026-11-18', time: '15:00' });
+  assert.deepEqual(w('Monday review'), { date: '2026-11-23', time: '' }, 'the same weekday is a week on');
+  assert.deepEqual(w('Nov 3 launch'), { date: '2027-11-03', time: '' }, 'a day already past is next year');
+  assert.deepEqual(w('deadline 2026-12-01'), { date: '2026-12-01', time: '' });
+  assert.deepEqual(w('day after tomorrow'), { date: '2026-11-18', time: '' });
+  // Turkish
+  assert.deepEqual(w("yarın 10:00 Ayşe'yi ara"), { date: '2026-11-17', time: '10:00' });
+  assert.deepEqual(w('Cumartesi pikniği'), { date: '2026-11-21', time: '' }, 'cumartesi, not cuma');
+  assert.deepEqual(w('Pazartesi 14.30 sunum'), { date: '2026-11-23', time: '14:30' }, 'pazartesi, not pazar');
+  assert.deepEqual(w('25 Kasım raporu'), { date: '2026-11-25', time: '' });
+  // nothing to go on
+  assert.equal(w('Review the budget'), null);
+  assert.equal(w('Kasım raporunu bitir'), null, 'a month alone is not a day');
+  assert.equal(w('at 15:00'), null, 'a time alone is not a day');
+  assert.equal(w('the cumulative todays'), null, 'parts of words do not count');
+});

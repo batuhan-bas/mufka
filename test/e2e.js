@@ -2094,6 +2094,126 @@ app.whenReady().then(() => setTimeout(async () => {
       delete process.env.MUFKA_HANDY_PATH;
     });
 
+    // 64j. A meeting to-do that names a day gets "Plan <day>": one click puts
+    //      it in the Planner on that day (counted from the meeting's date).
+    await step('64j', 'a meeting to-do that names a day goes in the Planner', async () => {
+      fs.writeFileSync(path.join(tvault, 'Meetings', 'Bank call.md'), '---\ntype: meeting\ndate: 2026-11-16\n---\n\n## Action items\n\n- [ ] Call the bank tomorrow at 15:00\n- [ ] Review the budget\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Bank call'); await enter();
+      const btn = `[...document.querySelectorAll('.meeting-task-btn')].find(b => b.textContent.startsWith('Plan '))`;
+      assert(await waitFor(`(${btn})?.textContent === 'Plan Tue 17 Nov · 15:00' && [...document.querySelectorAll('.meeting-task-btn')].filter(b => b.textContent.startsWith('Plan ')).length === 1`, 3000), `no Plan button: ${await js('[...document.querySelectorAll(".meeting-task-btn")].map(b => b.textContent).join("|")')}`);
+      await clickEval(btn, 'Plan');
+      assert(await waitFor(`[...document.querySelectorAll('.meeting-task-on')].some(s => s.textContent === 'In Planner · Tue 17 Nov · 15:00')`, 3000), 'the note does not say the Planner has it');
+      const plans = () => { try { return JSON.parse(fs.readFileSync(path.join(tmp, 'planlar.json'), 'utf8')).items || []; } catch { return []; } };
+      assert(await waitFor2(() => plans().some((p) => p.key === '2026-11-17' && p.time === '15:00' && p.title === 'Call the bank tomorrow at 15:00'), 3000), `plan not saved: ${JSON.stringify(plans().slice(-2))}`);
+    });
+
+    // 64k. VoiceStudio writes it down: a stand-in for its local server takes
+    //      the audio as it is; the note says VoiceStudio wrote it.
+    await step('64k', 'new note from audio written down by VoiceStudio', async () => {
+      const http = require('http');
+      let got = '';
+      const server = http.createServer((req, res) => {
+        res.setHeader('content-type', 'application/json');
+        if (req.url === '/health') { res.end('{"status":"ok"}'); return; }
+        let body = ''; req.on('data', (d) => { body += d.toString('latin1'); });
+        req.on('end', () => { got = body; res.end(JSON.stringify({ text: 'Pay the rent on Friday.', duration_s: 1 })); });
+      });
+      await new Promise((r) => server.listen(0, '127.0.0.1', r));
+      process.env.MUFKA_STUDIO_URL = `http://127.0.0.1:${server.address().port}`;
+      try {
+        BrowserWindow.getAllWindows()[0].emit('focus');
+        await sleep(600);
+        await press('P', ['meta']); await typeText('New note from audio'); await enter();
+        assert(await waitFor('!!document.querySelector(".voice-dialog input[type=file]")', 3000), 'no New note from audio dialog');
+        const studio = `document.querySelector('.voice-engine-seg button[data-engine="studio"]')`;
+        if (await js(`!!${studio}`)) await clickEval(studio, 'VoiceStudio');
+        assert(await waitFor('/VoiceStudio turns it/.test(document.querySelector(".voice-lede")?.textContent || "")', 2000), 'VoiceStudio not chosen');
+        await js(`(() => { const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(2000).fill(7)], 'Rent memo.m4a', { type: 'audio/mp4' })); const p = document.querySelector('.voice-dialog input[type=file]'); p.files = dt.files; p.dispatchEvent(new Event('change')); return true; })()`);
+        assert(await waitFor('document.querySelector(".note-title")?.textContent === "Rent memo"', 8000), `no voice note: ${await js('document.querySelector(".voice-status")?.textContent')}`);
+        const f = fs.readdirSync(tvault, { recursive: true }).find((p) => String(p).endsWith('Rent memo.md'));
+        const note = fs.readFileSync(path.join(tvault, f), 'utf8');
+        assert(/source: VoiceStudio[\s\S]*!\[\[Rent memo\.m4a\]\]\n\nPay the rent on Friday\./.test(note), `note text:\n${note}`);
+        assert(/name="audio"; filename="Rent memo\.m4a"/.test(got), 'the audio was not sent as it is');
+      } finally {
+        delete process.env.MUFKA_STUDIO_URL;
+        server.close();
+      }
+    });
+
+    // 64l. Quick note (⌃⌥N, File → Quick Note…): a small window; a line goes
+    //      to today's daily note with the time, "Name: text" to that note.
+    await step('64l', 'quick note adds a line to the daily note or a named note', async () => {
+      fs.writeFileSync(path.join(tvault, 'Groceries.md'), '# Groceries\n\n- bread\n');
+      await sleep(900);
+      const item = Menu.getApplicationMenu().items.flatMap((m) => (m.submenu ? m.submenu.items : [])).find((i) => i.label === 'Quick Note…');
+      assert(item, 'no Quick Note… in the menu');
+      const quick = async (text) => {
+        item.click();
+        let q = null;
+        for (let i = 0; i < 40 && !q; i++) { await sleep(100); q = BrowserWindow.getAllWindows().find((w) => w.webContents !== wc && !w.isDestroyed() && w.getSize()[1] < 200); }
+        assert(q, 'no quick note window');
+        const qjs = (c) => q.webContents.executeJavaScript(c);
+        for (let i = 0; i < 40 && !(await qjs('!!document.querySelector(".quick-input")').catch(() => false)); i++) await sleep(100);
+        q.focus();
+        for (const ch of text) { q.webContents.sendInputEvent({ type: 'char', keyCode: ch }); await sleep(5); }
+        await sleep(300);
+        const chip = await qjs('document.querySelector(".quick-to").textContent');
+        q.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); q.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); q.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        for (let i = 0; i < 40 && !q.isDestroyed(); i++) await sleep(100);
+        assert(q.isDestroyed(), 'the quick note window did not close');
+        return chip;
+      };
+      assert(await quick('Ask Mert about the logo') === "→ Today's daily note", 'not shown going to the daily note');
+      const daily = () => { const f = fs.readdirSync(tvault, { recursive: true }).find((p) => path.basename(String(p)) === `${todayKey}.md`); return f ? fs.readFileSync(path.join(tvault, f), 'utf8') : ''; };
+      assert(/^- \d\d:\d\d Ask Mert about the logo$/m.test(daily()), `daily note:\n${daily()}`);
+      assert(await quick('groceries: oat milk') === '→ Groceries', 'not shown going to Groceries');
+      assert(fs.readFileSync(path.join(tvault, 'Groceries.md'), 'utf8') === '# Groceries\n\n- bread\n- oat milk\n', 'not added to Groceries');
+    });
+
+    // 64m. Quick note dictation: the mic turns into a running Stop timer, a
+    //      second press (Enter) stops Handy, and what Handy types lands in
+    //      the box to be checked and added with Enter.
+    await step('64m', 'quick note mic shows listening, stops, and waits for Enter', async () => {
+      if (process.platform === 'win32') return; // the stand-in is a shell script
+      const handy = path.join(tmp, 'Handy');
+      const log = path.join(tmp, 'handy-quick.log');
+      fs.writeFileSync(handy, `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$1" = "--start-hidden" ]; then i=0; while [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done; fi\n`, { mode: 0o755 });
+      process.env.MUFKA_HANDY_PATH = handy;
+      try {
+        const item = Menu.getApplicationMenu().items.flatMap((m) => (m.submenu ? m.submenu.items : [])).find((i) => i.label === 'Quick Note…');
+        item.click();
+        let q = null;
+        for (let i = 0; i < 40 && !q; i++) { await sleep(100); q = BrowserWindow.getAllWindows().find((w) => w.webContents !== wc && !w.isDestroyed() && w.getSize()[1] < 200); }
+        assert(q, 'no quick note window');
+        const qjs = (c) => q.webContents.executeJavaScript(c);
+        const qwait = async (c, ms = 4000) => { for (let i = 0; i < ms / 100; i++) { if (await qjs(c).catch(() => false)) return true; await sleep(100); } return false; };
+        assert(await qwait('!!document.querySelector(".quick-mic") && !document.querySelector(".quick-mic").hidden'), 'no mic in the quick box');
+        assert(await qwait('/click the mic to speak/.test(document.querySelector(".quick-hint").textContent)'), 'hint does not mention the mic');
+        q.focus();
+        const r = await qjs('(() => { const b = document.querySelector(".quick-mic").getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; })()');
+        q.webContents.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+        q.webContents.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+        assert(await qwait('document.querySelector(".quick-mic").classList.contains("rec") && /Stop/.test(document.querySelector(".quick-mic").textContent)', 6000), 'mic did not turn into Stop');
+        assert(await qjs('/Listening/.test(document.querySelector(".quick-hint").textContent) && document.querySelector(".quick-input").placeholder.startsWith("Listening")'), 'not shown as listening');
+        q.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); q.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); q.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        assert(await qwait('document.querySelector(".quick-input").placeholder === "Writing it down…" && /writing down/.test(document.querySelector(".quick-hint").textContent)'), 'not shown as writing it down');
+        assert(!q.isDestroyed(), 'Enter while listening closed the box');
+        const toggles = fs.readFileSync(log, 'utf8').split('\n').filter((l) => l === '--toggle-transcription').length;
+        assert(toggles === 2, `Handy toggled ${toggles} times`);
+        q.webContents.insertText('Buy stamps');
+        assert(await qwait('/Check it/.test(document.querySelector(".quick-hint").textContent) && !document.querySelector(".quick-mic").classList.contains("wait")'), 'not asked to check the text');
+        q.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); q.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); q.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        for (let i = 0; i < 40 && !q.isDestroyed(); i++) await sleep(100);
+        assert(q.isDestroyed(), 'the quick note window did not close');
+        const f = fs.readdirSync(tvault, { recursive: true }).find((p) => path.basename(String(p)) === `${todayKey}.md`);
+        assert(/^- \d\d:\d\d Buy stamps$/m.test(fs.readFileSync(path.join(tvault, f), 'utf8')), 'dictated line not in the daily note');
+      } finally {
+        require('child_process').spawnSync('pkill', ['-f', handy]);
+        delete process.env.MUFKA_HANDY_PATH;
+      }
+    });
+
     // 65. File recovery: a saved change keeps the text it replaced; the
     //     version comes back from Version history; a deleted note comes back
     //     from Recover deleted notes. Versions live outside the vault.
