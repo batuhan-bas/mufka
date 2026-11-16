@@ -986,6 +986,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 
 /* --- Day page: read-only agenda + empty state --- */
 .agenda-open { display: inline-flex; align-items: center; gap: 8px; background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; flex: 1; min-width: 0; }
+.agenda-open .plan-title { cursor: inherit; }
 .agenda-open:hover .plan-title { text-decoration: underline; text-decoration-color: var(--line-strong); }
 .agenda-row.done .plan-title { text-decoration: line-through; color: var(--muted); }
 .empty-day { border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 16px 18px; margin: 4px 0 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
