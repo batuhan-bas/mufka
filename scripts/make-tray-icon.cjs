@@ -10,9 +10,14 @@ const build = path.join(__dirname, '..', 'build');
 const svg = fs.readFileSync(path.join(build, 'icon.svg'), 'utf8');
 const mark = svg.match(/<path d="([^"]+)"/)[1];
 const dot = svg.match(/<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"/);
+// The dot's stroke (the tile's colour) is a gap between it and the mark: in
+// the template the gap is cut out of the mark and the dot is what is inside.
+const sw = Number((svg.match(/<circle[^>]*stroke-width="([\d.]+)"/) || [])[1] || 0);
+const [cx, cy, r] = [dot[1], dot[2], Number(dot[3])];
 // The mark sits in 129..552 × 104..567 of the inner tile; a square around it.
 const art = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="96 90 490 490">
-  <path d="${mark}" fill="#000"/><circle cx="${dot[1]}" cy="${dot[2]}" r="${dot[3]}" fill="#000"/></svg>`;
+  <mask id="gap"><rect x="0" y="0" width="1000" height="1000" fill="#fff"/><circle cx="${cx}" cy="${cy}" r="${r + sw / 2}" fill="#000"/></mask>
+  <path d="${mark}" fill="#000" mask="url(#gap)"/><circle cx="${cx}" cy="${cy}" r="${r - sw / 2}" fill="#000"/></svg>`;
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, transparent: true, frame: false, webPreferences: { offscreen: true } });
