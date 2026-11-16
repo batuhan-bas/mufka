@@ -857,8 +857,9 @@ function openGraph({ local = false, focus = false } = {}) {
 }
 // --- tabs and back / forward (lib/tabs.mjs, lib/navhistory.mjs) ---
 // Every way of opening something goes through navVisit. Each tab has its own
-// back/forward history (⌘[ / ⌘], the ‹ › in the pane bar). ⌘-click (or
-// ⌘Enter) opens the place in a new tab; ⌘W closes a tab, ⇧⌘[ ⇧⌘] switch.
+// back/forward history (⌘[ / ⌘], the ‹ › in the pane bar). A note opened
+// from another note gets its own tab (navVisit); ⌘-click (or ⌘Enter) opens
+// any place in a new tab; ⌘W closes a tab, ⇧⌘[ ⇧⌘] switch.
 
 const tabs = createTabs(() => createNavHistory());
 tabs.add(null);
@@ -878,6 +879,7 @@ let newTabAsk = 0;
 const askNewTab = (e) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.type === 'click' || e.key === 'Enter')) newTabAsk = Date.now(); };
 document.addEventListener('click', askNewTab, true);
 document.addEventListener('keydown', askNewTab, true);
+const docPlace = (loc) => !!(loc && loc.rel && (loc.view === 'note' || loc.view === 'tasks' || loc.view === 'draw'));
 function navVisit(to) {
   hidePreview();
   state.menu = null; // a row menu belongs to the pane it was opened on
@@ -887,6 +889,15 @@ function navVisit(to) {
     if (!sameLocation(from, to)) { tabs.active.loc = from; tabs.add(to); updateNavButtons(); return; }
   }
   newTabAsk = 0;
+  if (!navigating && docPlace(to)) {
+    // A note (board, drawing) opened from another one opens beside it, in a
+    // tab of its own, or goes to the tab already showing it. From Home, the
+    // Planner or the graph it opens in place.
+    const from = currentLocation();
+    const there = tabs.list.find((t) => t !== tabs.active && sameLocation(t.loc, to));
+    if (there) { tabs.active.loc = from; tabs.activate(there.id); updateNavButtons(); return; }
+    if (docPlace(from) && from.rel !== to.rel) { tabs.active.loc = from; tabs.add(to); updateNavButtons(); return; }
+  }
   if (!navigating) curNav().visit(currentLocation(), to);
   updateNavButtons();
 }
