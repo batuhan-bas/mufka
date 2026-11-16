@@ -125,7 +125,9 @@ function handyRunning(bin) {
     return spawnSync('pgrep', ['-if', bin], { timeout: 3000 }).status === 0;
   } catch { return false; }
 }
-const runDetached = (bin, args) => spawn(bin, args, { detached: true, stdio: 'ignore' }).unref();
+// A Handy that cannot be started reports it as an 'error' event; left
+// unhandled, that would take down the main process.
+const runDetached = (bin, args) => { const c = spawn(bin, args, { detached: true, stdio: 'ignore' }); c.on('error', () => {}); c.unref(); };
 async function handyToggle() {
   const bin = handyPath();
   if (!bin) throw new Error('Handy is not installed');

@@ -2175,6 +2175,7 @@ app.whenReady().then(() => setTimeout(async () => {
     //      second press (Enter) stops Handy, and what Handy types lands in
     //      the box to be checked and added with Enter.
     await step('64m', 'quick note mic shows listening, stops, and waits for Enter', async () => {
+      if (process.platform === 'win32') return; // the stand-in is a shell script
       const handy = path.join(tmp, 'Handy');
       const log = path.join(tmp, 'handy-quick.log');
       fs.writeFileSync(handy, `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$1" = "--start-hidden" ]; then i=0; while [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done; fi\n`, { mode: 0o755 });
