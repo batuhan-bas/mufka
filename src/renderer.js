@@ -42,7 +42,7 @@ import { habitTable, toggleHabit, addHabit, habitWeek, shiftWeek, weekMonday, ne
 import { budgetTables, budgetSettings, categoryChoices, addBudgetRow, budgetMonth, shiftMonth, nextMonthText } from '../lib/budget.mjs';
 import { renderDraw, closeDrawing, drawingChanged, drawingPreview } from './draw.js';
 import { isDrawingRel, isDrawingText, drawingTitle, emptyScene, serializeDrawing, drawingFolder, pastedImageName } from '../lib/drawing.mjs';
-import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard } from '../lib/kanban.mjs';
+import { isBoard, parseBoard, serializeBoard, newBoard, dueTasks, dayTasks, parseCard, completeTask, reopenTask, findOpenTask } from '../lib/kanban.mjs';
 import { meetingTodos, meetingOf, todoWhen } from '../lib/meetings.mjs';
 import { wavFromSamples, voiceNoteName, voiceNoteText, HANDY_RATE } from '../lib/audio.mjs';
 import { tripOf } from '../lib/trips.mjs';
@@ -259,6 +259,12 @@ function undoDelete() {
   } else if (last.type === 'exception') {
     const plan = state.store.items.find((x) => x.id === last.id);
     if (plan && plan.exceptions) delete plan.exceptions[last.dateKey];
+  } else if (last.type === 'board') {
+    setBoardText(last.rel, last.content);
+    if (last.tick === 'add') homeTicked = homeTicked.filter((x) => x !== last.entry);
+    if (last.tick === 'remove') homeTicked.push(last.entry);
+    render();
+    return;
   } else {
     state.store.items.splice(Math.min(last.index, state.store.items.length), 0, last.plan);
   }
@@ -2262,8 +2268,8 @@ function renderDayPage() {
     col.append(more);
   }
   // Tasks from the boards (Tasks): due this day; today also late and in progress.
-  const tasks = homeTasks(date);
-  if (tasks.length) col.append(section('Tasks', tasks.map((t) => homeTaskRow(t))));
+  const tasks = withTicked(homeTasks(date), date);
+  if (tasks.length) col.append(section('Tasks', tasks.map((t, i) => homeTaskRow(t, date, i))));
 
   // The day's part of this week's to-do and habit tracker notes.
   for (const sec of todayFromWeekNotes(date)) col.append(sec);
@@ -2317,23 +2323,83 @@ function homeTasks(date) {
   const prio = (t) => (t.priority ? Number(t.priority.slice(1)) : 9);
   return out.sort((a, b) => WHY_ORDER[a.why] - WHY_ORDER[b.why] || prio(a) - prio(b));
 }
-// A board task on the day's page, to read: a click opens it on its board.
-function homeTaskRow(t) {
-  const li = elem('li', `plan-row agenda-row home-task${t.why === 'late' ? ' late' : ''}`);
-  li.append(elem('span', 'home-task-box'));
+// A board task on the day's page: its box marks it done (completeHomeTask)
+// or, once done, open again; a click on the rest opens it on its board.
+function homeTaskRow(t, date, pos) {
+  const li = elem('li', `plan-row agenda-row home-task${t.done ? ' done' : t.why === 'late' ? ' late' : ''}`);
+  const box = elem('button', 'home-task-box');
+  box.type = 'button';
+  box.setAttribute('role', 'checkbox');
+  box.setAttribute('aria-checked', t.done ? 'true' : 'false');
+  box.setAttribute('aria-label', `Done: ${t.title}`);
+  box.title = t.done ? 'Not done (moves it back)' : 'Done (moves it to Done)';
+  if (t.done) box.append(icon('check', { size: 11 }));
+  box.addEventListener('click', () => (t.done ? reopenHomeTask(t) : completeHomeTask(t, date, pos)));
+  li.append(box);
   const open = elem('button', 'agenda-open');
   open.type = 'button';
   open.title = `Open on the board ${t.board}`;
   open.append(elem('span', 'plan-title', t.title));
   const tags = elem('span', 'home-task-tags');
   if (t.priority) tags.append(elem('span', `tk-prio ${t.priority.toLowerCase()}`, t.priority));
-  if (t.why === 'late') tags.append(elem('span', 'home-task-why late', `Late · ${prettyDue(t.due)}`));
+  if (t.done) { /* done: no Late / In progress */ } else if (t.why === 'late') tags.append(elem('span', 'home-task-why late', `Late · ${prettyDue(t.due)}`));
   else if (t.why === 'doing') tags.append(elem('span', 'home-task-why', 'In progress'));
   tags.append(elem('span', 'home-task-board', t.board));
   open.append(tags);
-  open.addEventListener('click', () => plannerApi.openTask(t));
+  open.addEventListener('click', () => (t.done ? openTasks(t.rel) : plannerApi.openTask(t)));
   li.append(open);
   return li;
+}
+
+// Write a board's text from outside the Tasks view (Home, ⌘Z there).
+function setBoardText(rel, text) {
+  const vn = state.vaultNotes.find((n) => n.rel === rel);
+  if (vn) vn.content = text;
+  if (state.board && state.board.rel === rel) state.board.content = text;
+  dueCache.notes = null;
+  ownBoardWrites.add(text);
+  boardSaveChain = boardSaveChain.then(() => notesApi.write(rel, text))
+    .catch((e) => { console.error('board save failed', e); showToast('Could not save the board'); })
+    .finally(() => setTimeout(() => ownBoardWrites.delete(text), 4000));
+}
+// Tasks ticked on Home stay there, done, where they were, so they can be
+// unticked: { ...task, done: true, day, pos, col, ki } (col and ki: where it
+// was on its board). Only while Mufka runs.
+let homeTicked = [];
+function withTicked(open, date) {
+  const key = dayKey(date);
+  const isOpen = (x) => open.some((t) => t.rel === x.rel && t.title === x.title);
+  homeTicked = homeTicked.filter((x) => !isOpen(x)); // open again (⌘Z, the board)
+  const out = [...open];
+  for (const x of homeTicked.filter((x) => x.day === key).sort((a, b) => a.pos - b.pos)) out.splice(Math.min(x.pos, out.length), 0, x);
+  return out;
+}
+// Ticked on Home: the task goes to its board's Done column; ⌘Z puts it back.
+async function completeHomeTask(t, date, pos) {
+  const res = await notesApi.read(t.rel);
+  if (!res || res.error) { showToast('Could not open the board'); return; }
+  const board = parseBoard(res.content);
+  const at = findOpenTask(board, t);
+  const next = at && completeTask(board, t);
+  if (!next) { showToast('The task has changed on its board'); render(); return; }
+  const entry = { ...t, done: true, day: dayKey(date), pos, col: board.columns[at.ci].title, ki: at.ki };
+  homeTicked.push(entry);
+  pushUndo({ type: 'board', rel: t.rel, content: res.content, tick: 'add', entry });
+  setBoardText(t.rel, serializeBoard(next));
+  render();
+  showToast(K(`Done: ${t.title} · ⌘Z undoes`));
+}
+// Unticked on Home: back to the column it came from.
+async function reopenHomeTask(entry) {
+  const res = await notesApi.read(entry.rel);
+  if (!res || res.error) { showToast('Could not open the board'); return; }
+  const next = reopenTask(parseBoard(res.content), entry);
+  homeTicked = homeTicked.filter((x) => x !== entry);
+  if (!next) { showToast('The task has changed on its board'); render(); return; }
+  pushUndo({ type: 'board', rel: entry.rel, content: res.content, tick: 'remove', entry });
+  setBoardText(entry.rel, serializeBoard(next));
+  render();
+  showToast(K(`Not done: ${entry.title} · ⌘Z undoes`));
 }
 
 // Nothing planned: say so and offer the Planner.

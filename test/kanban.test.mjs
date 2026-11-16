@@ -5,6 +5,7 @@ import {
   addCard, updateCard, removeCard, moveCard, addColumn, renameColumn, removeColumn, moveColumn,
   setCompleteColumn, cardMatches, boardTags, DEFAULT_COLUMNS,
   isDefaultColumn, missingDefaults, addDefaultColumn, dueTasks, dayTasks, archivedTasks, archiveDone, restoreArchived,
+  completeTask, reopenTask,
 } from '../lib/kanban.mjs';
 
 // What Obsidian's Kanban plugin writes.
@@ -244,6 +245,34 @@ test('dayTasks: due that day; on today also late and in progress', () => {
   ].join('\n'));
   assert.deepEqual(dayTasks(board, '2026-11-16', true).map((t) => `${t.why}:${t.title}`), ['due:Due today', 'late:Late', 'doing:Working on it']);
   assert.deepEqual(dayTasks(board, '2026-11-20', false).map((t) => `${t.why}:${t.title}`), ['due:Later']);
+});
+
+test('completeTask: the task goes to the top of Done; found again if the board moved', () => {
+  const src = [
+    '---', 'kanban-plugin: board', '---', '',
+    '## To do', '', '- [ ] First', '- [ ] Ship it @{2026-11-16}', '\tWith a note', '',
+    '## Done', '', '**Complete**', '- [x] Old', '',
+  ].join('\n');
+  const board = parseBoard(src);
+  const done = completeTask(board, { ci: 0, ki: 1, title: 'Ship it' });
+  assert.deepEqual(done.columns[0].cards.map((c) => c.text), ['First']);
+  assert.deepEqual(done.columns[1].cards.map((c) => [c.checked, c.text]), [[true, 'Ship it @{2026-11-16}\nWith a note'], [true, 'Old']]);
+  assert.deepEqual(dayTasks(done, '2026-11-16', true), []);
+  // A task added above it since Home was drawn: found by its title.
+  const moved = parseBoard(src.replace('- [ ] First', '- [ ] New\n- [ ] First'));
+  assert.equal(completeTask(moved, { ci: 0, ki: 1, title: 'Ship it' }).columns[1].cards[0].text.split('\n')[0], 'Ship it @{2026-11-16}');
+  // Gone or already done: null, nothing changes.
+  assert.equal(completeTask(done, { ci: 0, ki: 1, title: 'Ship it' }), null);
+  // No Done column: ticked where it is.
+  const plain = parseBoard(['---', 'kanban-plugin: board', '---', '', '## To do', '', '- [ ] Ship it', ''].join('\n'));
+  assert.equal(completeTask(plain, { ci: 0, ki: 0, title: 'Ship it' }).columns[0].cards[0].checked, true);
+  // Unticked: back to its column and place, open again.
+  const back = reopenTask(done, { title: 'Ship it', col: 'To do', ki: 1 });
+  assert.equal(serializeBoard(back), serializeBoard(board));
+  assert.equal(reopenTask(back, { title: 'Ship it', col: 'To do', ki: 1 }), null);
+  // Its column is gone: the first open column. Ticked in place: unticked there.
+  assert.deepEqual(reopenTask(done, { title: 'Ship it', col: 'Gone', ki: 5 }).columns[0].cards.map((c) => [c.checked, c.text.split('\n')[0]]), [[false, 'First'], [false, 'Ship it @{2026-11-16}']]);
+  assert.equal(reopenTask(completeTask(plain, { ci: 0, ki: 0, title: 'Ship it' }), { title: 'Ship it', col: 'To do', ki: 0 }).columns[0].cards[0].checked, false);
 });
 
 test('archive: done tasks move under ## Archive, the settings stay, and come back', () => {
