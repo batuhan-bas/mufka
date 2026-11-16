@@ -1073,8 +1073,10 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .pl-board-task.p2 { border-left: 3px solid var(--c-amber); }
 .pl-board-task.late .pl-board-task-box { border-color: var(--danger); }
 /* Board tasks on a day's Home page: read-only rows that open the task. */
-.home-task-box { flex: none; width: 14px; height: 14px; margin: 0 2px; border: 1.5px solid var(--muted); border-radius: 4px; }
+.home-task-box { flex: none; width: 14px; height: 14px; margin: 0 2px; padding: 0; background: none; border: 1.5px solid var(--muted); border-radius: 4px; cursor: pointer; }
 .home-task.late .home-task-box { border-color: var(--danger); }
+.home-task .home-task-box:hover { border-color: var(--text); }
+.home-task .home-task-box[aria-checked="true"] { display: grid; place-items: center; background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
 .home-task-tags { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
 .home-task-why, .home-task-board { font-size: 12px; color: var(--muted); }
 .home-task-why.late { color: var(--danger); }

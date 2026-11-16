@@ -1867,7 +1867,7 @@ app.whenReady().then(() => setTimeout(async () => {
 
     // 64b. A board task with a due date shows on its day in the Planner and on
     //      Home; clicking it opens its board with the task's dialog.
-    await step('64b', 'a task due today shows in the Planner and on Home, and opens its board', async () => {
+    await step('64b', 'a task due today shows in the Planner and on Home, opens its board, and is ticked from Home', async () => {
       await sleep(1700); // past Mufka's own last write of the board
       fs.writeFileSync(boardFile, boardText().replace('## To do\n\n', `## To do\n\n- [ ] Due in the planner @{${todayK}} !P1\n`));
       await clickSel('#mode-planner');
@@ -1897,6 +1897,23 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval(`${row}.querySelector('.agenda-open')`, 'Home task');
       assert(await waitFor('document.querySelector(".tk-panel[role=dialog] .tk-panel-title")?.value === "Due in the planner"', 3000), 'Home did not open the task');
       await press('Escape'); await sleep(200);
+      // Its box marks it done: it goes to the top of Done and stays on Home,
+      // ticked and struck through; ticking again puts it back; so does ⌘Z.
+      await press('T', ['meta']);
+      assert(await waitFor(`!!(${row})`, 3000), 'not back on Home');
+      const inDone = () => /## Done[\s\S]*- \[x\] Due in the planner/.test(boardText());
+      const isOpen = () => !/## Done[\s\S]*Due in the planner/.test(boardText()) && boardText().includes('- [ ] Due in the planner');
+      await clickEval(`${row}.querySelector('.home-task-box')`, 'Home task box');
+      assert(await waitFor(`${row}?.classList.contains('done') && ${row}.querySelector('.home-task-box').getAttribute('aria-checked') === 'true'`, 3000), 'not shown done on Home');
+      assert(await waitFor2(inDone, 3000), `not in Done:\n${boardText()}`);
+      await clickEval(`${row}.querySelector('.home-task-box')`, 'Home task box again');
+      assert(await waitFor(`!!(${row}) && !${row}.classList.contains('done')`, 3000), 'not open again on Home');
+      assert(await waitFor2(isOpen, 3000), `not back on its column:\n${boardText()}`);
+      await clickEval(`${row}.querySelector('.home-task-box')`, 'Home task box, third time');
+      assert(await waitFor2(inDone, 3000), `not in Done again:\n${boardText()}`);
+      await press('z', ['meta']);
+      assert(await waitFor(`!!(${row}) && !${row}.classList.contains('done')`, 3000), 'undo did not open it again on Home');
+      assert(await waitFor2(isOpen, 3000), `undo did not restore the board:\n${boardText()}`);
     });
 
     // 64c. A Wispr Flow meeting note's open to-dos can go on a board: the New
