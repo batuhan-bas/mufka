@@ -89,7 +89,7 @@ test('when an event happens, in words', () => {
 import { GOOGLE_SCOPES, googleAuthorizeUrl, fromGoogle, callbackPage } from '../lib/calendar.mjs';
 
 test('Google sign-in: calendar read only, offline access, PKCE', () => {
-  assert.deepEqual(GOOGLE_SCOPES, ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly']);
+  assert.deepEqual(GOOGLE_SCOPES, ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly']);
   const u = new URL(googleAuthorizeUrl({ clientId: 'id.apps', redirectUri: 'http://127.0.0.1:5050', state: 's', challenge: 'ch' }));
   assert.equal(u.origin + u.pathname, 'https://accounts.google.com/o/oauth2/v2/auth');
   assert.equal(u.searchParams.get('access_type'), 'offline');
