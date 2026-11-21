@@ -2140,7 +2140,7 @@ function commandList() {
     { label: 'Attach file to note', when: noteOpen, run: addFileToNote },
     { label: 'Open settings', hint: '⌘,', run: openSettings },
     { label: 'Refresh calendars', when: () => calConnected, run: refreshCalendars },
-    { label: 'Connect Wispr Flow', run: openSettings },
+    { label: 'Connect Wispr Flow', run: () => openSettings('voice') },
     { label: 'Insert template', hint: '⇧⌘T', when: noteOpen, run: openTemplatePicker },
     { label: 'New note from template', run: () => newFromTemplate() },
     { label: 'Copy built-in templates to the Templates folder', run: copyBuiltinTemplates },
@@ -5466,13 +5466,31 @@ function mcpSection() {
   sec.append(row);
   return sec;
 }
-function openSettings() {
+// The notes folder: where it is, show it, open another one (as the folder
+// button at the bottom of the sidebar does).
+function vaultSection() {
+  const sec = elem('section', 'settings-section');
+  sec.append(elem('h3', 'settings-heading', 'Notes folder'));
+  const row = elem('div', 'conn-row vault-row');
+  const tx = elem('div', 'conn-text');
+  tx.append(elem('span', 'conn-name', 'Your notes are .md files in'), elem('span', 'conn-note vault-path', vaultInfo && vaultInfo.path ? vaultInfo.path : ''));
+  const side = elem('div', 'conn-side');
+  const btn = (label, fn) => { const b = elem('button', 'btn', label); b.type = 'button'; b.addEventListener('click', fn); return b; };
+  side.append(btn(`Show in ${FILES_APP}`, () => notesApi.reveal()), btn('Open another folder…', () => notesApi.chooseVault()));
+  if (vaultInfo && vaultInfo.custom) side.append(btn("Use Mufka's own folder", () => notesApi.useDefaultVault()));
+  row.append(tx, side);
+  sec.append(row);
+  return sec;
+}
+// The pages of Settings, in the order of the list on the left.
+const SETTINGS_PAGES = [['general', 'General', 'settings'], ['appearance', 'Appearance', 'tiPalette'],
+  ['calendars', 'Calendars', 'calendar'], ['voice', 'Voice', 'mic'], ['ai', 'AI clients (MCP)', 'tiSparkles']];
+function openSettings(page = 'general') {
   if (settingsLayer) settingsLayer._close();
   const layer = elem('div', 'palette-layer');
   const box = elem('div', 'palette plan-dialog settings-dialog');
   box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Settings');
   box.append(elem('div', 'plan-dialog-title', 'Settings'));
-  box.append(appearanceSection());
   // Calendars: Microsoft (Outlook / Microsoft 365, Teams) and Google.
   const calSection = elem('section', 'settings-section');
   calSection.append(elem('h3', 'settings-heading', 'Calendars'));
@@ -5492,7 +5510,6 @@ function openSettings() {
     calSection.append(r);
     return { id, name, side: sd, list: ls, busy: false };
   });
-  box.append(calSection);
 
   const section = elem('section', 'settings-section');
   section.append(elem('h3', 'settings-heading', 'Voice'));
@@ -5548,9 +5565,35 @@ function openSettings() {
   };
   drawHandy(); drawStudio();
   loadVoice().then(() => { drawHandy(); drawStudio(); });
-  box.append(section);
-  box.append(mcpSection());
-  box.append(updatesSection());
+
+  // A list of pages on the left, one page shown at a time.
+  const body = elem('div', 'settings-body');
+  const nav = elem('nav', 'settings-nav');
+  nav.setAttribute('aria-label', 'Settings pages');
+  const pages = elem('div', 'settings-pages');
+  const content = { general: [updatesSection(), vaultSection()], appearance: [appearanceSection()], calendars: [calSection], voice: [section], ai: [mcpSection()] };
+  const show = (id) => {
+    for (const b of nav.children) { const on = b.dataset.page === id; b.classList.toggle('on', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); }
+    for (const pg of pages.children) pg.hidden = pg.dataset.page !== id;
+    pages.scrollTop = 0;
+  };
+  for (const [id, label, ic] of SETTINGS_PAGES) {
+    const b = elem('button', 'settings-nav-item');
+    b.type = 'button'; b.dataset.page = id;
+    b.append(icon(ic), elem('span', null, label));
+    b.addEventListener('click', () => show(id));
+    nav.append(b);
+    const pg = elem('div', 'settings-page');
+    pg.dataset.page = id;
+    pg.append(elem('h2', 'settings-page-title', label));
+    // One section: the page's title is its heading.
+    if (content[id].length === 1) content[id][0].querySelector('.settings-heading')?.remove();
+    pg.append(...content[id]);
+    pages.append(pg);
+  }
+  body.append(nav, pages);
+  box.append(body);
+  show(SETTINGS_PAGES.some(([id]) => id === page) ? page : 'general');
 
   let busy = false;
   const button = (label, quiet, fn) => {
@@ -5657,7 +5700,7 @@ function openSettings() {
   layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
   document.body.append(layer);
   settingsLayer = layer;
-  Promise.all([calRefreshAll(), refresh()]).then(() => (box.querySelector('.conn-side button') || done).focus());
+  Promise.all([calRefreshAll(), refresh()]).then(() => (box.querySelector('.settings-nav-item.on') || done).focus());
 }
 
 // --- calendar events (read-only) ---
