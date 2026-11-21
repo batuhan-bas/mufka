@@ -34,6 +34,8 @@ import { projectStrip, projectsBoard, openProjectDialog } from './projects-view.
 import { projectOf, projectsSettings, mayBeProject } from '../lib/projects.mjs';
 import { bookOf, mayBeBook, bookShelves, bookStats, stageChanges } from '../lib/books.mjs';
 import { bookHead, bookcase, openBookDialog } from './books-view.js';
+import { movieOf, mayBeMovie, movieRows, movieStats, movieStageChanges } from '../lib/movies.mjs';
+import { movieHead, watchlist, openMovieDialog } from './movies-view.js';
 import { tripStrip } from './trips-view.js';
 import { meetingStrip } from './meetings-view.js';
 import { weekDays, addWeekTask, editWeekTask, moveWeekTask, moveOpenToNextDay, nextWeekTodoText } from '../lib/weekly.mjs';
@@ -3010,6 +3012,7 @@ function noteRenderOptions(rel) {
       week: (_code, _meta, { src }) => weekBlock(rel, src),
       projects: (code) => projectsBlock(rel, code),
       books: (code) => booksBlock(rel, code),
+      movies: (code) => moviesBlock(rel, code),
     },
     embedDrawing,
   };
@@ -3243,6 +3246,41 @@ function booksBlock(rel, code) {
           ['started', b.stage !== 'To read' ? today : ''], ['finished', b.stage === 'Finished' ? today : '']],
       });
       if (made) { render(); showToast(`Added ${b.title}`); }
+    }),
+  });
+}
+
+// --- movies (lib/movies.mjs, src/movies-view.js) ---
+const vaultMovies = () => vaultItems(mayBeMovie, movieOf);
+// "Add poster" on a movie: an image file picked for it.
+async function addMoviePoster(movie) {
+  const img = await coverInto(folderOf(movie.rel)).pick();
+  if (!img) return;
+  await changeNoteText(movie.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
+  render();
+}
+// A movie moved to another row: its status, and the day it was watched when
+// not written yet.
+function moveMovie(movie, stage) {
+  return changeNoteText(movie.rel, (text) => movieStageChanges(movie, stage, dayKey(new Date()))
+    .reduce((t, [k, v]) => (k === 'status' ? setJobStatus(t, v, setProp) : setProp(t, k, v)), text));
+}
+function moviesBlock(rel, code) {
+  const settings = projectsSettings(code); // the same settings: folder, template
+  const movies = vaultMovies();
+  const folder = settings.folder || (rel ? folderOf(rel) : '');
+  return watchlist(movieRows(movies), movieStats(movies), {
+    urlOf: bookCoverUrl,
+    onOpen: (to) => openNote(to),
+    onMove: (to, stage) => { const m = movies.find((x) => x.rel === to); if (m) moveMovie(m, stage); },
+    onPoster: (m) => addMoviePoster(m),
+    onNew: () => openMovieDialog({ poster: coverInto(folder), pathOf: (f) => notesApi.pathForFile(f) }, async (m) => {
+      const made = await noteFromTemplate({
+        folder, name: m.title, template: settings.template, builtin: 'movie',
+        props: [['director', m.director], ['year', m.year], ['status', m.stage], ['image', m.image ? `[[${m.image}]]` : ''],
+          ['watched', m.stage === 'Watched' ? dayKey(new Date()) : '']],
+      });
+      if (made) { render(); showToast(`Added ${m.title}`); }
     }),
   });
 }
@@ -5032,7 +5070,8 @@ function renderNotePane() {
   if (!state.openNote) { contentEl.append(hint('Choose a note, or create one with "New note".')); return; }
   const pane = elem('div', 'note-pane');
   // A book's head is its cover (below); its page icon is for the tree.
-  if (!(isTemplateNote(state.openNote) ? null : bookOf(state.openNote, state.noteContent))) pane.append(pageHead());
+  const tpl = isTemplateNote(state.openNote);
+  if (!(tpl ? null : bookOf(state.openNote, state.noteContent) || movieOf(state.openNote, state.noteContent))) pane.append(pageHead());
 
   // The folder path is in the toolbar title. The inline title is the file
   // name (click to rename); it steps aside when the note already starts with
@@ -5053,13 +5092,23 @@ function renderNotePane() {
       onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
       onCover: () => addBookCover(book),
     }));
-  } else pane.append(header);
-  const job = book || isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
-  const project = book || job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
+  }
+  // A movie: its poster beside the title, with its row and facts.
+  const movie = book || isTemplateNote(state.openNote) ? null : movieOf(state.openNote, state.noteContent);
+  if (movie) {
+    pane.append(movieHead(movie, bookCoverUrl(movie), header, {
+      onStage: (stage) => moveMovie(movie, stage),
+      onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
+      onPoster: () => addMoviePoster(movie),
+    }));
+  }
+  if (!book && !movie) pane.append(header);
+  const job = book || movie || isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
+  const project = book || movie || job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
   if (project) pane.append(projectStrip(project, { onStage: (stage) => changeNoteText(state.openNote, (text) => setJobStatus(text, stage, setProp)) }));
   // A trip: its countdown, where and when, packing; a meeting: when, who,
   // action items.
-  const plain = !(book || job || project) && !isTemplateNote(state.openNote);
+  const plain = !(book || movie || job || project) && !isTemplateNote(state.openNote);
   const trip = plain ? tripOf(state.openNote, state.noteContent) : null;
   if (trip) pane.append(tripStrip(trip));
   const meeting = plain && !trip ? meetingOf(state.openNote, state.noteContent) : null;

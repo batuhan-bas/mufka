@@ -136,6 +136,11 @@ Planner.
   **Reading shelf** is a bookcase: a shelf per status with the books standing
   by their covers; drag one to another shelf. A cover is any image you add
   (kept in the vault, never fetched from the internet).
+- **Movies:** a movie note shows its poster beside the title, whether it is to
+  watch or watched, its director, year and genre, when and where you watched
+  it, and stars to rate it. The **Watchlist** is a wall of posters, a row per
+  status; drag one to the other row to mark it watched. A poster is any image
+  you add (kept in the vault, never fetched from the internet).
 - **Trips:** a trip note counts down to it ("12 days to go", "Day 3 of 7") and
   shows how much of the packing list is packed and how many bookings are done.
 - **Meetings:** a meeting note (and one from Wispr Flow) shows when and who,

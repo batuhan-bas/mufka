@@ -1984,6 +1984,39 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await js('document.querySelectorAll(".meeting-task-btn").length === 1'), 'the open action item has no Add to board');
     });
 
+    // 64e2. Movies: a movie stands in the Watchlist with its poster image;
+    //       marked watched from its note (the day written); "+ New movie"
+    //       makes a note with its director and year.
+    await step('64e2', 'movies in the watchlist with posters, watched from the note, a new movie', async () => {
+      const dir = path.join(tvault, 'Cinema');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'arrival.png'), makePng(20, 30));
+      fs.writeFileSync(path.join(dir, 'Arrival.md'), '---\ntype: movie\ndirector: Denis Villeneuve\nyear: 2016\nstatus: To watch\nimage: "[[arrival.png]]"\n---\n## In one sentence\n');
+      fs.writeFileSync(path.join(dir, 'Parasite.md'), '---\ntype: movie\nyear: 2019\nstatus: Watched\nwatched: 2026-10-02\nrating: 5\n---\n');
+      fs.writeFileSync(path.join(dir, 'Watchlist.md'), '---\ntype: watchlist\n---\n```movies\nfolder: Cinema\n```\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Watchlist'); await enter();
+      const arrival = `[...document.querySelectorAll('.movie-row[data-stage="To watch"] .movie-item')].find(b => b.textContent.includes('Arrival'))`;
+      assert(await waitFor(`!!(${arrival}) && !!${arrival}.querySelector('img[src]')`, 4000), `Arrival not on To watch with its poster: ${await js('[...document.querySelectorAll(".movie-row")].map(s => s.dataset.stage + ":" + s.textContent).join(" | ")')}`);
+      assert(await js(`/Parasite/.test(document.querySelector('.movie-row[data-stage="Watched"]')?.textContent || '') && !!document.querySelector('.movie-row[data-stage="Watched"] .movie-poster:not(.has-image) .movie-poster-title')`), 'Parasite not on Watched with a plain poster');
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `watchlist-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await clickEval(arrival, 'Arrival in the watchlist');
+      assert(await waitFor('!!document.querySelector(".movie-head img") && document.querySelector(".note-title")?.textContent === "Arrival" && /Denis Villeneuve/.test(document.querySelector(".movie-head")?.textContent || "")', 3000), 'the movie note has no poster head');
+      await clickEval(`[...document.querySelectorAll('.movie-head .job-step')].find(s => s.textContent === 'Watched')`, 'Watched');
+      assert(await waitFor2(() => { const t = fs.readFileSync(path.join(dir, 'Arrival.md'), 'utf8'); return /status: Watched/.test(t) && new RegExp(`watched: ${todayK}`).test(t); }, 3000), `not marked watched:\n${fs.readFileSync(path.join(dir, 'Arrival.md'), 'utf8')}`);
+      if (process.env.MUFKA_E2E_SHOTS) { await sleep(300); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `movie-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG()); }
+      await press('O', ['meta']); await typeText('Watchlist'); await enter();
+      assert(await waitFor('!!document.querySelector(".watchlist .job-new")', 3000), 'no + New movie');
+      await clickSel('.watchlist .job-new');
+      assert(await waitFor('document.activeElement?.classList.contains("movie-title-input")', 2000), 'the New movie dialog is not open');
+      await typeText('Tenet');
+      await clickSel('.movie-director-input'); await typeText('Christopher Nolan');
+      await clickSel('.movie-year-input'); await typeText('2020');
+      await enter();
+      const tenet = path.join(dir, 'Tenet.md');
+      assert(await waitFor2(() => fs.existsSync(tenet) && /type: movie/.test(fs.readFileSync(tenet, 'utf8')) && /director: Christopher Nolan/.test(fs.readFileSync(tenet, 'utf8')) && /year: "?2020"?/.test(fs.readFileSync(tenet, 'utf8')), 3000), `Tenet not made: ${fs.existsSync(tenet) ? fs.readFileSync(tenet, 'utf8') : 'missing'}`);
+    });
+
     // 64f. Right-click menus: a note's path is copied, it is duplicated and
     //      moved; a drawing in the sidebar is renamed (keeping .excalidraw)
     //      and deleted after asking.
