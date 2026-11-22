@@ -371,6 +371,9 @@ async function wavFor(bytes) {
 const VOICE_ENGINES = { handy: 'Handy', studio: 'VoiceStudio' };
 const localGet = (k) => { try { return localStorage.getItem(`mufka-${k}`); } catch { return null; } };
 const localSet = (k, v) => { try { localStorage.setItem(`mufka-${k}`, v); } catch { /* ignore */ } };
+const localDel = (k) => { try { localStorage.removeItem(`mufka-${k}`); } catch { /* ignore */ } };
+// A stored JSON value, or `fallback` when there is none or it does not parse.
+const localJson = (k, fallback) => { try { return JSON.parse(localGet(k)) ?? fallback; } catch { return fallback; } };
 const VOICE_LEDE = {
   handy: 'Handy turns it into text on your computer, with the model chosen in Handy; the note opens when it is done.',
   studio: 'VoiceStudio turns it into text on your computer, with the model chosen in VoiceStudio; the note opens when it is done.',
@@ -573,11 +576,11 @@ function applySidebar() {
   sidebarEl.inert = collapsed; // not tabbable / hidden from AT while collapsed
   sidebarEl.setAttribute('aria-hidden', String(collapsed));
   sidebarToggle.setAttribute('aria-label', collapsed ? 'Show sidebar' : 'Hide sidebar');
-  try { localStorage.setItem('mufka-sidebar', collapsed ? '1' : '0'); } catch { /* ignore */ }
+  localSet('sidebar', collapsed ? '1' : '0');
 }
 function setSidebar(collapsed) { state.sidebarCollapsed = collapsed; applySidebar(); }
 function toggleSidebar() { setSidebar(!state.sidebarCollapsed); }
-function loadSidebar() { try { state.sidebarCollapsed = localStorage.getItem('mufka-sidebar') === '1'; } catch { /* ignore */ } applySidebar(); }
+function loadSidebar() { state.sidebarCollapsed = localGet('sidebar') === '1'; applySidebar(); }
 sidebarToggle.addEventListener('click', toggleSidebar);
 
 // The sidebar's width: drag its right edge (arrow keys when focused),
@@ -588,12 +591,10 @@ function setSidebarWidth(w, save = true) {
   const px = Math.round(Math.min(Math.max(w, SIDEBAR_W.min), Math.min(SIDEBAR_W.max, window.innerWidth - 360)));
   appEl.style.setProperty('--sidebar-w', `${px}px`);
   sidebarResizer.setAttribute('aria-valuenow', String(px));
-  if (save) { try { localStorage.setItem('mufka-sidebar-width', String(px)); } catch { /* ignore */ } }
+  if (save) { localSet('sidebar-width', String(px)); }
 }
 function loadSidebarWidth() {
-  let w = SIDEBAR_W.def;
-  try { w = Number(localStorage.getItem('mufka-sidebar-width')) || SIDEBAR_W.def; } catch { /* ignore */ }
-  setSidebarWidth(w, false);
+  setSidebarWidth(Number(localGet('sidebar-width')) || SIDEBAR_W.def, false);
 }
 sidebarResizer.setAttribute('aria-valuemin', String(SIDEBAR_W.min));
 sidebarResizer.setAttribute('aria-valuemax', String(SIDEBAR_W.max));
@@ -653,12 +654,12 @@ function focusTree() {
 // places (Today, Graph), Calendar, Bookmarks and the Notes tree. Sections
 // collapse; their state persists.
 
-const SECTIONS_KEY = 'mufka-sections';
-function sectionsState() { try { return JSON.parse(localStorage.getItem(SECTIONS_KEY) || '{}') || {}; } catch { return {}; } }
+const SECTIONS_KEY = 'sections';
+function sectionsState() { return localJson(SECTIONS_KEY, {}); }
 function sectionOpen(id) { return sectionsState()[id] !== false; }
 function setSectionOpen(id, open) {
   const st = sectionsState(); st[id] = open;
-  try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(st)); } catch { /* ignore */ }
+  localSet(SECTIONS_KEY, JSON.stringify(st));
 }
 function sidebarSection(id, title, actions = [], iconName = null) {
   const sec = elem('section', `side-section side-${id}`);
@@ -699,14 +700,14 @@ function sortButton() {
     e.stopPropagation();
     openMenu('note-sort', () => TREE_SORTS.map((s) => ({
       label: `${s === state.noteSort ? '✓ ' : '\u2003'}${SORT_LABELS[s]}`,
-      fn: () => { closeMenu(); state.noteSort = s; try { localStorage.setItem('mufka-note-sort', s); } catch { /* ignore */ } renderSidebar(); },
+      fn: () => { closeMenu(); state.noteSort = s; localSet('note-sort', s); renderSidebar(); },
     })));
   }, `Sort notes: ${SORT_LABELS[state.noteSort]}`);
   b.dataset.menuAnchor = 'note-sort';
   b.setAttribute('aria-haspopup', 'menu');
   return b;
 }
-function loadNoteSort() { try { const s = localStorage.getItem('mufka-note-sort'); if (TREE_SORTS.includes(s)) state.noteSort = s; } catch { /* ignore */ } }
+function loadNoteSort() { const s = localGet('note-sort'); if (TREE_SORTS.includes(s)) state.noteSort = s; }
 
 function smallButton(label, aria, fn, title) {
   const b = elem('button', 'side-btn', label);
@@ -1138,7 +1139,7 @@ function syncTabs() {
   tabs.active.loc = currentLocation();
   tabs.prune(navValid);
   renderTabStrip();
-  try { localStorage.setItem('mufka-tabs', JSON.stringify(tabs)); } catch { /* private window */ }
+  localSet('tabs', JSON.stringify(tabs));
 }
 async function switchTab(t) {
   if (!t || t === tabs.active) return;
@@ -1552,7 +1553,7 @@ const plannerApi = {
 // A board is a note in the format of Obsidian's Kanban plugin (lib/kanban.mjs);
 // new ones go to the Tasks folder. Every change writes the whole note.
 
-const BOARD_KEY = 'mufka-board';
+const BOARD_KEY = 'board';
 const BOARD_FOLDER = 'Tasks';
 function boardList() {
   return state.vaultNotes.filter((n) => isBoard(n.content))
@@ -1563,7 +1564,7 @@ async function openTasks(rel) {
   if (rel === undefined) {
     const boards = boardList();
     let last = null;
-    try { last = localStorage.getItem(BOARD_KEY); } catch { /* ignore */ }
+    last = localGet(BOARD_KEY);
     rel = (boards.find((b) => b.rel === last) || boards[0] || {}).rel || null;
   }
   let content = null;
@@ -1575,7 +1576,7 @@ async function openTasks(rel) {
   state.board = rel ? { rel, content } : null;
   state.contentView = 'tasks';
   state.menu = null;
-  if (rel) { try { localStorage.setItem(BOARD_KEY, rel); } catch { /* ignore */ } }
+  if (rel) { localSet(BOARD_KEY, rel); }
   render();
 }
 // The board changed on disk (Obsidian, a sync): show it, unless it is our own write.
@@ -1681,7 +1682,7 @@ function boardMenuItems() {
       closeMenu();
       askDialog({ heading: `Delete ${noteTitleOf(b.rel)}?`, text: 'The board and its tasks go to the Trash.', okLabel: 'Delete', danger: true }, async () => {
         await notesApi.remove(b.rel);
-        try { localStorage.removeItem(BOARD_KEY); } catch { /* ignore */ }
+        localDel(BOARD_KEY);
         state.board = null;
         await refreshTree(); await rebuildBacklinks();
         await openTasks();
@@ -1738,7 +1739,7 @@ function renderBoardsSection() {
 // In the Obsidian Excalidraw plugin's format (lib/drawing.mjs); new ones go to
 // the Excalidraw folder.
 
-const DRAWING_KEY = 'mufka-drawing';
+const DRAWING_KEY = 'drawing';
 function drawingList() {
   return state.vaultNotes.filter((n) => isDrawingRel(n.rel) || isDrawingText(n.content))
     .map((n) => ({ rel: n.rel, title: drawingTitle(n.rel) }))
@@ -1748,7 +1749,7 @@ async function openDraw(rel) {
   if (rel === undefined) {
     const list = drawingList();
     let last = null;
-    try { last = localStorage.getItem(DRAWING_KEY); } catch { /* ignore */ }
+    last = localGet(DRAWING_KEY);
     rel = (list.find((d) => d.rel === last) || list[0] || {}).rel || null;
   }
   let content = null;
@@ -1760,7 +1761,7 @@ async function openDraw(rel) {
   state.drawing = rel ? { rel, content } : null;
   state.contentView = 'draw';
   state.menu = null;
-  if (rel) { try { localStorage.setItem(DRAWING_KEY, rel); } catch { /* ignore */ } }
+  if (rel) { localSet(DRAWING_KEY, rel); }
   render();
 }
 // What the editor last wrote, so the change it causes on disk is not reloaded.
@@ -1814,7 +1815,7 @@ function drawingMenu() {
       askDialog({ heading: `Delete ${drawingTitle(d.rel)}?`, text: 'The drawing goes to the Trash.', okLabel: 'Delete', danger: true }, async () => {
         closeDrawing();
         await notesApi.remove(d.rel);
-        try { localStorage.removeItem(DRAWING_KEY); } catch { /* ignore */ }
+        localDel(DRAWING_KEY);
         state.drawing = null;
         await refreshTree(); await rebuildBacklinks();
         await openDraw();
@@ -2004,9 +2005,9 @@ function showShortcuts() {
 const rightbarEl = document.getElementById('rightbar');
 const rightbarBtn = document.getElementById('rightbar-btn');
 function loadRightbar() {
-  try { Object.assign(state.rightbar, JSON.parse(localStorage.getItem('mufka-rightbar') || '{}')); } catch { /* ignore */ }
+  Object.assign(state.rightbar, localJson('rightbar', {}));
 }
-function saveRightbar() { try { localStorage.setItem('mufka-rightbar', JSON.stringify(state.rightbar)); } catch { /* ignore */ } }
+function saveRightbar() { localSet('rightbar', JSON.stringify(state.rightbar)); }
 function toggleRightbar(open = !state.rightbar.open) {
   state.rightbar.open = open; saveRightbar();
   if (open) rebuildBacklinks().then(renderRightbar).catch(() => {});
@@ -2258,7 +2259,7 @@ async function copyBuiltinTemplates() {
 function loadRecent() { try { state.recent = JSON.parse(localStorage.getItem('mufka-recent') || '[]').filter((r) => typeof r === 'string'); } catch { state.recent = []; } }
 function rememberRecent(rel) {
   state.recent = pushRecent(state.recent, rel);
-  try { localStorage.setItem('mufka-recent', JSON.stringify(state.recent)); } catch { /* ignore */ }
+  localSet('recent', JSON.stringify(state.recent));
 }
 
 // Notes by fuzzy title (path as a fallback); recent notes first when empty.
@@ -3839,13 +3840,13 @@ function scheduleBacklinks() {
 // When never toggled, it defaults to collapsed only when there are no backlinks.
 function backlinksCollapsed(n) {
   let pref = null;
-  try { pref = localStorage.getItem('mufka-backlinks'); } catch { /* ignore */ }
+  pref = localGet('backlinks');
   if (pref === '1') return false; // expanded
   if (pref === '0') return true;  // collapsed
   return n === 0;
 }
 function setBacklinksCollapsed(collapsed) {
-  try { localStorage.setItem('mufka-backlinks', collapsed ? '0' : '1'); } catch { /* ignore */ }
+  localSet('backlinks', collapsed ? '0' : '1');
 }
 
 // "Linked mentions (N)" section for the note at `rel`. Collapsible; each
@@ -3894,7 +3895,7 @@ function backlinkSection(rel) {
 function loadExpanded() {
   try { state.expanded = new Set(JSON.parse(localStorage.getItem('mufka-expanded') || '[]')); } catch { state.expanded = new Set(); }
 }
-function saveExpanded() { try { localStorage.setItem('mufka-expanded', JSON.stringify([...state.expanded])); } catch { /* ignore */ } }
+function saveExpanded() { localSet('expanded', JSON.stringify([...state.expanded])); }
 function ensureExpanded(rel) { if (rel) { state.expanded.add(rel); saveExpanded(); } }
 function expandAncestors(rel) {
   let f = folderOf(rel);
@@ -4138,7 +4139,7 @@ async function dropBeside(srcKey, targetRel, where) {
   state.treeOrder = placeInOrder(state.treeOrder, dest, siblings, leafOf(rel), before);
   if (state.noteSort !== 'custom') {
     state.noteSort = 'custom';
-    try { localStorage.setItem('mufka-note-sort', 'custom'); } catch { /* ignore */ }
+    localSet('note-sort', 'custom');
   }
   saveTreeStyles();
   render();
@@ -4428,7 +4429,7 @@ function boardRowMenuItems(b) {
     SEP,
     { label: 'Delete', danger: true, fn: () => askDelete(b.rel, 'board and its tasks', async () => {
       if (state.board && state.board.rel === b.rel) {
-        try { localStorage.removeItem(BOARD_KEY); } catch { /* ignore */ }
+        localDel(BOARD_KEY);
         state.board = null;
         if (state.contentView === 'tasks') await openTasks(); else render();
       } else render();
@@ -4694,10 +4695,10 @@ const askSplit = (e) => { if ((e.metaKey || e.ctrlKey) && e.altKey && (e.type ==
 document.addEventListener('click', askSplit, true);
 document.addEventListener('keydown', askSplit, true);
 function takeSplitAsk() { const yes = splitAsk && Date.now() - splitAsk < 1500; splitAsk = 0; return !!yes; }
-function saveSplit() { try { localStorage.setItem('mufka-split', split ? split.rel : ''); } catch { /* private window */ } }
+function saveSplit() { localSet('split', split ? split.rel : ''); }
 function loadSplit() {
   let rel = '';
-  try { rel = localStorage.getItem('mufka-split') || ''; } catch { /* none */ }
+  rel = localGet('split') || '';
   if (rel && state.notesFlat.some((n) => n.rel === rel)) openSplit(rel);
 }
 const splitText = () => (split.rel === state.openNote ? state.noteContent : (state.noteCache.get(split.rel) ?? split.text));
@@ -4799,9 +4800,9 @@ splitEl.querySelector('.split-close').addEventListener('click', () => closeSplit
     const room = document.getElementById('app').clientWidth - document.getElementById('sidebar').offsetWidth - 360;
     if (w == null) splitEl.style.removeProperty('flex');
     else splitEl.style.flex = `0 0 ${Math.round(Math.max(280, Math.min(w, room)))}px`;
-    if (save) { try { localStorage.setItem('mufka-split-width', w == null ? '' : String(splitEl.offsetWidth)); } catch { /* ignore */ } }
+    if (save) { localSet('split-width', w == null ? '' : String(splitEl.offsetWidth)); }
   };
-  try { const w = Number(localStorage.getItem('mufka-split-width')); if (w) splitEl.style.flex = `0 0 ${w}px`; } catch { /* none */ }
+  const w = Number(localGet('split-width')); if (w) splitEl.style.flex = `0 0 ${w}px`;
   handle.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     handle.setPointerCapture(e.pointerId);
@@ -5230,8 +5231,7 @@ function propNewRow(scope) {
 
 // --- heading folds (lib/fold.mjs): kept per note in this window's storage,
 // not in the note, as in Obsidian ---
-let folds = {};
-try { folds = JSON.parse(localStorage.getItem('mufka-folds') || '{}') || {}; } catch { /* none */ }
+let folds = localJson('folds', {});
 function foldRel(scope) { return scope === 'note' ? state.openNote : (state.dailyNote.key ? dailyRel(state.dailyNote.key) : ''); }
 function foldPlanFor(scope, src = getSrcFor(scope), blocks = parseBlocks(src)) {
   return foldPlan(blocks, (b) => blockText(src, b), new Set(folds[foldRel(scope)] || []));
@@ -5240,7 +5240,7 @@ function setFolds(scope, keys) {
   const rel = foldRel(scope);
   if (!rel) return;
   if (keys.length) folds[rel] = keys; else delete folds[rel];
-  try { localStorage.setItem('mufka-folds', JSON.stringify(folds)); } catch { /* ignore */ }
+  localSet('folds', JSON.stringify(folds));
 }
 function toggleFold(scope, key) {
   const keys = new Set(folds[foldRel(scope)] || []);
@@ -6019,7 +6019,7 @@ function vaultSection() {
 // --- Settings → Shortcuts (lib/hotkeys.mjs): the keys of every command ---
 function saveHotkeys(next) {
   hotkeys = next;
-  try { localStorage.setItem('mufka-hotkeys', JSON.stringify(hotkeys)); } catch { /* ignore */ }
+  localSet('hotkeys', JSON.stringify(hotkeys));
 }
 function shortcutsSection() {
   const sec = elem('section', 'settings-section shortcuts');
@@ -6776,7 +6776,7 @@ function welcomeCard() {
   card.append(list);
   const ok = elem('button', 'btn', 'Got it');
   ok.type = 'button';
-  ok.addEventListener('click', () => { try { localStorage.setItem('mufka-welcome', 'done'); } catch { /* ignore */ } render(); });
+  ok.addEventListener('click', () => { localSet('welcome', 'done'); render(); });
   card.append(ok);
   return card;
 }
@@ -7022,7 +7022,7 @@ async function boot() {
   loadVoice();
   // Tabs come back as they were left, when there were several.
   let savedTabs = null;
-  try { savedTabs = JSON.parse(localStorage.getItem('mufka-tabs') || 'null'); } catch { /* none */ }
+  savedTabs = localJson('tabs', null);
   const restored = savedTabs && Array.isArray(savedTabs.tabs) && savedTabs.tabs.length > 1 && tabs.restore(savedTabs, navValid);
   const startAt = restored ? tabs.active.loc : null;
   loadSplit();
