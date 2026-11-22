@@ -1475,8 +1475,38 @@ app.whenReady().then(() => setTimeout(async () => {
       // Google needs the build's client (.env.local): connectable, or "not set up" without it.
       assert(await waitFor('/Not connected|Not set up/.test(document.querySelector("[data-conn=google] .conn-side")?.textContent || "")', 2000), 'no Google calendar state');
       assert(!fs.existsSync(path.join(tmp, 'calendars.bin')), 'a calendar sign-in was stored');
-      assert(await js('document.activeElement?.textContent === "Connect"'), 'Connect not focused');
+      assert(await waitFor('document.activeElement?.dataset.page === "general"', 2000), 'General not focused');
+      if (process.env.MUFKA_E2E_SHOTS) {
+        for (const pg of ['general', 'appearance', 'calendars', 'voice']) {
+          await clickSel(`.settings-nav-item[data-page="${pg}"]`); await sleep(300);
+          fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `settings-${pg}-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+        }
+      }
       assert(!fs.existsSync(path.join(tmp, 'wispr.bin')), 'a sign-in was stored');
+      // Shortcuts: give "Open graph view" ⌘J; take ⌘E for "Insert template"
+      // (the source toggle is left with none); ⌘J then opens the graph.
+      await clickSel('.settings-nav-item[data-page="shortcuts"]');
+      const sc = (label) => `[...document.querySelectorAll('.shortcut-row')].find(r => r.querySelector('.shortcut-name')?.textContent === ${JSON.stringify(label)})`;
+      assert(await waitFor(`!!(${sc('Open graph view')})`, 2000), 'no Shortcuts page');
+      await clickEval(`${sc('Open graph view')}.querySelector('.kbd')`, 'graph keys');
+      assert(await waitFor(`${sc('Open graph view')}.querySelector('.kbd')?.textContent === 'Press keys…'`, 2000), 'not recording');
+      await press('J', ['meta']);
+      assert(await waitFor(`/J$/.test(${sc('Open graph view')}.querySelector('.kbd.custom')?.textContent || '')`, 2000), `⌘J not set: ${await js(`${sc('Open graph view')}?.textContent`)}`);
+      await clickEval(`${sc('Insert template')}.querySelector('.kbd')`, 'template keys');
+      await press('E', ['meta']);
+      assert(await waitFor(`/is used by “Toggle source \\/ preview”/.test(${sc('Insert template')}.querySelector('.shortcut-warn')?.textContent || '')`, 2000), `no conflict warning: ${await js(`${sc('Insert template')}?.textContent`)}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `settings-shortcuts-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await enter();
+      assert(await waitFor(`/E$/.test(${sc('Insert template')}.querySelector('.kbd.custom')?.textContent || '') && [...document.querySelectorAll('.shortcut-row')].some(r => r.querySelector('.shortcut-name')?.textContent === 'Toggle source / preview' && r.querySelector('.kbd')?.textContent === '+')`, 2000), 'the keys were not taken');
+      await press('Escape');
+      assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
+      await press('J', ['meta']);
+      assert(await waitFor('!!document.querySelector(".graph-view")', 3000), '⌘J did not open the graph');
+      // Back to the app's own keys.
+      await press(',', ['meta']);
+      await clickSel('.settings-nav-item[data-page="shortcuts"]');
+      for (const label of ['Open graph view', 'Insert template', 'Toggle source / preview']) await clickEval(`${sc(label)}.querySelector('.shortcut-icon:not([hidden])[title^="Back"]')`, `reset ${label}`);
+      assert(await waitFor(`localStorage.getItem('mufka-hotkeys') === '{}'`, 2000), `not reset: ${await js(`localStorage.getItem('mufka-hotkeys')`)}`);
       await press('Escape');
       assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
       // The gear next to the notes folder opens it too.
@@ -2583,6 +2613,7 @@ app.whenReady().then(() => setTimeout(async () => {
       const bg = 'getComputedStyle(document.body.closest("html")).getPropertyValue("--ground").trim()';
       await press(',', ['meta']);
       const startTheme = process.env.MUFKA_E2E_THEME || 'system';
+      await clickSel('.settings-nav-item[data-page="appearance"]');
       assert(await waitFor(`!!document.querySelector('.theme-seg button[data-theme="${startTheme}"][aria-pressed="true"]')`, 3000), `${startTheme} not chosen at start`);
       await clickSel('.theme-seg button[data-theme="light"]');
       assert(await waitFor(`${bg} === "#ffffff"`, 3000), `light: ${await js(bg)}`);
@@ -2747,7 +2778,11 @@ app.whenReady().then(() => setTimeout(async () => {
     //     this app's MCP server with ELECTRON_RUN_AS_NODE.
     await step(81, 'settings: AI clients (MCP) switches and copied config; updates and menu bar switches', async () => {
       await press(',', ['meta']);
-      assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row")', 3000), 'no AI clients section');
+      // Opens on General; the list on the left shows one page at a time.
+      assert(await waitFor('document.querySelector(".settings-nav-item.on")?.dataset.page === "general" && !document.querySelector(".settings-page[data-page=general]").hidden && document.querySelector(".settings-page[data-page=ai]").hidden', 3000), 'Settings does not open on General');
+      assert(await js('[...document.querySelectorAll(".settings-nav-item")].map(b => b.textContent).join("|")') === 'General|Appearance|Shortcuts|Calendars|Voice|AI clients (MCP)', 'the pages on the left');
+      await clickSel('.settings-nav-item[data-page="ai"]');
+      assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row") && !document.querySelector(".settings-page[data-page=ai]").hidden', 3000), 'no AI clients section');
       const box = (k) => `document.querySelector('.mcp-row input[data-mcp="${k}"]')`;
       assert(await waitFor(`${box('enabled')}.checked === false && ${box('allowWrite')}.disabled === true && ${box('allowTicks')}.disabled === true`, 2000), 'not off by default');
       const settingsFile = path.join(tmp, 'settings.json');
@@ -2767,6 +2802,8 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('.mcp-row [data-mcp-copy="command"]');
       assert(await copied((t) => t.startsWith('claude mcp add --transport stdio --scope user --env ELECTRON_RUN_AS_NODE=1 mufka -- ')), `command not copied: ${await clipboard.readText()}`);
       // Updates: on by default; in a run that is not the installed app it says so.
+      await clickSel('.settings-nav-item[data-page="general"]');
+      assert(await js('!!document.querySelector(".settings-page[data-page=general] .vault-path")?.textContent'), 'no notes folder on General');
       const upd = 'document.querySelector(\'.upd-row input[data-update="auto"]\')';
       assert(await waitFor(`${upd}.checked === true && document.querySelector('.upd-status')?.textContent.includes('updates work in the installed app')`, 2000), `updates section: ${await js('document.querySelector(".upd-row")?.textContent')}`);
       await clickEval(upd, 'automatic updates off');
@@ -2774,12 +2811,14 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval(upd, 'automatic updates on');
       assert(await waitFor2(() => !('autoUpdate' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'autoUpdate on should clear the key');
       // Today's plan in the menu bar / tray: on by default, off is saved.
+      await clickSel('.settings-nav-item[data-page="appearance"]');
       const bar = 'document.querySelector(\'.menubar-row input[data-menubar="on"]\')';
       assert(await waitFor(`${bar}?.checked === true`, 2000), 'menu bar switch not on by default');
       await clickEval(bar, 'menu bar off');
       assert(await waitFor2(() => JSON.parse(fs.readFileSync(settingsFile, 'utf8')).menubar === false, 3000), 'menu bar off not saved');
       await clickEval(bar, 'menu bar on');
       assert(await waitFor2(() => !('menubar' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'menu bar on should clear the key');
+      await clickSel('.settings-nav-item[data-page="ai"]');
       await clickEval(box('enabled'), 'disable MCP');
       assert(await waitFor2(() => saved().enabled === false, 3000), 'not turned off');
       await press('Escape');

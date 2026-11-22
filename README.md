@@ -236,7 +236,8 @@ Planner.
   `-word`, `a OR b`, `file:`, `path:`, `#tag`, `line:(…)`, `section:(…)`,
   `task:` / `task-todo:` / `task-done:`, `[property:value]` and `/regex/`, and
   marks the hits. **⌘O** jumps to any note, **⌘P** runs any command, **⌘/**
-  lists every shortcut.
+  lists every shortcut. **Settings → Shortcuts** changes the keys of any
+  command, or gives one to a command that has none.
 - **Code blocks** are coloured by their language (```js, ```python, ```bash and
   about 40 more), on screen and in PDF exports.
 - **Pasting from the web**, Google Docs or Mail gives Markdown: headings, bold,
