@@ -22,6 +22,9 @@ import { resolveAttachment, attachInsertText } from '../lib/attach.mjs';
 import { attachmentsDirFor } from '../lib/layout.mjs';
 import { parseBlocks, blockText, replaceBlockText, insertBlockAfter, addBlock } from '../lib/blocks.mjs';
 import { createGraphView } from './graph-view.js';
+import { createCanvasView } from './canvas-view.js';
+import { parseCanvas, stringifyCanvas } from '../lib/canvas.mjs';
+import { embedSection } from '../lib/embed.mjs';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
 import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender, prettyDue } from './tasks.js';
 import { createDataview } from './dataview-view.js';
@@ -89,6 +92,8 @@ const wisprApi = window.wispr;
 const calApi = window.calendars;
 
 const state = {
+  treeCanvases: [],       // Obsidian Canvas files: [{ rel, mtime }]
+  canvas: null,           // the open canvas: { rel }
   store: emptyStore(),
   calCursor: new Date(),
   selectedDate: new Date(),
@@ -803,7 +808,7 @@ function renderNotesSection() {
     sortButton(),
   ], 'notes');
   if (!sectionOpen('notes')) return;
-  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder });
+  const tree = buildTree(state.treeFolders, [...state.treeNotes, ...state.treeCanvases], { sort: state.noteSort, order: state.treeOrder });
   if (tree.folders.length === 0 && tree.notes.length === 0 && !state.treeEdit) {
     const empty = elem('div', 'side-empty');
     empty.append(document.createTextNode('No notes yet. '), smallButton('Create one', null, () => newNote(), K('⌘N')));
@@ -829,13 +834,156 @@ function renderContent() {
   contentEl.classList.toggle('is-planner', state.contentView === 'planner');
   contentEl.classList.toggle('is-tasks', state.contentView === 'tasks');
   contentEl.classList.toggle('is-draw', state.contentView === 'draw');
+  contentEl.classList.remove('is-canvas');
   if (state.contentView !== 'draw') closeDrawing();
   if (state.contentView === 'graph') contentEl.append(graph().el);
   else if (state.contentView === 'planner') renderPlanner(contentEl, state.weekDate, plannerApi);
   else if (state.contentView === 'tasks') renderTasks(contentEl, tasksApi());
   else if (state.contentView === 'draw') renderDraw(contentEl, drawApi());
+  else if (state.contentView === 'canvas' && state.canvas) renderCanvasPage();
   else if (state.contentView === 'note' && state.openNote) renderNotePane();
   else renderDayPage();
+}
+
+// --- Canvas (lib/canvas.mjs, src/canvas-view.js) ---
+// A .canvas file opens as a board of cards. The board is made once per open
+// canvas and kept across re-renders; changes are saved a moment later.
+const isCanvasRel = (rel) => /\.canvas$/i.test(String(rel || ''));
+const canvasTitleOf = (rel) => leafOf(rel).replace(/\.canvas$/i, '');
+let canvasBoard = null; // { rel, host, api, written, mtime, timer }
+async function openCanvas(rel) {
+  flushActiveEditor();
+  if (!canvasBoard || canvasBoard.rel !== rel) {
+    const res = await notesApi.read(rel);
+    if (!res || res.error) { showToast('Could not open the canvas'); return; }
+    const data = parseCanvas(res.content);
+    if (data.error) { showToast(data.error); return; }
+    saveCanvasNow();
+    const host = elem('div', 'canvas-host');
+    const board = { rel, host, written: res.content, timer: null };
+    board.api = createCanvasView(host, data, canvasOptions(board));
+    canvasBoard = board;
+  }
+  navVisit({ view: 'canvas', rel });
+  state.canvas = { rel };
+  state.contentView = 'canvas';
+  state.selectedFolder = null;
+  expandAncestors(rel);
+  render();
+  canvasBoard.host.focus({ preventScroll: true });
+}
+function saveCanvasNow() {
+  const b = canvasBoard;
+  if (!b || !b.timer) return;
+  clearTimeout(b.timer); b.timer = null;
+  const text = stringifyCanvas(b.api.data());
+  b.written = text;
+  notesApi.write(b.rel, text).then((w) => { if (w && w.error) showToast('Could not save the canvas'); });
+}
+// Another app changed the open canvas: show its version.
+async function reloadOpenCanvas() {
+  const b = canvasBoard;
+  if (!b || b.timer) return;
+  const res = await notesApi.read(b.rel);
+  if (!res || res.error || res.content === b.written) return;
+  const data = parseCanvas(res.content);
+  if (data.error) return;
+  b.written = res.content;
+  b.api.setData(data);
+}
+function canvasFileRel(file) {
+  const f = String(file || '');
+  if (state.notesFlat.some((n) => n.rel === f)) return f;
+  return resolveLink(f.replace(/\.md$/i, ''), canvasBoard ? canvasBoard.rel : '', state.notesFlat);
+}
+function canvasOptions(board) {
+  const md = (text, rel) => renderMarkdown(text, { doc: document, noteExists: wikiExists, attach: (raw) => resolveAttachment(raw, state.attachFiles, folderOf(rel), attachmentsDirFor(state.layout, folderOf(rel))), embedNote, embedStack: [rel], ...noteRenderOptions(rel) });
+  return {
+    renderText: (text) => md(text, board.rel),
+    renderFile: (n) => {
+      const box = elem('div', 'cv-file');
+      const att = resolveAttachment(n.file, state.attachFiles, '', attachmentsDirFor(state.layout, ''));
+      if (!/\.md$/i.test(n.file) && att.url && att.isImage) {
+        const img = document.createElement('img'); img.src = att.url; img.alt = leafOf(n.file); img.draggable = false;
+        box.classList.add('cv-file-image'); box.append(img);
+        return box;
+      }
+      const rel = canvasFileRel(n.file);
+      const title = elem('button', 'cv-file-title', `${rel ? noteTitleOf(rel) : leafOf(n.file).replace(/\.md$/i, '')}${n.subpath ? ` › ${n.subpath.replace(/^#/, '')}` : ''}`);
+      title.type = 'button'; title.title = rel ? `Open ${rel}` : 'This note is not in the vault';
+      title.addEventListener('pointerdown', (e) => e.stopPropagation());
+      title.addEventListener('click', (e) => { if (rel) openFromCanvas(rel, e); });
+      const body = elem('div', 'cv-md md');
+      const content = rel ? (state.vaultNotes.find((x) => x.rel === rel) || {}).content ?? state.noteCache.get(rel) : null;
+      const part = content == null ? null : embedSection(content, n.subpath ? n.subpath.replace(/^#/, '') : null);
+      if (part == null) body.append(elem('p', 'cv-missing', rel ? 'Loading…' : `Not found: ${n.file}`));
+      else body.append(...md(part, rel));
+      box.append(title, body);
+      return box;
+    },
+    onChange: () => {
+      clearTimeout(board.timer);
+      board.timer = setTimeout(() => { if (canvasBoard === board) saveCanvasNow(); else { board.timer = null; notesApi.write(board.rel, stringifyCanvas(board.api.data())); } }, 400);
+    },
+    onOpenFile: (file, e) => { const rel = canvasFileRel(file); if (rel) openFromCanvas(rel, e); else if (file) openAttachment(file); },
+    onOpenUrl: (url) => notesApi.openExternal(url),
+    pickNote: () => new Promise((resolve) => {
+      openPalette({
+        id: 'canvas-note', placeholder: 'Add a note to the canvas…', footer: '↑↓ navigate · ↵ add · esc close',
+        items: (q) => (q.trim() ? fuzzyFilter(q, state.notesFlat, (n) => n.title).map((x) => x.item) : state.notesFlat.slice(0, 50))
+          .map((n) => ({ label: n.title, detail: n.folder ? n.folder.split('/').join(' / ') : '', run: () => resolve(n.rel) })),
+      });
+    }),
+    askText: ({ heading, value }) => new Promise((resolve) => askDialog({ heading, value, okLabel: 'Save' }, resolve)),
+  };
+}
+function openFromCanvas(rel, e) {
+  saveCanvasNow();
+  if (e && (e.metaKey || e.ctrlKey)) openNoteInNewTab(rel); else openNote(rel, 'oku');
+}
+function renderCanvasPage() {
+  if (!canvasBoard || canvasBoard.rel !== state.canvas.rel) { openCanvas(state.canvas.rel); return; }
+  contentEl.classList.add('is-canvas');
+  contentEl.append(canvasBoard.host);
+}
+async function newCanvas(folder = targetFolder()) {
+  const taken = new Set(state.treeCanvases.map((c) => c.rel.toLowerCase()));
+  const base = folder ? `${folder}/` : '';
+  let rel = `${base}Untitled.canvas`;
+  for (let i = 1; taken.has(rel.toLowerCase()); i++) rel = `${base}Untitled ${i}.canvas`;
+  const w = await notesApi.write(rel, stringifyCanvas({ nodes: [], edges: [] }));
+  if (w && w.error) { showToast('Could not create the canvas'); return; }
+  await refreshTree();
+  await openCanvas(rel);
+}
+// A canvas in the tree: its own icon; a click opens the board.
+function canvasRow(n, depth) {
+  const row = elem('div', 'tree-row note-row canvas-row' + (state.contentView === 'canvas' && state.canvas && state.canvas.rel === n.rel ? ' selected' : ''));
+  row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
+  row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'canvas';
+  const color = rowColor(n.rel, 'note', state.treeStyles);
+  if (color) row.style.setProperty('--row-c', color);
+  row.append(treeIcon(n.rel, 'kanban'));
+  row.append(elem('span', 'tree-name', canvasTitleOf(n.rel)));
+  row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openCanvas(n.rel); });
+  row.addEventListener('keydown', (e) => { if (e.key === 'Enter') openCanvas(n.rel); });
+  const items = () => [
+    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'canvas', rel: n.rel }); } },
+    SEP,
+    ...copyItems(n.rel, [{ label: 'Copy link', fn: () => { closeMenu(); copyText(`[[${leafOf(n.rel)}]]`, 'the link'); } }]),
+    SEP,
+    revealItem(n.rel),
+    SEP,
+    { label: 'Delete', danger: true, fn: () => { closeMenu(); askDialog({ heading: `Delete “${canvasTitleOf(n.rel)}”?`, text: 'The canvas goes to the trash.', okLabel: 'Delete', danger: true }, async () => {
+      const r = await notesApi.remove(n.rel);
+      if (r && r.error) { showToast('Could not delete the canvas'); return; }
+      if (canvasBoard && canvasBoard.rel === n.rel) { clearTimeout(canvasBoard.timer); canvasBoard = null; if (state.contentView === 'canvas') { state.canvas = null; state.contentView = 'day'; } }
+      await refreshTree(); render();
+    }); } },
+  ];
+  addMenuBtn(row, `c:${n.rel}`, items);
+  onRightClick(row, `c:${n.rel}`, items);
+  return row;
 }
 
 // --- graph view (src/graph-view.js) ---
@@ -876,6 +1024,7 @@ function currentLocation() {
   if (state.contentView === 'planner') return { view: 'planner', key: dayKey(startOfWeek(state.weekDate)) };
   if (state.contentView === 'tasks') return { view: 'tasks', rel: state.board ? state.board.rel : null };
   if (state.contentView === 'draw') return { view: 'draw', rel: state.drawing ? state.drawing.rel : null };
+  if (state.contentView === 'canvas' && state.canvas) return { view: 'canvas', rel: state.canvas.rel };
   if (state.contentView === 'note' && state.openNote) return { view: 'note', rel: state.openNote };
   return { view: 'day', key: dayKey(state.selectedDate) };
 }
@@ -885,7 +1034,7 @@ let newTabAsk = 0;
 const askNewTab = (e) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.type === 'click' || e.key === 'Enter')) newTabAsk = Date.now(); };
 document.addEventListener('click', askNewTab, true);
 document.addEventListener('keydown', askNewTab, true);
-const docPlace = (loc) => !!(loc && loc.rel && (loc.view === 'note' || loc.view === 'tasks' || loc.view === 'draw'));
+const docPlace = (loc) => !!(loc && loc.rel && (loc.view === 'note' || loc.view === 'tasks' || loc.view === 'draw' || loc.view === 'canvas'));
 function navVisit(to) {
   hidePreview();
   state.menu = null; // a row menu belongs to the pane it was opened on
@@ -911,7 +1060,8 @@ function updateNavButtons() {
   document.getElementById('nav-back').disabled = !curNav().canBack;
   document.getElementById('nav-forward').disabled = !curNav().canForward;
 }
-const navValid = (loc) => (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel);
+const navValid = (loc) => (loc.view === 'canvas' ? state.treeCanvases.some((c) => c.rel === loc.rel)
+  : (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel));
 // Show a place without recording it in the history.
 async function goTo(loc) {
   navigating = true;
@@ -922,6 +1072,7 @@ async function goTo(loc) {
     else if (loc.view === 'planner') openPlanner(parseDayKey(loc.key));
     else if (loc.view === 'tasks') await openTasks(loc.rel);
     else if (loc.view === 'draw') await openDraw(loc.rel);
+    else if (loc.view === 'canvas') await openCanvas(loc.rel);
     else await selectDay(parseDayKey(loc.key), { keepTab: true });
   } finally { navigating = false; updateNavButtons(); }
 }
@@ -984,9 +1135,10 @@ function tabTitle(loc) {
   if (loc.view === 'planner') return 'Planner';
   if (loc.view === 'tasks') return loc.rel ? noteTitleOf(loc.rel) : 'Tasks';
   if (loc.view === 'draw') return loc.rel ? drawingTitle(loc.rel) : 'Draw';
+  if (loc.view === 'canvas') return canvasTitleOf(loc.rel);
   return loc.key === dayKey(new Date()) ? 'Home' : formatDayNumeric(parseDayKey(loc.key));
 }
-const TAB_ICONS = { note: 'tiFileText', graph: 'graph', planner: 'calendar', tasks: 'kanban', draw: 'tiPenLine', day: 'home' };
+const TAB_ICONS = { note: 'tiFileText', graph: 'graph', planner: 'calendar', tasks: 'kanban', draw: 'tiPenLine', canvas: 'kanban', day: 'home' };
 // The strip shows only when there is more than one tab.
 const tabStripEl = document.getElementById('tab-strip');
 let tabDrag = null;
@@ -1709,6 +1861,12 @@ function renderPaneTitle() {
     if (state.drawing) el.append(elem('span', 'pt-path', 'Draw / '));
     el.append(elem('span', 'pt-main', title));
   }
+  else if (state.contentView === 'canvas' && state.canvas) {
+    title = canvasTitleOf(state.canvas.rel);
+    const folder = folderOf(state.canvas.rel);
+    if (folder) el.append(elem('span', 'pt-path', `${folder.split('/').join(' / ')} / `));
+    el.append(elem('span', 'pt-main', title));
+  }
   else if (state.contentView === 'note' && state.openNote) {
     title = noteTitleOf(state.openNote);
     const folder = folderOf(state.openNote);
@@ -2120,6 +2278,7 @@ function commandList() {
     ...boardList().map((b) => ({ label: `Open board: ${b.title}`, run: () => openTasks(b.rel) })),
     { label: 'Open draw', hint: '⌘4', run: () => openDraw() },
     { label: 'New drawing', run: () => newDrawing() },
+    { label: 'New canvas', run: () => newCanvas() },
     ...drawingList().map((d) => ({ label: `Open drawing: ${d.title}`, run: () => openDraw(d.rel) })),
     { label: 'Open graph view', hint: '⌘G', run: () => openGraph() },
     { label: 'Open local graph', hint: '⇧⌘G', when: noteOpen, run: () => openGraph({ local: true }) },
@@ -3439,7 +3598,9 @@ async function refreshTree() {
   if (res && !res.error) {
     state.treeFolders = res.folders.map((f) => f.rel);
     state.treeNotes = res.notes;
+    state.treeCanvases = Array.isArray(res.canvases) ? res.canvases : [];
     state.notesFlat = flattenNotes(res.notes);
+    reloadOpenCanvas();
     applyAliases();
   }
   await refreshAttachList();
@@ -3733,7 +3894,7 @@ function renderTreeChildren(node, depth, parentEl, folderRel) {
   }
   for (const n of node.notes) {
     if (e && e.kind === 'rename-note' && e.rel === n.rel) parentEl.append(treeEditRow(depth));
-    else parentEl.append(noteRow(n, depth));
+    else parentEl.append(isCanvasRel(n.rel) ? canvasRow(n, depth) : noteRow(n, depth));
   }
 }
 
@@ -3984,6 +4145,7 @@ function folderMenuItems(f) {
     { label: 'New note', fn: () => { closeMenu(); newNoteIn(f.rel); } },
     { label: 'New note from template…', fn: () => { closeMenu(); newFromTemplate(f.rel); } },
     { label: 'New folder', fn: () => { closeMenu(); newFolderIn(f.rel); } },
+    { label: 'New canvas', fn: () => { closeMenu(); newCanvas(f.rel); } },
     SEP,
     ...(daily ? [] : [{ label: 'Move to…', fn: () => { closeMenu(); moveToFolder(`f:${f.rel}`); } }]),
     { label: 'Search in folder', fn: () => { closeMenu(); searchFor(`path:"${f.rel}"`); } },

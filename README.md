@@ -90,6 +90,10 @@ Planner.
   notes.
 - **Write in place**: notes always look formatted; click a paragraph to edit it.
   Tables, task lists, callouts, footnotes, properties, `==highlights==`.
+- **Canvas**: `.canvas` files (Obsidian's format) open as a board of cards,
+  notes, links and groups joined by arrows. Drag, resize, colour; double-click
+  the board for a new card; **New canvas** from the command palette or a
+  folder's menu.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
