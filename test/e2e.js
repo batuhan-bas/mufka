@@ -1623,6 +1623,13 @@ app.whenReady().then(() => setTimeout(async () => {
       await openMenuOf('Yemekler', 'Colour…');
       await clickEval('document.querySelector(".style-reset")', 'Default');
       assert(await waitFor(`${row('Yemekler')}.style.getPropertyValue('--row-c') === '#6f7cf0'`, 2000), 'default colour not restored');
+      // Deleting the open note from its ⋯ menu forgets its icon too.
+      await clickEval(row('Corba'), 'Corba');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Corba"', 3000), 'Corba did not open');
+      await clickEval(`document.querySelector('#pane-actions [data-menu-anchor="menu-note"]')`, 'note ⋯');
+      await clickMenuItem('Delete');
+      await clickEval(`[...document.querySelectorAll('.row-menu .menu-item')].find(b=>b.textContent==='Delete')`, 'confirm Delete');
+      assert(await waitFor2(() => !fs.existsSync(path.join(vault, 'Yemekler', 'Corba.md')) && !saved()?.['Yemekler/Corba.md'], 3000), `the deleted note's icon is still saved: ${JSON.stringify(saved())}`);
     });
 
     // 58. Arrange the tree by dragging (a real Chrome drag via CDP): the top
