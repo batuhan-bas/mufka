@@ -55,6 +55,7 @@ import { htmlToMarkdown, isRichHtml, insideCodeFence } from '../lib/paste.mjs';
 import { parseQuery, isPlainQuery, matchNote, searchDoc, hitTerms, hitsIn, snippetFor } from '../lib/search.mjs';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
+import { blockChoices, findBlock, newBlockId, addBlockId, addBlockIdLine } from '../lib/blockref.mjs';
 import { applyTemplate } from '../lib/template.mjs';
 import { keyLabel } from '../lib/keys.mjs';
 import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs';
@@ -295,7 +296,7 @@ function render() {
   // synchronously; suppress that so it cannot commit stale text into the
   // already-advanced edit target (data corruption).
   state.suppressBlockBlur = true;
-  renderSidebar(); renderContent(); renderPaneActions(); renderRightbar(); restoreFocus(); renderMenu();
+  renderSidebar(); renderContent(); applyBlockFlash(); renderPaneActions(); renderRightbar(); restoreFocus(); renderMenu();
   state.suppressBlockBlur = false;
   syncTabs();
   renderSplit();
@@ -3398,6 +3399,7 @@ async function openAttachment(rel) {
 // Scroll the open note's rendered body to a heading by its (folded) text.
 function scrollToHeading(heading) {
   if (!heading) return;
+  if (String(heading).startsWith('^')) { scrollToBlock(String(heading).slice(1)); return; }
   const want = foldTR(String(heading).trim());
   requestAnimationFrame(() => {
     const h = [...contentEl.querySelectorAll('.md h1, .md h2, .md h3, .md h4, .md h5, .md h6')]
@@ -3417,6 +3419,7 @@ function reportLinks(res) {
 // is missing. "Folder/Title" targets keep their folder; a bare title is created
 // alongside the linking note.
 async function openWiki(target, heading) {
+  if (!String(target).trim() && heading) { scrollToHeading(heading); return; } // [[#Heading]], [[#^id]]: this note
   const rel = resolveLink(target, state.openNote || '', state.notesFlat);
   if (rel) { await openNote(rel, 'oku', { keepTab: true }); scrollToHeading(heading); return; }
   const t = target.trim();
@@ -4908,6 +4911,7 @@ function blockPreview(scope, b) {
     e.preventDefault();
     startEditBlock(scope, b.start, 'end');
   });
+  el.addEventListener('contextmenu', (e) => { if (!e.target.closest('a, img, [data-att], .embed')) blockRefMenu(e, scope, b); });
   return el;
 }
 
@@ -5259,12 +5263,112 @@ function runSlashAction(action, ta) {
   if (action === 'attach') addFileToNote();
   else if (action === 'template') openTemplatePicker();
 }
+// [[Note#^ → the note's paragraphs and list items; choosing one without an
+// id gives it one in that note. The open note's own blocks are offered only
+// when they have an id (writing it would replace the block being edited).
+function blockSuggestions(trigger) {
+  const rel = trigger.note.trim() ? resolveLink(trigger.note.trim(), state.openNote || '', state.notesFlat) : state.openNote;
+  const note = rel && embedNote(rel.replace(/\.md$/i, ''));
+  if (!note) return [];
+  const self = rel === state.openNote;
+  const linkText = trigger.note.trim() ? linkTextFor(rel, state.notesFlat.map((n) => n.rel)) : '';
+  let choices = blockChoices(note.content).filter((c) => !self || c.id);
+  if (trigger.query) choices = choices.filter((c) => (c.id && c.id.startsWith(trigger.query)) || fuzzyMatch(trigger.query, c.text));
+  return choices.map((c) => {
+    const id = c.id || newBlockId(note.content);
+    return {
+      label: c.text.length > 72 ? `${c.text.slice(0, 70)}…` : c.text,
+      detail: [c.heading, c.id ? `^${c.id}` : c.kind === 'item' ? 'list item' : c.kind].filter(Boolean).join(' · '),
+      insert: `[[${linkText}#^${id}]]`,
+      run: c.id ? null : () => addIdQuietly(rel, (t) => (t.split('\n')[c.idLine] === note.content.split('\n')[c.idLine] ? addBlockId(t, c.idLine, id) : t)),
+    };
+  });
+}
+
+// Write an id into another note while a block is being edited here: no
+// re-render, which would drop the text being typed.
+async function addIdQuietly(rel, edit) {
+  const now = await currentText(rel);
+  if (!now || now.scope) return;
+  const next = edit(now.text);
+  if (next === now.text) return;
+  const w = await notesApi.write(rel, next);
+  if (w && w.error) { showToast('Could not add the block id'); return; }
+  state.noteCache.set(rel, next);
+  const v = state.vaultNotes.find((n) => n.rel === rel);
+  if (v) v.content = next;
+}
+
+// Right-click a paragraph, list item, quote, table or code: copy a link to
+// it, or an embed; it gets an id first when it has none.
+function blockRefMenu(e, scope, b) {
+  const rel = scope === 'note' ? state.openNote : (state.dailyNote.key ? dailyRel(state.dailyNote.key) : '');
+  if (!rel) return;
+  const src = getSrcFor(scope);
+  const inBlock = blockChoices(src).filter((c) => c.start >= b.start && c.end <= b.end);
+  let target = null;
+  const li = e.target.closest('li');
+  if (li && b.type === 'list') {
+    const i = [...e.currentTarget.querySelectorAll('li')].indexOf(li);
+    target = inBlock.filter((c) => c.kind === 'item')[i] || null;
+  } else if (b.type === 'paragraph' || b.type === 'quote') target = inBlock.find((c) => c.start === b.start) || null;
+  if (!target && !['table', 'code', 'list', 'image', 'html'].includes(b.type)) return;
+  e.preventDefault();
+  const name = linkTextFor(rel, state.notesFlat.map((n) => n.rel));
+  const copy = async (embed) => {
+    closeMenu();
+    let id = target ? target.id : null;
+    if (!id) {
+      // A whole block (table, code) is named by an "^id" line after it.
+      const next = src.split('\n')[b.end + 2];
+      const own = next && /^\^([A-Za-z0-9-]+)\s*$/.exec(next);
+      id = own ? own[1] : newBlockId(src);
+      if (!own) await changeNoteText(rel, (t) => (target ? addBlockId(t, target.idLine, id) : addBlockIdLine(t, b.end, id)));
+    }
+    const text = `${embed ? '!' : ''}[[${name}#^${id}]]`;
+    await notesApi.copy(text);
+    showToast(`Copied ${text}`);
+  };
+  openMenu(`block-${b.start}`, () => [
+    { label: 'Copy link to block', fn: () => copy(false) },
+    { label: 'Copy embed of block', fn: () => copy(true) },
+  ], { align: 'left', at: { x: e.clientX, y: e.clientY } });
+}
+
+// Scroll to a block of the open note ("^id") and light it up for a moment.
+// A re-render in that moment (a save elsewhere) carries the light over.
+let blockFlash = null; // { id, at }
+function blockEl(id) {
+  const el = contentEl.querySelector(`.md [data-block-id="${CSS.escape(id)}"]`);
+  if (el) return el;
+  const at = findBlock(state.noteContent, id);
+  return at && [...contentEl.querySelectorAll('.blocks > [data-block-start]')].filter((x) => Number(x.dataset.blockStart) <= at.start).pop();
+}
+function applyBlockFlash() {
+  if (!blockFlash) return;
+  const past = Date.now() - blockFlash.at;
+  if (past > 1800) { blockFlash = null; return; }
+  const el = blockEl(blockFlash.id);
+  if (el && !el.classList.contains('block-flash')) { el.style.animationDelay = `-${past}ms`; el.classList.add('block-flash'); }
+}
+function scrollToBlock(id) {
+  requestAnimationFrame(() => {
+    const el = blockEl(id);
+    if (!el) { showToast(`Block not found: ^${id}`); return; }
+    el.scrollIntoView({ block: 'center' });
+    blockFlash = { id, at: Date.now() };
+    applyBlockFlash();
+    setTimeout(() => { blockFlash = null; contentEl.querySelectorAll('.block-flash').forEach((x) => { x.classList.remove('block-flash'); x.style.animationDelay = ''; }); }, 1850);
+  });
+}
+
 const suggestApi = {
   items(kind, q, trigger) {
     if (kind === 'slash') {
       return slashItems(q, { atLineStart: trigger ? trigger.atLineStart : true, dailyLink: dayKey(new Date()) })
         .map((r) => ({ ...r, run: r.action ? (ta) => runSlashAction(r.action, ta) : null }));
     }
+    if (kind === 'block') return blockSuggestions(trigger);
     if (kind === 'tag') {
       return buildTagIndex(state.vaultNotes).map((t) => ({ t, m: fuzzyMatch(q, t.tag) })).filter((x) => x.m)
         .sort((a, b) => b.m.score - a.m.score || b.t.count - a.t.count)

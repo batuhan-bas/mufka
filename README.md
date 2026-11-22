@@ -92,6 +92,9 @@ Planner.
   Tables, task lists, callouts, footnotes, properties, `==highlights==`.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
+- **Block links**: `[[Note#^` lists that note's paragraphs and list items;
+  choosing one gives it an id (`^abc123`, as in Obsidian). `![[Note#^id]]`
+  shows just that block; right-click a block to copy a link to it.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
 - **Dictate with [Handy](https://handy.computer)** (free, offline): speak and

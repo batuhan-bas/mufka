@@ -1844,3 +1844,10 @@ body.quick-page { margin: 0; overflow: hidden; background: var(--ground); }
 .quick-mic-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
 .quick-mic-time { font-size: 12px; font-variant-numeric: tabular-nums; }
 .quick-mic.wait { opacity: .55; pointer-events: none; }
+
+/* Block references (lib/blockref.mjs): the block a [[Note#^id]] link went to lights up */
+.block-flash { animation: block-flash 1.8s ease-out; border-radius: 4px; }
+@keyframes block-flash {
+  0%, 40% { background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
+  100% { background: transparent; box-shadow: 0 0 0 6px transparent; }
+}
