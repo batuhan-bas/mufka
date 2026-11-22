@@ -15,7 +15,7 @@ import { mergeOutside } from '../lib/outside.mjs';
 import { renderMarkdown, toggleTaskLine } from '../lib/markdown.mjs';
 import {
   buildTree, TREE_SORTS, flattenNotes, resolveLink, folderOf, joinRel, canMoveInto,
-  leafOf, placeInOrder, remapOrder, forgetOrder,
+  leafOf, placeInOrder, remapOrder, forgetOrder, titleOf as noteTitleOf,
 } from '../lib/notestree.mjs';
 import { buildBacklinkIndex, backlinksFor } from '../lib/backlinks.mjs';
 import { resolveAttachment, attachInsertText } from '../lib/attach.mjs';
@@ -3758,7 +3758,6 @@ async function openWiki(target, heading) {
 
 // The daily notes folder is special in the tree (cannot be renamed/moved/deleted).
 const isGunluk = (rel) => state.layout.daily !== '' && rel === state.layout.daily;
-const noteTitleOf = (rel) => rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/i, '');
 
 async function refreshTree() {
   const res = await notesApi.tree();
@@ -4373,7 +4372,7 @@ function askDelete(rel, what, after) {
   });
 }
 function drawingMenuItems(d) {
-  const name = d.rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+  const name = noteTitleOf(d.rel);
   return [
     { label: 'Open', fn: () => { closeMenu(); openDraw(d.rel); } },
     { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'draw', rel: d.rel }); } },
@@ -4460,8 +4459,8 @@ const revealItem = (rel) => ({ label: plansApi.isMac ? 'Reveal in Finder' : 'Sho
 // What a [[link]] to the note is: its name, or its path when another note has
 // the same name.
 function linkTarget(rel) {
-  const name = rel.replace(/^.*\//, '').replace(/\.md$/i, '');
-  const same = state.notesFlat.filter((x) => x.rel.replace(/^.*\//, '').replace(/\.md$/i, '').toLowerCase() === name.toLowerCase());
+  const name = noteTitleOf(rel);
+  const same = state.notesFlat.filter((x) => noteTitleOf(x.rel).toLowerCase() === name.toLowerCase());
   return same.length > 1 ? rel.replace(/\.md$/i, '') : name;
 }
 // Move to…: a folder picked from a list (the top of the vault first).
@@ -4472,7 +4471,7 @@ function moveToFolder(key) {
   const folders = ['', ...state.treeFolders].filter((f) => f !== here && !(isFolder && (f === rel || f.startsWith(`${rel}/`))));
   openPalette({
     id: 'move',
-    placeholder: `Move ${rel.replace(/^.*\//, '').replace(/\.md$/i, '')} to…`,
+    placeholder: `Move ${noteTitleOf(rel)} to…`,
     footer: '↑↓ navigate · ↵ move · esc close',
     items: (q) => folders
       .filter((f) => !q.trim() || f.toLowerCase().includes(q.trim().toLowerCase()))
@@ -4485,7 +4484,7 @@ async function duplicateFile(rel) {
   const res = await notesApi.read(rel);
   if (!res || res.error) { showToast('Could not read it'); return null; }
   const folder = folderOf(rel);
-  let name = rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+  let name = noteTitleOf(rel);
   const drawing = /\.excalidraw$/i.test(name);
   if (drawing) {
     const base = name.replace(/\.excalidraw$/i, '');
