@@ -374,6 +374,9 @@ const localSet = (k, v) => { try { localStorage.setItem(`mufka-${k}`, v); } catc
 const localDel = (k) => { try { localStorage.removeItem(`mufka-${k}`); } catch { /* ignore */ } };
 // A stored JSON value, or `fallback` when there is none or it does not parse.
 const localJson = (k, fallback) => { try { return JSON.parse(localGet(k)) ?? fallback; } catch { return fallback; } };
+
+// A button with a class, a label and what a click does.
+function button(label, cls, fn) { const b = elem('button', cls, label); b.type = 'button'; b.addEventListener('click', fn); return b; }
 const VOICE_LEDE = {
   handy: 'Handy turns it into text on your computer, with the model chosen in Handy; the note opens when it is done.',
   studio: 'VoiceStudio turns it into text on your computer, with the model chosen in VoiceStudio; the note opens when it is done.',
@@ -3068,13 +3071,20 @@ function dataviewBlocks(src) {
   return renderMarkdown(src, { doc: document, noteExists: wikiExists, attach: (raw) => resolveAttachment(raw, state.attachFiles, '', attachmentsDirFor(state.layout, '')) });
 }
 
+// Clicks on rendered Markdown: attachments, web links, tags, and [[links]]
+// (onWiki gets the link element).
+function wireLinks(el, onWiki) {
+  const on = (sel, fn) => el.querySelectorAll(sel).forEach((x) => x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(x); }));
+  on('[data-att]', (x) => openAttachment(x.getAttribute('data-att')));
+  on('a[data-external]', (a) => notesApi.openExternal(a.getAttribute('href')));
+  on('.tag[data-tag]', (t) => searchFor(`#${t.getAttribute('data-tag')}`));
+  on('a[data-wiki]', onWiki);
+}
+const followWiki = (a) => openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
+
 // Links and boxes in dataviewjs output, which arrives after the note mounted.
 function wireDataviewContent(box) {
-  box.querySelectorAll('a[data-wiki]').forEach((a) => a.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation(); hidePreview(); openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
-  }));
-  box.querySelectorAll('a[data-external]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); }));
-  box.querySelectorAll('.tag[data-tag]').forEach((t) => t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); }));
+  wireLinks(box, (a) => { hidePreview(); followWiki(a); });
   wireDataview(box);
 }
 
@@ -4743,14 +4753,11 @@ function renderSplit() {
     const el = elem('div', `block md block-${b.type}`);
     el.dataset.blockStart = String(b.start);
     for (const n of renderMarkdown(blockText(text, b), { doc: document, noteExists: wikiExists, attach, refs: text, embedNote, embedStack: [rel], ...noteRenderOptions(rel) })) el.append(n);
-    el.querySelectorAll('a[data-wiki]').forEach((a) => a.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation(); hidePreview();
+    wireLinks(el, (a) => {
+      hidePreview();
       const to = resolveLink(a.getAttribute('data-wiki'), rel, state.notesFlat);
-      if (to) openSplit(to); else openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
-    }));
-    el.querySelectorAll('a[data-external]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); }));
-    el.querySelectorAll('[data-att]').forEach((x) => x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAttachment(x.getAttribute('data-att')); }));
-    el.querySelectorAll('.tag[data-tag]').forEach((t) => t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); }));
+      if (to) openSplit(to); else followWiki(a);
+    });
     el.querySelectorAll('input.task-check').forEach((box) => box.addEventListener('change', () => toggleSplitTask(b.start + Number(box.getAttribute('data-line')))));
     wireDataview(el);
     el.addEventListener('mousedown', (e) => {
@@ -4930,19 +4937,8 @@ function mountBlockMarkdown(container, bsrc, startLine, scope) {
   const nodes = renderMarkdown(bsrc, { doc: document, noteExists: wikiExists, attach: attachResolverFor(scope), refs: getSrcFor(scope), embedNote, ...noteRenderOptions(rel) });
   for (const n of nodes) container.append(n);
   wireDataview(container);
-  container.querySelectorAll('[data-att]').forEach((el) => {
-    el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAttachment(el.getAttribute('data-att')); });
-  });
-  container.querySelectorAll('a[data-external]').forEach((a) => {
-    a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); });
-  });
-  container.querySelectorAll('a[data-wiki]').forEach((a) => {
-    a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading')); });
-  });
+  wireLinks(container, followWiki);
   attachHoverPreview(container, previewApi);
-  container.querySelectorAll('.tag[data-tag]').forEach((t) => {
-    t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); });
-  });
   container.querySelectorAll('input.task-check').forEach((box) => {
     box.addEventListener('change', () => {
       const full = getSrcFor(scope);
@@ -5977,9 +5973,8 @@ function vaultSection() {
   const tx = elem('div', 'conn-text');
   tx.append(elem('span', 'conn-name', 'Your notes are .md files in'), elem('span', 'conn-note vault-path', vaultInfo && vaultInfo.path ? vaultInfo.path : ''));
   const side = elem('div', 'conn-side');
-  const btn = (label, fn) => { const b = elem('button', 'btn', label); b.type = 'button'; b.addEventListener('click', fn); return b; };
-  side.append(btn(`Show in ${FILES_APP}`, () => notesApi.reveal()), btn('Open another folder…', () => notesApi.chooseVault()));
-  if (vaultInfo && vaultInfo.custom) side.append(btn("Use Mufka's own folder", () => notesApi.useDefaultVault()));
+  side.append(button(`Show in ${FILES_APP}`, 'btn', () => notesApi.reveal()), button('Open another folder…', 'btn', () => notesApi.chooseVault()));
+  if (vaultInfo && vaultInfo.custom) side.append(button("Use Mufka's own folder", 'btn', () => notesApi.useDefaultVault()));
   row.append(tx, side);
   sec.append(row);
   return sec;
@@ -6178,23 +6173,17 @@ function openSettings(page = 'general') {
   show(SETTINGS_PAGES.some(([id]) => id === page) ? page : 'general');
 
   let busy = false;
-  const button = (label, quiet, fn) => {
-    const b = elem('button', quiet ? 'btn quiet' : 'btn', label);
-    b.type = 'button';
-    b.addEventListener('click', fn);
-    return b;
-  };
   const draw = (s, note) => {
     if (!layer.isConnected) return;
     const hadFocus = box.contains(document.activeElement);
     side.replaceChildren();
     if (s.signingIn || busy) {
       side.append(elem('span', 'conn-state', 'Waiting for sign-in in your browser\u2026'),
-        button('Cancel', true, () => wisprApi.cancel()));
+        button('Cancel', 'btn quiet', () => wisprApi.cancel()));
     } else if (s.connected) {
       side.append(elem('span', 'conn-state ok', `Connected \u00b7 ${s.account || 'Wispr Flow'}`),
-        button(s.syncing ? 'Syncing\u2026' : 'Sync now', false, syncNow),
-        button('Disconnect', true, async () => { await wisprApi.disconnect(); refresh(); showToast('Wispr Flow disconnected'); }));
+        button(s.syncing ? 'Syncing\u2026' : 'Sync now', 'btn', syncNow),
+        button('Disconnect', 'btn quiet', async () => { await wisprApi.disconnect(); refresh(); showToast('Wispr Flow disconnected'); }));
       if (s.syncing) side.querySelector('.btn:not(.quiet)').disabled = true;
       const info = s.imported
         ? `${s.imported} meeting${s.imported === 1 ? '' : 's'} in the ${s.folder} folder`
@@ -6202,7 +6191,7 @@ function openSettings(page = 'general') {
       side.append(elem('span', 'conn-info', s.lastSync ? `${info} \u00b7 last synced ${timeAgo(s.lastSync)}` : info));
       if (s.lastError && !note) note = `Last sync failed: ${s.lastError}`;
     } else {
-      side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', false, connect));
+      side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', 'btn', connect));
     }
     if (note) side.append(elem('span', 'conn-error', note));
     if (hadFocus && !box.contains(document.activeElement)) (side.querySelector('button') || done).focus();
@@ -6235,11 +6224,11 @@ function openSettings(page = 'general') {
       row.side.append(elem('span', 'conn-state', 'Not set up in this copy of Mufka'));
     } else if (s.signingIn || row.busy) {
       row.side.append(elem('span', 'conn-state', 'Waiting for sign-in in your browser\u2026'),
-        button('Cancel', true, () => calApi.cancel(row.id)));
+        button('Cancel', 'btn quiet', () => calApi.cancel(row.id)));
     } else if (s.connected) {
       row.side.append(elem('span', 'conn-state ok', `Connected \u00b7 ${s.account || row.name}`),
-        button('Refresh', true, async () => { const r = await calApi.refresh(); calRefreshAll(r && r.error); }),
-        button('Disconnect', true, async () => { await calApi.disconnect(row.id); calRefreshAll(); showToast(`${row.name} disconnected`); }));
+        button('Refresh', 'btn quiet', async () => { const r = await calApi.refresh(); calRefreshAll(r && r.error); }),
+        button('Disconnect', 'btn quiet', async () => { await calApi.disconnect(row.id); calRefreshAll(); showToast(`${row.name} disconnected`); }));
       for (const c of s.calendars) {
         const l = elem('label', 'cal-item');
         const cb = document.createElement('input');
@@ -6252,7 +6241,7 @@ function openSettings(page = 'general') {
         row.list.append(l);
       }
     } else {
-      row.side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', false, () => calConnectRow(row)));
+      row.side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', 'btn', () => calConnectRow(row)));
     }
     if (note) row.side.append(elem('span', 'conn-error', note));
     if (hadFocus && !box.contains(document.activeElement)) (row.side.querySelector('button') || done).focus();
@@ -6275,7 +6264,7 @@ function openSettings(page = 'general') {
   layer._close = close;
   layer._refresh = () => refresh();
   const actions = elem('div', 'plan-dialog-actions');
-  const done = button('Done', false, close);
+  const done = button('Done', 'btn', close);
   actions.append(done);
   box.append(actions);
   layer.append(box);
@@ -6351,10 +6340,9 @@ function openEventCard(ev) {
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   document.addEventListener('keydown', onKey, true);
   const actions = elem('div', 'plan-dialog-actions');
-  const btn = (label, cls, fn) => { const b = elem('button', cls, label); b.type = 'button'; b.addEventListener('click', fn); return b; };
-  if (ev.webLink) actions.append(btn(ev.source === 'google' ? 'Open in Google Calendar' : 'Open in Outlook', 'btn quiet', () => notesApi.openExternal(ev.webLink)));
-  actions.append(btn('Close', 'btn quiet', close));
-  if (ev.joinUrl) actions.append(btn('Join meeting', 'btn', () => { notesApi.openExternal(ev.joinUrl); close(); }));
+  if (ev.webLink) actions.append(button(ev.source === 'google' ? 'Open in Google Calendar' : 'Open in Outlook', 'btn quiet', () => notesApi.openExternal(ev.webLink)));
+  actions.append(button('Close', 'btn quiet', close));
+  if (ev.joinUrl) actions.append(button('Join meeting', 'btn', () => { notesApi.openExternal(ev.joinUrl); close(); }));
   box.append(actions);
   layer.append(box);
   layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
