@@ -6582,14 +6582,9 @@ function startRenameNote() {
   input.focus(); input.select();
 }
 
+// The note's ⋯ Delete: as from the sidebar, its icon and colour go too.
 async function deleteOpenNote() {
-  const rel = state.openNote;
-  if (!rel) return;
-  await notesApi.remove(rel);
-  state.openNote = null; state.noteContent = ''; state.contentView = 'day';
-  state.noteCache.delete(rel);
-  await refreshTree();
-  render();
+  if (state.openNote) await deleteNoteRel(state.openNote);
 }
 
 // --- Ara ---
