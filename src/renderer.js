@@ -25,6 +25,8 @@ import { createGraphView } from './graph-view.js';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
 import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender, prettyDue } from './tasks.js';
 import { createDataview } from './dataview-view.js';
+import { collectTasks, runTasksQuery, completeTaskLine } from '../lib/tasks-query.mjs';
+import { tasksBlock as tasksQueryView } from './tasks-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
 import { habitsCard, decorateHabitTable, addHabitButton, openHabitDialog } from './habits-view.js';
@@ -3010,9 +3012,40 @@ function noteRenderOptions(rel) {
       week: (_code, _meta, { src }) => weekBlock(rel, src),
       projects: (code) => projectsBlock(rel, code),
       books: (code) => booksBlock(rel, code),
+      tasks: (code) => tasksQueryBlock(code),
     },
     embedDrawing,
   };
+}
+
+// --- Tasks queries (lib/tasks-query.mjs, src/tasks-view.js) ---
+// A ```tasks block lists the vault's tasks, as the Obsidian Tasks plugin
+// does; the tasks are read again only when the vault (or the open note) changed.
+let vaultTasks = { notes: null, list: [] };
+function allTasks() {
+  const notes = dataviewNotes();
+  if (vaultTasks.notes !== notes) vaultTasks = { notes, list: collectTasks(notes) };
+  return vaultTasks.list;
+}
+function tasksQueryBlock(code) {
+  const today = new Date();
+  return tasksQueryView(runTasksQuery(code, allTasks(), today), code, {
+    md: dataviewInline,
+    onOpen: (rel, e) => { if (e && (e.metaKey || e.ctrlKey)) openNoteInNewTab(rel); else openNote(rel, 'oku'); },
+    // Ticked in its own note, with the ✅ date the plugin writes; only while
+    // that line is still the one shown.
+    onToggle: async (t, done) => {
+      let changed = false;
+      await changeNoteText(t.rel, (text) => {
+        const lines = text.split('\n');
+        if (lines[t.line] !== t.raw) return text;
+        lines[t.line] = completeTaskLine(t.raw, done, dayKey(new Date()));
+        changed = true;
+        return lines.join('\n');
+      });
+      if (!changed) { showToast('That task has changed; shown again'); render(); }
+    },
+  });
 }
 
 // --- budget notes (lib/budget.mjs, src/budget-view.js) ---

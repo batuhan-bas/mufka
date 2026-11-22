@@ -157,6 +157,12 @@ Planner.
   tasks and `file.*`; inline `` `= this.field` ``; ticking a task in a result
   ticks it in its note. ` ```dataviewjs ` scripts run too — in a sandbox with
   no files and no network.
+- **Tasks queries**, like Obsidian's Tasks plugin: a ` ```tasks ` block lists
+  tasks from across the vault — `not done`, `due before next monday`,
+  `priority is high`, `tags include #work`, `path includes Projects`, combined
+  with AND / OR / NOT — with `sort by`, `group by` (late ones together) and
+  `limit`. Tasks are read in its emoji format (📅 ⏳ 🛫 ✅ 🔁 ⏫); ticking one
+  ticks it in its note with the ✅ date.
 - **Mermaid diagrams** (` ```mermaid `) are drawn in the app's colours, and
   **HTML** in notes works for formatting (`<kbd>`, `<details>`, `<br>`,
   `<mark>`, tables…); scripts, frames and styles never run.
