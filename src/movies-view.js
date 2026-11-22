@@ -5,7 +5,7 @@
 import { MOVIE_STAGES, STOPPED } from '../lib/movies.mjs';
 import { stageSteps, factsRow } from './jobs-view.js';
 import { stars } from './books-view.js';
-import { el } from './dom.js';
+import { el, formDialog } from './dom.js';
 
 const stageClass = (s) => (s === 'Watched' ? 'job-s-offer' : s === STOPPED ? 'job-s-2' : 'job-s-0');
 const shortDate = (key) => (key ? new Date(`${key.slice(0, 10)}T12:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
@@ -139,10 +139,7 @@ export function watchlist(rows, stats, { urlOf, onOpen, onMove, onPoster, onNew 
 // Promise<{ name, url } | null>, an image put in the attachments;
 // onSave({ title, director, year, stage, image }).
 export function openMovieDialog({ poster, pathOf }, onSave) {
-  const layer = el('div', 'palette-layer');
-  const box = el('div', 'palette plan-dialog bud-dialog book-dialog');
-  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'New movie');
-  box.append(el('div', 'plan-dialog-title', 'New movie'));
+  const { box, close, field, show } = formDialog('New movie', 'book-dialog');
   let image = null; // { name, url }
   const grid = el('div', 'book-dialog-grid');
   const slot = el('button', 'book-dialog-cover'); slot.type = 'button';
@@ -171,7 +168,6 @@ export function openMovieDialog({ poster, pathOf }, onSave) {
   });
   drawSlot();
   const fields = el('div', 'book-dialog-fields');
-  const field = (label, input, id) => { input.id = id; const f = el('div', 'bud-field'); const l = el('label', '', label); l.htmlFor = id; f.append(l, input); return f; };
   const title = Object.assign(el('input', 'ask-input movie-title-input'), { placeholder: 'Title' });
   const director = Object.assign(el('input', 'ask-input movie-director-input'), { placeholder: 'Director' });
   const year = Object.assign(el('input', 'ask-input movie-year-input'), { placeholder: 'Year', inputMode: 'numeric' });
@@ -185,31 +181,16 @@ export function openMovieDialog({ poster, pathOf }, onSave) {
   fields.append(field('Title', title, 'movie-f1'), pair, listField);
   grid.append(slot, fields);
   box.append(grid);
-  const restore = document.activeElement;
-  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
   const save = () => {
     if (!title.value.trim()) { title.focus(); return; }
     close();
     onSave({ title: title.value.trim(), director: director.value.trim(), year: year.value.trim(), stage, image: image ? image.name : '' });
   };
-  const actions = el('div', 'plan-dialog-actions');
-  actions.append(el('span', 'bud-keys', '↵ add · esc cancel'));
-  const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
-  const ok = el('button', 'btn primary', 'Add movie'); ok.type = 'button'; ok.addEventListener('click', save);
-  actions.append(cancel, ok);
-  box.append(actions);
-  box.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); save(); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-  });
   // ⌘V with an image on the clipboard: the poster (text still pastes into the fields).
   box.addEventListener('paste', async (e) => {
     if (![...(e.clipboardData?.items || [])].some((i) => i.type.startsWith('image/'))) return;
     e.preventDefault();
     take(await poster.paste());
   });
-  layer.append(box);
-  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
-  document.body.append(layer);
-  title.focus();
+  show('Add movie', save, title);
 }

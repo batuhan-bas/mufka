@@ -3,7 +3,7 @@
 // and the form for a new project. Built from the job board's parts.
 import { projectColumns, projectStats, daysLeft, PROJECT_STAGES, ON_HOLD } from '../lib/projects.mjs';
 import { stageSteps, factsRow, stageBoard, noteName } from './jobs-view.js';
-import { el } from './dom.js';
+import { el, formDialog } from './dom.js';
 
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const stageClass = (s) => (same(s, 'Done') ? 'job-s-offer' : same(s, ON_HOLD) ? 'job-s-2' : same(s, 'Active') ? 'job-s-1' : 'job-s-0');
@@ -67,35 +67,16 @@ export function projectsBoard(projects, { onOpen, onMove, onNew }) {
 
 // The new project form. onSave({ name, due }).
 export function openProjectDialog(onSave) {
-  const layer = el('div', 'palette-layer');
-  const box = el('div', 'palette plan-dialog bud-dialog');
-  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'New project');
-  box.append(el('div', 'plan-dialog-title', 'New project'));
-  const field = (label, input, id) => { input.id = id; const f = el('div', 'bud-field'); const l = el('label', '', label); l.htmlFor = id; f.append(l, input); return f; };
+  const { box, close, field, show } = formDialog('New project');
   const name = Object.assign(el('input', 'ask-input prj-name'), { placeholder: 'Website redesign' });
   const due = Object.assign(el('input', 'ask-input prj-due-input'), { type: 'date' });
   const two = el('div', 'bud-two');
   two.append(field('Project', name, 'prj-f1'), field('Due (optional)', due, 'prj-f2'));
   box.append(two);
-  const restore = document.activeElement;
-  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
   const save = () => {
     if (!name.value.trim()) { name.focus(); return; }
     close();
     onSave({ name: name.value.trim(), due: due.value });
   };
-  const actions = el('div', 'plan-dialog-actions');
-  actions.append(el('span', 'bud-keys', '↵ add · esc cancel'));
-  const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
-  const ok = el('button', 'btn primary', 'Create'); ok.type = 'button'; ok.addEventListener('click', save);
-  actions.append(cancel, ok);
-  box.append(actions);
-  box.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); save(); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-  });
-  layer.append(box);
-  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
-  document.body.append(layer);
-  name.focus();
+  show('Create', save, name);
 }

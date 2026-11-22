@@ -3,7 +3,7 @@
 // status, books standing with their covers), and the New book dialog.
 import { BOOK_STAGES, STOPPED } from '../lib/books.mjs';
 import { stageSteps, factsRow } from './jobs-view.js';
-import { el } from './dom.js';
+import { el, formDialog } from './dom.js';
 
 const stageClass = (s) => (s === 'Finished' ? 'job-s-offer' : s === STOPPED ? 'job-s-2' : s === 'Reading' ? 'job-s-1' : 'job-s-0');
 const shortDate = (key) => (key ? new Date(`${key.slice(0, 10)}T12:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
@@ -152,10 +152,7 @@ export function bookcase(shelves, stats, { urlOf, onOpen, onMove, onCover, onNew
 // paste() → the same, files(paths) → the same } puts an image in the
 // attachments; onSave({ title, author, stage, image }).
 export function openBookDialog({ cover, pathOf }, onSave) {
-  const layer = el('div', 'palette-layer');
-  const box = el('div', 'palette plan-dialog bud-dialog book-dialog');
-  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'New book');
-  box.append(el('div', 'plan-dialog-title', 'New book'));
+  const { box, close, field, show } = formDialog('New book', 'book-dialog');
   let image = null; // { name, url }
   const grid = el('div', 'book-dialog-grid');
   const slot = el('button', 'book-dialog-cover'); slot.type = 'button';
@@ -184,7 +181,6 @@ export function openBookDialog({ cover, pathOf }, onSave) {
   });
   drawSlot();
   const fields = el('div', 'book-dialog-fields');
-  const field = (label, input, id) => { input.id = id; const f = el('div', 'bud-field'); const l = el('label', '', label); l.htmlFor = id; f.append(l, input); return f; };
   const title = Object.assign(el('input', 'ask-input book-title-input'), { placeholder: 'Title' });
   const author = Object.assign(el('input', 'ask-input book-author-input'), { placeholder: 'Author' });
   let stage = BOOK_STAGES[0];
@@ -195,31 +191,16 @@ export function openBookDialog({ cover, pathOf }, onSave) {
   fields.append(field('Title', title, 'book-f1'), field('Author', author, 'book-f2'), shelfField);
   grid.append(slot, fields);
   box.append(grid);
-  const restore = document.activeElement;
-  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
   const save = () => {
     if (!title.value.trim()) { title.focus(); return; }
     close();
     onSave({ title: title.value.trim(), author: author.value.trim(), stage, image: image ? image.name : '' });
   };
-  const actions = el('div', 'plan-dialog-actions');
-  actions.append(el('span', 'bud-keys', '↵ add · esc cancel'));
-  const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
-  const ok = el('button', 'btn primary', 'Add book'); ok.type = 'button'; ok.addEventListener('click', save);
-  actions.append(cancel, ok);
-  box.append(actions);
-  box.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); save(); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-  });
   // ⌘V with an image on the clipboard: the cover (text still pastes into the fields).
   box.addEventListener('paste', async (e) => {
     if (![...(e.clipboardData?.items || [])].some((i) => i.type.startsWith('image/'))) return;
     e.preventDefault();
     take(await cover.paste());
   });
-  layer.append(box);
-  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
-  document.body.append(layer);
-  title.focus();
+  show('Add book', save, title);
 }

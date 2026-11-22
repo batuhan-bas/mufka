@@ -2,7 +2,7 @@
 // (its stage, one click to move it on; company, place, pay, link), the
 // ```jobs board of all applications by stage, and the form for a new one.
 import { jobColumns, jobStats, daysSince, REJECTED } from '../lib/jobs.mjs';
-import { el } from './dom.js';
+import { el, formDialog } from './dom.js';
 import { dayKey } from '../lib/dates.mjs';
 
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
@@ -164,27 +164,17 @@ const today = () => dayKey(new Date());
 
 // The new application form. onSave({ company, role, link, location, applied }).
 export function openJobDialog(onSave) {
-  const layer = el('div', 'palette-layer');
-  const box = el('div', 'palette plan-dialog bud-dialog');
-  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'New application');
-  box.append(el('div', 'plan-dialog-title', 'New application'));
-  let n = 0;
-  const field = (label, input) => {
-    const id = `job-f${(n += 1)}`; input.id = id;
-    const f = el('div', 'bud-field'); const l = el('label', '', label); l.htmlFor = id;
-    f.append(l, input);
-    return f;
-  };
+  const { box, close, field, show } = formDialog('New application');
   const input = (cls, attrs = {}) => Object.assign(el('input', `ask-input ${cls}`), attrs);
   const company = input('job-company', { placeholder: 'Acme' });
   const role = input('job-role', { placeholder: 'Senior Frontend Developer' });
   const link = input('job-url', { placeholder: 'https://…', type: 'url' });
   const applied = input('job-date', { type: 'date', value: today() });
   const two = el('div', 'bud-two');
-  two.append(field('Company', company), field('Role', role));
+  two.append(field('Company', company, 'job-f1'), field('Role', role, 'job-f2'));
   box.append(two);
   const two2 = el('div', 'bud-two');
-  two2.append(field('Link to the posting', link), field('Applied on', applied));
+  two2.append(field('Link to the posting', link, 'job-f3'), field('Applied on', applied, 'job-f4'));
   box.append(two2);
   const where = el('div', 'bud-field');
   where.append(el('div', 'bud-field-label', 'Where'));
@@ -198,25 +188,10 @@ export function openJobDialog(onSave) {
   }
   where.append(pills);
   box.append(where);
-  const restore = document.activeElement;
-  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
   const save = () => {
     if (!company.value.trim() && !role.value.trim()) { company.focus(); return; }
     close();
     onSave({ company: company.value.trim(), role: role.value.trim(), link: link.value.trim(), location, applied: applied.value || today() });
   };
-  const actions = el('div', 'plan-dialog-actions');
-  actions.append(el('span', 'bud-keys', '↵ add · esc cancel'));
-  const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
-  const ok = el('button', 'btn primary', 'Add'); ok.type = 'button'; ok.addEventListener('click', save);
-  actions.append(cancel, ok);
-  box.append(actions);
-  box.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); save(); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-  });
-  layer.append(box);
-  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
-  document.body.append(layer);
-  company.focus();
+  show('Add', save, company);
 }
