@@ -2149,6 +2149,42 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor(`${shown('Five days.')} && ${shown('At the cafe.')}`, 3000), '⌥⌘] did not unfold all');
     });
 
+    // 64e6. Block references: typing [[Note#^ offers the note's blocks and
+    //       choosing one gives it an id there; the id is hidden in the note;
+    //       the link scrolls to the block, the embed shows only it; right-click
+    //       copies a link to a block.
+    await step('64e6', 'block references: suggest and add an id, follow, embed, copy link', async () => {
+      const dir = path.join(tvault, 'Refs');
+      fs.mkdirSync(dir, { recursive: true });
+      const trip = path.join(dir, 'Lisbon trip.md');
+      fs.writeFileSync(trip, '# Lisbon trip\n\n## The flat\n\nRua das Flores 28, keys with Ana. ^flat\n\n## Budget\n\nAbout 900 euros.\n\n- Out: 12 May\n- Back: 17 May\n');
+      fs.writeFileSync(path.join(dir, 'Weekend.md'), 'Sleep: ![[Lisbon trip#^flat]]\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Weekend'); await enter();
+      assert(await waitFor('/Rua das Flores 28, keys with Ana\\.$/.test(document.querySelector(".embed-body")?.textContent.trim() || "") && !/Budget/.test(document.querySelector(".embed-body")?.textContent || "")', 3000), `embed: ${await js('document.querySelector(".embed-body")?.textContent')}`);
+      await clickEval(`document.querySelector('.block-tail')`, 'end of the note');
+      assert(await waitFor('document.activeElement?.id === "block-editor"', 2000), 'no new block');
+      await typeText('Money: [[Lisbon trip#^900');
+      assert(await waitFor('document.querySelector(".suggest-item.selected .suggest-label")?.textContent === "About 900 euros."', 2000), `block not offered: ${await js('document.querySelector("#suggest-list")?.textContent')}`);
+      await enter();
+      const val = await blockVal();
+      const id = (/\[\[Lisbon trip#\^([a-z0-9]{6})\]\]$/.exec(val) || [])[1];
+      assert(id, `link not inserted: ${val}`);
+      assert(await waitFor2(() => fs.readFileSync(trip, 'utf8').includes(`About 900 euros. ^${id}\n`), 3000), `id not added:\n${fs.readFileSync(trip, 'utf8')}`);
+      await press('Escape'); await sleep(500);
+      await clickEval(`[...document.querySelectorAll('.block a[data-wiki]')].find(a => a.getAttribute('data-heading') === '^${id}')`, 'link to the block');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Lisbon trip" && document.querySelector('[data-block-id="${id}"]')?.classList.contains('block-flash')`, 3000), `the link did not light up the block: title=${await js('document.querySelector(".note-title")?.textContent')} ids=${await js('[...document.querySelectorAll("[data-block-id]")].map(e => e.dataset.blockId + ":" + e.className).join(",")')} file=${fs.readFileSync(trip, 'utf8')}`);
+      assert(await js('![...document.querySelectorAll(".blocks .md")].some(b => /\\^(flat|[a-z0-9]{6})/.test(b.textContent))'), 'a block id shows in the note');
+      if (process.env.MUFKA_E2E_SHOTS) { await sleep(150); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `blockref-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG()); }
+      await clipboard.writeText('');
+      await js(`(() => { const r = [...document.querySelectorAll('.blocks li')].find(l => l.textContent === 'Back: 17 May'); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 20, clientY: b.y + b.height / 2 })); return true; })()`);
+      await clickEval(`[...document.querySelectorAll('.menu-item')].find(m => m.textContent === 'Copy link to block')`, 'Copy link to block');
+      let clip = ''; for (let i = 0; i < 30 && !/^\[\[Lisbon trip#\^[a-z0-9]{6}\]\]$/.test(clip); i++) { clip = await clipboard.readText(); await sleep(100); }
+      assert(/^\[\[Lisbon trip#\^[a-z0-9]{6}\]\]$/.test(clip), `clipboard: ${clip}`);
+      const back = /\^([a-z0-9]{6})\]\]$/.exec(clip)[1];
+      assert(await waitFor2(() => fs.readFileSync(trip, 'utf8').includes(`- Back: 17 May ^${back}`), 3000), `item id not added:\n${fs.readFileSync(trip, 'utf8')}`);
+    });
+
     await step('64f', 'right-click: copy path, duplicate, move; rename and delete a drawing', async () => {
       const dir = path.join(tvault, 'Menus');
       fs.mkdirSync(path.join(dir, 'Inner'), { recursive: true });

@@ -1999,3 +1999,10 @@ body.quick-page { margin: 0; overflow: hidden; background: var(--ground); }
   border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 8px; background: none; cursor: pointer;
 }
 .fold-more:hover { color: var(--text); background: var(--hover-soft); }
+
+/* Block references (lib/blockref.mjs): the block a [[Note#^id]] link went to lights up */
+.block-flash { animation: block-flash 1.8s ease-out; border-radius: 4px; }
+@keyframes block-flash {
+  0%, 40% { background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
+  100% { background: transparent; box-shadow: 0 0 0 6px transparent; }
+}
