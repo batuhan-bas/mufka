@@ -22,9 +22,17 @@ import { resolveAttachment, attachInsertText } from '../lib/attach.mjs';
 import { attachmentsDirFor } from '../lib/layout.mjs';
 import { parseBlocks, blockText, replaceBlockText, insertBlockAfter, addBlock } from '../lib/blocks.mjs';
 import { createGraphView } from './graph-view.js';
+import { createCanvasView } from './canvas-view.js';
+import { parseCanvas, stringifyCanvas } from '../lib/canvas.mjs';
+import { embedSection } from '../lib/embed.mjs';
+import { clipPage } from '../lib/clip.mjs';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
 import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender, prettyDue } from './tasks.js';
 import { createDataview } from './dataview-view.js';
+import { runBase, parseBase, cellInput, newNoteDefaults } from '../lib/bases/base.mjs';
+import { baseView } from './bases-view.js';
+import { collectTasks, runTasksQuery, completeTaskLine } from '../lib/tasks-query.mjs';
+import { tasksBlock as tasksQueryView } from './tasks-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
 import { habitsCard, decorateHabitTable, addHabitButton, openHabitDialog } from './habits-view.js';
@@ -34,6 +42,8 @@ import { projectStrip, projectsBoard, openProjectDialog } from './projects-view.
 import { projectOf, projectsSettings, mayBeProject } from '../lib/projects.mjs';
 import { bookOf, mayBeBook, bookShelves, bookStats, stageChanges } from '../lib/books.mjs';
 import { bookHead, bookcase, openBookDialog } from './books-view.js';
+import { movieOf, mayBeMovie, movieRows, movieStats, movieStageChanges } from '../lib/movies.mjs';
+import { movieHead, watchlist, openMovieDialog } from './movies-view.js';
 import { tripStrip } from './trips-view.js';
 import { meetingStrip } from './meetings-view.js';
 import { weekDays, addWeekTask, editWeekTask, moveWeekTask, moveOpenToNextDay, nextWeekTodoText } from '../lib/weekly.mjs';
@@ -55,6 +65,7 @@ import { htmlToMarkdown, isRichHtml, insideCodeFence } from '../lib/paste.mjs';
 import { parseQuery, isPlainQuery, matchNote, searchDoc, hitTerms, hitsIn, snippetFor } from '../lib/search.mjs';
 import { attachSuggest } from './suggest.js';
 import { linkTextFor } from '../lib/suggest.mjs';
+import { blockChoices, findBlock, newBlockId, addBlockId, addBlockIdLine } from '../lib/blockref.mjs';
 import { applyTemplate } from '../lib/template.mjs';
 import { keyLabel } from '../lib/keys.mjs';
 import { BUILTIN_TEMPLATES, templateChoices } from '../lib/builtin-templates.mjs';
@@ -68,6 +79,8 @@ import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
 import { buildTagIndex } from '../lib/tags.mjs';
 import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
+import { comboOf, RESERVED, idOf, keyOf, customCommand, freedDefault, takenBy, assign as assignKeys, reset as resetKeys } from '../lib/hotkeys.mjs';
+import { foldPlan, headingFor, foldsHiding } from '../lib/fold.mjs';
 import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
 
 const plansApi = window.planner;
@@ -76,6 +89,9 @@ if (plansApi.isMac) document.documentElement.classList.add('mac');
 else document.documentElement.classList.add('win');
 // Shortcuts read the system's way: ⌘O on a Mac, Ctrl+O elsewhere (lib/keys.mjs).
 const K = (text) => keyLabel(text, plansApi.isMac);
+// Shortcuts changed in Settings → Shortcuts: { command: keys }, '' = none.
+let hotkeys = {};
+try { hotkeys = JSON.parse(localStorage.getItem('mufka-hotkeys') || '{}') || {}; } catch { /* none */ }
 // The Mac's Finder, Windows' Explorer.
 const FILES_APP = plansApi.isMac ? 'Finder' : 'File Explorer';
 // The static page (index.html) too: tooltips and the sidebar's key hints.
@@ -89,6 +105,8 @@ const wisprApi = window.wispr;
 const calApi = window.calendars;
 
 const state = {
+  treeCanvases: [],       // Obsidian Canvas files: [{ rel, mtime }]
+  canvas: null,           // the open canvas: { rel }
   store: emptyStore(),
   calCursor: new Date(),
   selectedDate: new Date(),
@@ -100,6 +118,9 @@ const state = {
   // Notes vault
   treeFolders: [],        // folder rel strings
   treeNotes: [],          // [{ rel, mtime }]
+  treeBases: [],          // Obsidian Bases files: [{ rel, mtime }]
+  baseTexts: new Map(),   // a base's rel → { mtime, text }
+  base: null,             // the open base: { rel, view }
   notesFlat: [],          // [{ rel, title, folder, mtime }]
   expanded: new Set(),    // expanded folder rels (persisted)
   selectedFolder: null,   // rel of the selected folder, or null
@@ -295,7 +316,7 @@ function render() {
   // synchronously; suppress that so it cannot commit stale text into the
   // already-advanced edit target (data corruption).
   state.suppressBlockBlur = true;
-  renderSidebar(); renderContent(); renderPaneActions(); renderRightbar(); restoreFocus(); renderMenu();
+  renderSidebar(); renderContent(); applyBlockFlash(); renderPaneActions(); renderRightbar(); restoreFocus(); renderMenu();
   state.suppressBlockBlur = false;
   syncTabs();
   renderSplit();
@@ -803,7 +824,7 @@ function renderNotesSection() {
     sortButton(),
   ], 'notes');
   if (!sectionOpen('notes')) return;
-  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder });
+  const tree = buildTree(state.treeFolders, [...state.treeNotes, ...state.treeBases, ...state.treeCanvases], { sort: state.noteSort, order: state.treeOrder });
   if (tree.folders.length === 0 && tree.notes.length === 0 && !state.treeEdit) {
     const empty = elem('div', 'side-empty');
     empty.append(document.createTextNode('No notes yet. '), smallButton('Create one', null, () => newNote(), K('⌘N')));
@@ -829,13 +850,209 @@ function renderContent() {
   contentEl.classList.toggle('is-planner', state.contentView === 'planner');
   contentEl.classList.toggle('is-tasks', state.contentView === 'tasks');
   contentEl.classList.toggle('is-draw', state.contentView === 'draw');
+  contentEl.classList.remove('is-canvas');
   if (state.contentView !== 'draw') closeDrawing();
   if (state.contentView === 'graph') contentEl.append(graph().el);
   else if (state.contentView === 'planner') renderPlanner(contentEl, state.weekDate, plannerApi);
   else if (state.contentView === 'tasks') renderTasks(contentEl, tasksApi());
   else if (state.contentView === 'draw') renderDraw(contentEl, drawApi());
+  else if (state.contentView === 'canvas' && state.canvas) renderCanvasPage();
   else if (state.contentView === 'note' && state.openNote) renderNotePane();
+  else if (state.contentView === 'base' && state.base) renderBasePage();
   else renderDayPage();
+}
+
+// --- Canvas (lib/canvas.mjs, src/canvas-view.js) ---
+// A .canvas file opens as a board of cards. The board is made once per open
+// canvas and kept across re-renders; changes are saved a moment later.
+const isCanvasRel = (rel) => /\.canvas$/i.test(String(rel || ''));
+const canvasTitleOf = (rel) => leafOf(rel).replace(/\.canvas$/i, '');
+let canvasBoard = null; // { rel, host, api, written, mtime, timer }
+async function openCanvas(rel) {
+  flushActiveEditor();
+  if (!canvasBoard || canvasBoard.rel !== rel) {
+    const res = await notesApi.read(rel);
+    if (!res || res.error) { showToast('Could not open the canvas'); return; }
+    const data = parseCanvas(res.content);
+    if (data.error) { showToast(data.error); return; }
+    saveCanvasNow();
+    const host = elem('div', 'canvas-host');
+    const board = { rel, host, written: res.content, timer: null };
+    board.api = createCanvasView(host, data, canvasOptions(board));
+    canvasBoard = board;
+  }
+  navVisit({ view: 'canvas', rel });
+  state.canvas = { rel };
+  state.contentView = 'canvas';
+  state.selectedFolder = null;
+  expandAncestors(rel);
+  render();
+  canvasBoard.host.focus({ preventScroll: true });
+}
+function saveCanvasNow() {
+  const b = canvasBoard;
+  if (!b || !b.timer) return;
+  clearTimeout(b.timer); b.timer = null;
+  const text = stringifyCanvas(b.api.data());
+  b.written = text;
+  notesApi.write(b.rel, text).then((w) => { if (w && w.error) showToast('Could not save the canvas'); });
+}
+// Another app changed the open canvas: show its version.
+async function reloadOpenCanvas() {
+  const b = canvasBoard;
+  if (!b || b.timer) return;
+  const res = await notesApi.read(b.rel);
+  if (!res || res.error || res.content === b.written) return;
+  const data = parseCanvas(res.content);
+  if (data.error) return;
+  b.written = res.content;
+  b.api.setData(data);
+}
+function canvasFileRel(file) {
+  const f = String(file || '');
+  if (state.notesFlat.some((n) => n.rel === f)) return f;
+  return resolveLink(f.replace(/\.md$/i, ''), canvasBoard ? canvasBoard.rel : '', state.notesFlat);
+}
+function canvasOptions(board) {
+  const md = (text, rel) => renderMarkdown(text, { doc: document, noteExists: wikiExists, attach: (raw) => resolveAttachment(raw, state.attachFiles, folderOf(rel), attachmentsDirFor(state.layout, folderOf(rel))), embedNote, embedStack: [rel], ...noteRenderOptions(rel) });
+  return {
+    renderText: (text) => md(text, board.rel),
+    renderFile: (n) => {
+      const box = elem('div', 'cv-file');
+      const att = resolveAttachment(n.file, state.attachFiles, '', attachmentsDirFor(state.layout, ''));
+      if (!/\.md$/i.test(n.file) && att.url && att.isImage) {
+        const img = document.createElement('img'); img.src = att.url; img.alt = leafOf(n.file); img.draggable = false;
+        box.classList.add('cv-file-image'); box.append(img);
+        return box;
+      }
+      const rel = canvasFileRel(n.file);
+      const title = elem('button', 'cv-file-title', `${rel ? noteTitleOf(rel) : leafOf(n.file).replace(/\.md$/i, '')}${n.subpath ? ` › ${n.subpath.replace(/^#/, '')}` : ''}`);
+      title.type = 'button'; title.title = rel ? `Open ${rel}` : 'This note is not in the vault';
+      title.addEventListener('pointerdown', (e) => e.stopPropagation());
+      title.addEventListener('click', (e) => { if (rel) openFromCanvas(rel, e); });
+      const body = elem('div', 'cv-md md');
+      const content = rel ? (state.vaultNotes.find((x) => x.rel === rel) || {}).content ?? state.noteCache.get(rel) : null;
+      const part = content == null ? null : embedSection(content, n.subpath ? n.subpath.replace(/^#/, '') : null);
+      if (part == null) body.append(elem('p', 'cv-missing', rel ? 'Loading…' : `Not found: ${n.file}`));
+      else body.append(...md(part, rel));
+      box.append(title, body);
+      return box;
+    },
+    onChange: () => {
+      clearTimeout(board.timer);
+      board.timer = setTimeout(() => { if (canvasBoard === board) saveCanvasNow(); else { board.timer = null; notesApi.write(board.rel, stringifyCanvas(board.api.data())); } }, 400);
+    },
+    onOpenFile: (file, e) => { const rel = canvasFileRel(file); if (rel) openFromCanvas(rel, e); else if (file) openAttachment(file); },
+    onOpenUrl: (url) => notesApi.openExternal(url),
+    pickNote: () => new Promise((resolve) => {
+      openPalette({
+        id: 'canvas-note', placeholder: 'Add a note to the canvas…', footer: '↑↓ navigate · ↵ add · esc close',
+        items: (q) => (q.trim() ? fuzzyFilter(q, state.notesFlat, (n) => n.title).map((x) => x.item) : state.notesFlat.slice(0, 50))
+          .map((n) => ({ label: n.title, detail: n.folder ? n.folder.split('/').join(' / ') : '', run: () => resolve(n.rel) })),
+      });
+    }),
+    askText: ({ heading, value }) => new Promise((resolve) => askDialog({ heading, value, okLabel: 'Save' }, resolve)),
+  };
+}
+function openFromCanvas(rel, e) {
+  saveCanvasNow();
+  if (e && (e.metaKey || e.ctrlKey)) openNoteInNewTab(rel); else openNote(rel, 'oku');
+}
+function renderCanvasPage() {
+  if (!canvasBoard || canvasBoard.rel !== state.canvas.rel) { openCanvas(state.canvas.rel); return; }
+  contentEl.classList.add('is-canvas');
+  contentEl.append(canvasBoard.host);
+}
+async function newCanvas(folder = targetFolder()) {
+  const taken = new Set(state.treeCanvases.map((c) => c.rel.toLowerCase()));
+  const base = folder ? `${folder}/` : '';
+  let rel = `${base}Untitled.canvas`;
+  for (let i = 1; taken.has(rel.toLowerCase()); i++) rel = `${base}Untitled ${i}.canvas`;
+  const w = await notesApi.write(rel, stringifyCanvas({ nodes: [], edges: [] }));
+  if (w && w.error) { showToast('Could not create the canvas'); return; }
+  await refreshTree();
+  await openCanvas(rel);
+}
+// A canvas in the tree: its own icon; a click opens the board.
+function canvasRow(n, depth) {
+  const row = elem('div', 'tree-row note-row canvas-row' + (state.contentView === 'canvas' && state.canvas && state.canvas.rel === n.rel ? ' selected' : ''));
+  row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
+  row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'canvas';
+  const color = rowColor(n.rel, 'note', state.treeStyles);
+  if (color) row.style.setProperty('--row-c', color);
+  row.append(treeIcon(n.rel, 'kanban'));
+  row.append(elem('span', 'tree-name', canvasTitleOf(n.rel)));
+  row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openCanvas(n.rel); });
+  row.addEventListener('keydown', (e) => { if (e.key === 'Enter') openCanvas(n.rel); });
+  const items = () => [
+    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'canvas', rel: n.rel }); } },
+    SEP,
+    ...copyItems(n.rel, [{ label: 'Copy link', fn: () => { closeMenu(); copyText(`[[${leafOf(n.rel)}]]`, 'the link'); } }]),
+    SEP,
+    revealItem(n.rel),
+    SEP,
+    { label: 'Delete', danger: true, fn: () => { closeMenu(); askDialog({ heading: `Delete “${canvasTitleOf(n.rel)}”?`, text: 'The canvas goes to the trash.', okLabel: 'Delete', danger: true }, async () => {
+      const r = await notesApi.remove(n.rel);
+      if (r && r.error) { showToast('Could not delete the canvas'); return; }
+      if (canvasBoard && canvasBoard.rel === n.rel) { clearTimeout(canvasBoard.timer); canvasBoard = null; if (state.contentView === 'canvas') { state.canvas = null; state.contentView = 'day'; } }
+      await refreshTree(); render();
+    }); } },
+  ];
+  addMenuBtn(row, `c:${n.rel}`, items);
+  onRightClick(row, `c:${n.rel}`, items);
+  return row;
+}
+
+// --- Web clipper (lib/clip.mjs): a web page's article as a note ---
+// main fetches the page; it is parsed here inert (no scripts, no loads).
+function openClipper(url = '') {
+  const layer = elem('div', 'palette-layer');
+  const box = elem('div', 'palette plan-dialog clip-dialog');
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Clip a web page');
+  box.append(elem('div', 'plan-dialog-title', 'Clip a web page'), elem('p', 'ask-text', "The article's text becomes a note, with where it came from."));
+  const input = document.createElement('input');
+  input.className = 'ask-input clip-url'; input.value = url; input.placeholder = 'https://…'; input.setAttribute('aria-label', 'Web address');
+  const folderRow = elem('label', 'clip-folder');
+  const select = document.createElement('select');
+  select.className = 'clip-folder-select';
+  for (const f of [...new Set(['Clippings', ...state.treeFolders])]) { const o = document.createElement('option'); o.value = f; o.textContent = f.split('/').join(' / '); select.append(o); }
+  folderRow.append(elem('span', null, 'Folder'), select);
+  const status = elem('p', 'clip-status');
+  box.append(input, folderRow, status);
+  const restore = document.activeElement;
+  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
+  let busy = false;
+  const go = async () => {
+    let u = input.value.trim();
+    if (!u || busy) { input.focus(); return; }
+    if (!/^[a-z]+:/i.test(u)) u = `https://${u}`;
+    busy = true; yes.disabled = true; status.textContent = 'Clipping…'; status.classList.remove('error');
+    const res = await notesApi.clipFetch(u);
+    if (!res || res.error) { busy = false; yes.disabled = false; status.textContent = (res && res.error) || 'Could not clip the page'; status.classList.add('error'); return; }
+    const doc = new DOMParser().parseFromString(res.html, 'text/html');
+    const { name, content } = clipPage(doc, res.url, dayKey(new Date()));
+    const made = await notesApi.create(select.value, name);
+    if (!made || !made.rel) { busy = false; yes.disabled = false; status.textContent = 'Could not make the note'; status.classList.add('error'); return; }
+    await notesApi.write(made.rel, content);
+    close();
+    await refreshTree();
+    await rebuildBacklinks();
+    await openNote(made.rel, 'oku');
+    showToast(`Clipped to ${select.value}`);
+  };
+  const actions = elem('div', 'plan-dialog-actions');
+  const cancel = elem('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
+  const yes = elem('button', 'btn primary', 'Clip'); yes.type = 'button'; yes.addEventListener('click', go);
+  actions.append(cancel, yes);
+  box.append(actions);
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target === input) { e.preventDefault(); go(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  });
+  layer.append(box);
+  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
+  document.body.append(layer);
+  input.focus();
 }
 
 // --- graph view (src/graph-view.js) ---
@@ -876,6 +1093,8 @@ function currentLocation() {
   if (state.contentView === 'planner') return { view: 'planner', key: dayKey(startOfWeek(state.weekDate)) };
   if (state.contentView === 'tasks') return { view: 'tasks', rel: state.board ? state.board.rel : null };
   if (state.contentView === 'draw') return { view: 'draw', rel: state.drawing ? state.drawing.rel : null };
+  if (state.contentView === 'base' && state.base) return { view: 'base', rel: state.base.rel };
+  if (state.contentView === 'canvas' && state.canvas) return { view: 'canvas', rel: state.canvas.rel };
   if (state.contentView === 'note' && state.openNote) return { view: 'note', rel: state.openNote };
   return { view: 'day', key: dayKey(state.selectedDate) };
 }
@@ -885,7 +1104,7 @@ let newTabAsk = 0;
 const askNewTab = (e) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.type === 'click' || e.key === 'Enter')) newTabAsk = Date.now(); };
 document.addEventListener('click', askNewTab, true);
 document.addEventListener('keydown', askNewTab, true);
-const docPlace = (loc) => !!(loc && loc.rel && (loc.view === 'note' || loc.view === 'tasks' || loc.view === 'draw'));
+const docPlace = (loc) => !!(loc && loc.rel && (loc.view === 'note' || loc.view === 'tasks' || loc.view === 'draw' || loc.view === 'base' || loc.view === 'canvas'));
 function navVisit(to) {
   hidePreview();
   state.menu = null; // a row menu belongs to the pane it was opened on
@@ -911,7 +1130,9 @@ function updateNavButtons() {
   document.getElementById('nav-back').disabled = !curNav().canBack;
   document.getElementById('nav-forward').disabled = !curNav().canForward;
 }
-const navValid = (loc) => (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel);
+const navValid = (loc) => (loc.view === 'base' ? state.treeBases.some((b) => b.rel === loc.rel)
+  : loc.view === 'canvas' ? state.treeCanvases.some((c) => c.rel === loc.rel)
+  : (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel));
 // Show a place without recording it in the history.
 async function goTo(loc) {
   navigating = true;
@@ -922,6 +1143,8 @@ async function goTo(loc) {
     else if (loc.view === 'planner') openPlanner(parseDayKey(loc.key));
     else if (loc.view === 'tasks') await openTasks(loc.rel);
     else if (loc.view === 'draw') await openDraw(loc.rel);
+    else if (loc.view === 'base') await openBase(loc.rel);
+    else if (loc.view === 'canvas') await openCanvas(loc.rel);
     else await selectDay(parseDayKey(loc.key), { keepTab: true });
   } finally { navigating = false; updateNavButtons(); }
 }
@@ -984,9 +1207,11 @@ function tabTitle(loc) {
   if (loc.view === 'planner') return 'Planner';
   if (loc.view === 'tasks') return loc.rel ? noteTitleOf(loc.rel) : 'Tasks';
   if (loc.view === 'draw') return loc.rel ? drawingTitle(loc.rel) : 'Draw';
+  if (loc.view === 'base') return baseTitleOf(loc.rel);
+  if (loc.view === 'canvas') return canvasTitleOf(loc.rel);
   return loc.key === dayKey(new Date()) ? 'Home' : formatDayNumeric(parseDayKey(loc.key));
 }
-const TAB_ICONS = { note: 'tiFileText', graph: 'graph', planner: 'calendar', tasks: 'kanban', draw: 'tiPenLine', day: 'home' };
+const TAB_ICONS = { note: 'tiFileText', graph: 'graph', planner: 'calendar', tasks: 'kanban', draw: 'tiPenLine', base: 'template', canvas: 'kanban', day: 'home' };
 // The strip shows only when there is more than one tab.
 const tabStripEl = document.getElementById('tab-strip');
 let tabDrag = null;
@@ -1709,9 +1934,20 @@ function renderPaneTitle() {
     if (state.drawing) el.append(elem('span', 'pt-path', 'Draw / '));
     el.append(elem('span', 'pt-main', title));
   }
+  else if (state.contentView === 'canvas' && state.canvas) {
+    title = canvasTitleOf(state.canvas.rel);
+    const folder = folderOf(state.canvas.rel);
+    if (folder) el.append(elem('span', 'pt-path', `${folder.split('/').join(' / ')} / `));
+    el.append(elem('span', 'pt-main', title));
+  }
   else if (state.contentView === 'note' && state.openNote) {
     title = noteTitleOf(state.openNote);
     const folder = folderOf(state.openNote);
+    if (folder) el.append(elem('span', 'pt-path', `${folder.split('/').join(' / ')} / `));
+    el.append(elem('span', 'pt-main', title));
+  } else if (state.contentView === 'base' && state.base) {
+    title = baseTitleOf(state.base.rel);
+    const folder = folderOf(state.base.rel);
     if (folder) el.append(elem('span', 'pt-path', `${folder.split('/').join(' / ')} / `));
     el.append(elem('span', 'pt-main', title));
   } else {
@@ -1773,7 +2009,7 @@ document.getElementById('foot-keys').addEventListener('click', () => showShortcu
 // Keyboard shortcuts cheat sheet (⌘/, Help menu, sidebar footer).
 const SHORTCUTS = [
   ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Find in this note'], ['⌥⌘F', 'Find and replace in this note'], ['⇧⌘F', 'Search all notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward'], ['⌘-click', 'Open in a new tab'], ['⌥⌘-click', 'Open to the right'], ['⌥⌘T', 'New tab'], ['⌘W', 'Close tab'], ['⇧⌘[ / ⇧⌘]', 'Previous / next tab']]],
-  ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo']]],
+  ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo'], ['⌘.', 'Fold or unfold this heading'], ['⌥⌘[ / ⌥⌘]', 'Fold / unfold all headings']]],
   ['Window', [['⌘\\', 'Show / hide sidebar'], ['⇧⌘\\', 'Show / hide details (outline, links, tags)'], ['⌘/', 'This list'], ['⌘,', 'Settings']]],
 ];
 function showShortcuts() {
@@ -1781,7 +2017,7 @@ function showShortcuts() {
     id: 'shortcuts',
     placeholder: 'Keyboard shortcuts — type to filter',
     footer: 'esc close',
-    items: (q) => SHORTCUTS.flatMap(([group, rows]) => rows.map(([keys, what]) => ({ label: what, hint: keys, detail: group, run: () => {} })))
+    items: (q) => [...SHORTCUTS, ['Your shortcuts', commandList(true).filter((c) => c.keys && c.keys !== (c.hint || '')).map((c) => [c.keys, c.label])]].flatMap(([group, rows]) => rows.map(([keys, what]) => ({ label: what, hint: keys, detail: group, run: () => {} })))
       .filter((r) => !q.trim() || foldTR(`${r.label} ${r.hint} ${r.detail}`).includes(foldTR(q.trim()))),
   });
 }
@@ -2103,7 +2339,8 @@ function openRandomNote() {
 
 // Every command, with the shortcut shown as a hint. `when` hides commands that
 // need an open note.
-function commandList() {
+// all: also the ones that need what is not there now (Settings → Shortcuts).
+function commandList(all = false) {
   const noteOpen = () => state.contentView === 'note' && Boolean(state.openNote);
   const saveOpen = () => saveOpenNote();
   return [
@@ -2112,7 +2349,7 @@ function commandList() {
     { label: 'Create new note', hint: '⌘N', run: newNote },
     { label: 'Create new folder', run: newFolder },
     { label: 'Open the week planner', hint: '⌘1', run: () => openPlanner(new Date()) },
-    ...(voice.handy ? [{ label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() }] : []),
+    ...(voice.handy ? [{ id: 'dictate', label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() }] : []),
     ...(voice.handy || voice.studio ? [{ label: 'New note from audio…', run: () => openVoiceNote() }] : []),
     { label: 'New plan', hint: '⇧⌘P', run: () => plannerApi.newPlan(new Date()) },
     { label: 'Open tasks', hint: '⌘3', run: () => openTasks() },
@@ -2120,6 +2357,8 @@ function commandList() {
     ...boardList().map((b) => ({ label: `Open board: ${b.title}`, run: () => openTasks(b.rel) })),
     { label: 'Open draw', hint: '⌘4', run: () => openDraw() },
     { label: 'New drawing', run: () => newDrawing() },
+    { label: 'New canvas', run: () => newCanvas() },
+    { label: 'Clip web page…', run: () => openClipper() },
     ...drawingList().map((d) => ({ label: `Open drawing: ${d.title}`, run: () => openDraw(d.rel) })),
     { label: 'Open graph view', hint: '⌘G', run: () => openGraph() },
     { label: 'Open local graph', hint: '⇧⌘G', when: noteOpen, run: () => openGraph({ local: true }) },
@@ -2140,7 +2379,7 @@ function commandList() {
     { label: 'Attach file to note', when: noteOpen, run: addFileToNote },
     { label: 'Open settings', hint: '⌘,', run: openSettings },
     { label: 'Refresh calendars', when: () => calConnected, run: refreshCalendars },
-    { label: 'Connect Wispr Flow', run: openSettings },
+    { label: 'Connect Wispr Flow', run: () => openSettings('voice') },
     { label: 'Insert template', hint: '⇧⌘T', when: noteOpen, run: openTemplatePicker },
     { label: 'New note from template', run: () => newFromTemplate() },
     { label: 'Copy built-in templates to the Templates folder', run: copyBuiltinTemplates },
@@ -2154,6 +2393,9 @@ function commandList() {
     { label: 'Theme: dark', run: () => setTheme('dark') },
     { label: 'Theme: follow the system', run: () => setTheme('system') },
     { label: 'Open this note to the right', when: noteOpen, run: () => openSplit(state.openNote) },
+    { label: 'Fold all headings', hint: '⌥⌘[', when: () => noteOpen() && state.noteView === 'blocks', run: () => foldAll('note', true) },
+    { label: 'Unfold all headings', hint: '⌥⌘]', when: () => noteOpen() && state.noteView === 'blocks', run: () => foldAll('note', false) },
+    { label: 'Fold or unfold this heading', hint: '⌘.', when: () => noteOpen() && state.noteView === 'blocks', run: () => toggleFoldHere('note') },
     { label: 'Add property to this note', hint: '⌘;', when: () => noteOpen() && state.noteView === 'blocks', run: () => startAddProperty('note') },
     { label: 'Swap the two panes', when: () => !!split, run: () => swapSplit() },
     { label: 'Close the right pane', when: () => !!split, run: () => closeSplit() },
@@ -2165,7 +2407,7 @@ function commandList() {
     { label: 'Recover deleted notes', run: openDeletedRecovery },
     { label: 'Show unused attachments', run: showUnusedAttachments },
     { label: `Show notes folder in ${FILES_APP}`, run: () => notesApi.reveal() },
-  ].filter((c) => !c.when || c.when());
+  ].filter((c) => all || !c.when || c.when()).map((c) => ({ ...c, keys: keyOf(c, hotkeys) }));
 }
 function openCommandPalette() {
   openPalette({
@@ -2173,7 +2415,7 @@ function openCommandPalette() {
     placeholder: 'Type a command…',
     footer: '↑↓ navigate · ↵ run · esc close',
     items: (q) => fuzzyFilter(q, commandList(), (c) => c.label)
-      .map(({ item, indices }) => ({ label: item.label, hint: item.hint, indices, run: item.run })),
+      .map(({ item, indices }) => ({ label: item.label, hint: item.keys, indices, run: item.run })),
   });
 }
 
@@ -2866,6 +3108,7 @@ function noteActionItems(title, getSrc, saveUnsaved) {
     { label: 'Insert template…', fn: () => { closeMenu(); openTemplatePicker(); } },
     { label: 'Open to the right', fn: () => { closeMenu(); openSplit(state.openNote); } },
     { label: 'Add property', fn: () => { closeMenu(); startAddProperty('note'); } },
+    ...(state.noteView === 'blocks' ? [{ label: 'Fold all headings', fn: () => { closeMenu(); foldAll('note', true); } }, { label: 'Unfold all headings', fn: () => { closeMenu(); foldAll('note', false); } }] : []),
     { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(); } },
     { label: 'Export…', fn: () => openMenu('menu-note', () => exportSubItems(title, getSrc, saveUnsaved)) },
     { label: 'Delete', fn: () => openMenu('menu-note', () => [
@@ -3010,9 +3253,179 @@ function noteRenderOptions(rel) {
       week: (_code, _meta, { src }) => weekBlock(rel, src),
       projects: (code) => projectsBlock(rel, code),
       books: (code) => booksBlock(rel, code),
+      movies: (code) => moviesBlock(rel, code),
+      base: (code) => baseBlock(rel, code),
+      tasks: (code) => tasksQueryBlock(code),
     },
     embedDrawing,
+    embedBase: (target, view) => embedBase(target, view, rel),
   };
+}
+
+// --- Obsidian Bases (lib/bases, src/bases-view.js) ---
+// A .base file opens as its views; ```base blocks and ![[X.base]] embeds draw
+// one in a note. The vault is Dataview's index; a base's text is read when
+// the tree is.
+const isBaseRel = (rel) => /\.base$/i.test(String(rel || ''));
+const baseTitleOf = (rel) => leafOf(rel).replace(/\.base$/i, '');
+async function loadBaseTexts() {
+  let changed = false;
+  const known = new Set(state.treeBases.map((b) => b.rel));
+  for (const rel of [...state.baseTexts.keys()]) if (!known.has(rel)) { state.baseTexts.delete(rel); changed = true; }
+  for (const b of state.treeBases) {
+    const had = state.baseTexts.get(b.rel);
+    if (had && had.mtime === b.mtime) continue;
+    const res = await notesApi.read(b.rel);
+    if (!res || res.error) continue;
+    state.baseTexts.set(b.rel, { mtime: b.mtime, text: res.content });
+    changed = true;
+  }
+  if (changed && !isEditing()) render();
+}
+async function openBase(rel) {
+  flushActiveEditor();
+  if (!state.baseTexts.has(rel)) {
+    const res = await notesApi.read(rel);
+    if (!res || res.error) { showToast('Could not open the base'); return; }
+    state.baseTexts.set(rel, { mtime: 0, text: res.content });
+  }
+  navVisit({ view: 'base', rel });
+  state.base = { rel, view: baseViews.get(rel) ?? 0 };
+  state.contentView = 'base';
+  state.selectedFolder = null;
+  expandAncestors(rel);
+  render();
+}
+const baseViews = new Map(); // which view a base or a ```base block shows
+// Opening from a base: a note (⌘-click: a new tab) or a link's target.
+function openFromBase(rel, e) {
+  if (e && (e.metaKey || e.ctrlKey)) openNoteInNewTab(rel);
+  else openNote(rel, 'oku');
+}
+// An image in a card: a path or a file name, from the note's folder.
+function baseImageUrl(path, fromRel) {
+  if (/^https?:\/\//i.test(path)) return path;
+  const dir = folderOf(fromRel || '');
+  const att = resolveAttachment(path, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+  return att.url && att.isImage ? att.url : '';
+}
+function baseOptions({ key, thisRel, config, viewIndex, folder, embedded, onOpenBase }) {
+  return {
+    embedded,
+    onView: (i) => { baseViews.set(key, i); if (state.base && state.base.rel === key) state.base.view = i; render(); },
+    onOpen: openFromBase,
+    onExternal: (url) => notesApi.openExternal(url),
+    imageUrl: baseImageUrl,
+    onEdit: async (rel, prop, old, input) => {
+      const value = typeof input === 'boolean' ? input : cellInput(old, input);
+      await changeNoteText(rel, (text) => setProp(text, prop, value));
+      render();
+    },
+    onCancel: () => render(),
+    onNew: config ? async () => {
+      const { folder: dest, props } = newNoteDefaults(config, viewIndex, folder);
+      const res = await notesApi.create(dest, 'Untitled');
+      if (!res || !res.rel) { showToast('Could not create the note'); return; }
+      if (props.length) await notesApi.write(res.rel, props.reduce((t, [k, v]) => setProp(t, k, v), ''));
+      await refreshTree();
+      await rebuildBacklinks();
+      await openNote(res.rel, 'duzenle');
+      startRenameNote();
+    } : null,
+    onOpenBase,
+  };
+}
+function runBaseText(text, which, thisRel) {
+  return runBase(text, which, dataview.index(), { thisRel });
+}
+function renderBasePage() {
+  const { rel } = state.base;
+  const entry = state.baseTexts.get(rel);
+  const pane = elem('div', 'note-pane base-pane');
+  const head = elem('div', 'note-head');
+  head.append(elem('h1', 'note-title', baseTitleOf(rel)));
+  pane.append(head);
+  const res = runBaseText(entry ? entry.text : '', state.base.view, rel);
+  pane.append(baseView(res, baseOptions({ key: rel, thisRel: rel, config: res.config, viewIndex: res.viewIndex, folder: folderOf(rel), embedded: false })));
+  contentEl.append(pane);
+}
+// ```base in a note: the base written in place, about that note (`this`).
+function baseBlock(rel, code) {
+  const key = `${rel}\u0000${code}`;
+  const res = runBaseText(code, baseViews.get(key) ?? 0, rel || '');
+  return baseView(res, baseOptions({ key, thisRel: rel, config: res.config, viewIndex: res.viewIndex, folder: folderOf(rel || ''), embedded: false }));
+}
+// ![[Books.base]] or ![[Books.base#View]]: that view of the file.
+function embedBase(target, view, rel) {
+  const b = resolveBaseTarget(target, rel);
+  if (!b) return null;
+  const entry = state.baseTexts.get(b);
+  if (!entry) return null;
+  const res = runBaseText(entry.text, view || null, rel || '');
+  const box = baseView(res, baseOptions({ key: b, thisRel: rel, config: res.config, viewIndex: res.viewIndex, folder: folderOf(b), embedded: true, onOpenBase: () => openBase(b) }));
+  box.classList.add('embed');
+  return box;
+}
+// A base named in a link: its path, its name, or its name from the folder of `fromRel`.
+function resolveBaseTarget(target, fromRel) {
+  const t = String(target || '').replace(/^\/+/, '');
+  const name = /\.base$/i.test(t) ? t : `${t}.base`;
+  const list = state.treeBases.map((b) => b.rel);
+  if (list.includes(name)) return name;
+  const local = fromRel ? `${folderOf(fromRel) ? `${folderOf(fromRel)}/` : ''}${name}` : null;
+  if (local && list.includes(local)) return local;
+  return list.find((r) => leafOf(r).toLowerCase() === leafOf(name).toLowerCase()) || null;
+}
+// A base in the tree: its own icon; a click opens its views.
+function baseRow(n, depth) {
+  const row = elem('div', 'tree-row note-row base-row' + (state.contentView === 'base' && state.base && state.base.rel === n.rel ? ' selected' : ''));
+  row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
+  row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'base';
+  const color = rowColor(n.rel, 'note', state.treeStyles);
+  if (color) row.style.setProperty('--row-c', color);
+  row.append(treeIcon(n.rel, 'template'));
+  row.append(elem('span', 'tree-name', baseTitleOf(n.rel)));
+  row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openBase(n.rel); });
+  const items = () => [
+    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'base', rel: n.rel }); } },
+    SEP,
+    ...copyItems(n.rel, [{ label: 'Copy embed', fn: () => { closeMenu(); copyText(`![[${leafOf(n.rel)}]]`, 'the embed'); } }]),
+    SEP,
+    revealItem(n.rel),
+  ];
+  addMenuBtn(row, `b:${n.rel}`, items);
+  onRightClick(row, `b:${n.rel}`, items);
+  return row;
+}
+
+// --- Tasks queries (lib/tasks-query.mjs, src/tasks-view.js) ---
+// A ```tasks block lists the vault's tasks, as the Obsidian Tasks plugin
+// does; the tasks are read again only when the vault (or the open note) changed.
+let vaultTasks = { notes: null, list: [] };
+function allTasks() {
+  const notes = dataviewNotes();
+  if (vaultTasks.notes !== notes) vaultTasks = { notes, list: collectTasks(notes) };
+  return vaultTasks.list;
+}
+function tasksQueryBlock(code) {
+  const today = new Date();
+  return tasksQueryView(runTasksQuery(code, allTasks(), today), code, {
+    md: dataviewInline,
+    onOpen: (rel, e) => { if (e && (e.metaKey || e.ctrlKey)) openNoteInNewTab(rel); else openNote(rel, 'oku'); },
+    // Ticked in its own note, with the ✅ date the plugin writes; only while
+    // that line is still the one shown.
+    onToggle: async (t, done) => {
+      let changed = false;
+      await changeNoteText(t.rel, (text) => {
+        const lines = text.split('\n');
+        if (lines[t.line] !== t.raw) return text;
+        lines[t.line] = completeTaskLine(t.raw, done, dayKey(new Date()));
+        changed = true;
+        return lines.join('\n');
+      });
+      if (!changed) { showToast('That task has changed; shown again'); render(); }
+    },
+  });
 }
 
 // --- budget notes (lib/budget.mjs, src/budget-view.js) ---
@@ -3247,6 +3660,41 @@ function booksBlock(rel, code) {
   });
 }
 
+// --- movies (lib/movies.mjs, src/movies-view.js) ---
+const vaultMovies = () => vaultItems(mayBeMovie, movieOf);
+// "Add poster" on a movie: an image file picked for it.
+async function addMoviePoster(movie) {
+  const img = await coverInto(folderOf(movie.rel)).pick();
+  if (!img) return;
+  await changeNoteText(movie.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
+  render();
+}
+// A movie moved to another row: its status, and the day it was watched when
+// not written yet.
+function moveMovie(movie, stage) {
+  return changeNoteText(movie.rel, (text) => movieStageChanges(movie, stage, dayKey(new Date()))
+    .reduce((t, [k, v]) => (k === 'status' ? setJobStatus(t, v, setProp) : setProp(t, k, v)), text));
+}
+function moviesBlock(rel, code) {
+  const settings = projectsSettings(code); // the same settings: folder, template
+  const movies = vaultMovies();
+  const folder = settings.folder || (rel ? folderOf(rel) : '');
+  return watchlist(movieRows(movies), movieStats(movies), {
+    urlOf: bookCoverUrl,
+    onOpen: (to) => openNote(to),
+    onMove: (to, stage) => { const m = movies.find((x) => x.rel === to); if (m) moveMovie(m, stage); },
+    onPoster: (m) => addMoviePoster(m),
+    onNew: () => openMovieDialog({ poster: coverInto(folder), pathOf: (f) => notesApi.pathForFile(f) }, async (m) => {
+      const made = await noteFromTemplate({
+        folder, name: m.title, template: settings.template, builtin: 'movie',
+        props: [['director', m.director], ['year', m.year], ['status', m.stage], ['image', m.image ? `[[${m.image}]]` : ''],
+          ['watched', m.stage === 'Watched' ? dayKey(new Date()) : '']],
+      });
+      if (made) { render(); showToast(`Added ${m.title}`); }
+    }),
+  });
+}
+
 // --- habit trackers (lib/habits.mjs, src/habits-view.js) ---
 const HABITS_BLOCK = /^```habits[^\S\n]*$/m;
 const weekLabel = (week) => {
@@ -3398,7 +3846,13 @@ async function openAttachment(rel) {
 // Scroll the open note's rendered body to a heading by its (folded) text.
 function scrollToHeading(heading) {
   if (!heading) return;
+  if (String(heading).startsWith('^')) {
+    if (state.contentView === 'note' && state.openNote && state.noteView === 'blocks') unfoldBlock(String(heading).slice(1));
+    scrollToBlock(String(heading).slice(1));
+    return;
+  }
   const want = foldTR(String(heading).trim());
+  if (state.contentView === 'note' && state.openNote && state.noteView === 'blocks') unfoldHeading('note', heading);
   requestAnimationFrame(() => {
     const h = [...contentEl.querySelectorAll('.md h1, .md h2, .md h3, .md h4, .md h5, .md h6')]
       .find((el) => foldTR(el.textContent.trim()) === want);
@@ -3417,6 +3871,7 @@ function reportLinks(res) {
 // is missing. "Folder/Title" targets keep their folder; a bare title is created
 // alongside the linking note.
 async function openWiki(target, heading) {
+  if (!String(target).trim() && heading) { scrollToHeading(heading); return; } // [[#Heading]], [[#^id]]: this note
   const rel = resolveLink(target, state.openNote || '', state.notesFlat);
   if (rel) { await openNote(rel, 'oku', { keepTab: true }); scrollToHeading(heading); return; }
   const t = target.trim();
@@ -3439,8 +3894,12 @@ async function refreshTree() {
   if (res && !res.error) {
     state.treeFolders = res.folders.map((f) => f.rel);
     state.treeNotes = res.notes;
+    state.treeBases = Array.isArray(res.bases) ? res.bases : [];
+    state.treeCanvases = Array.isArray(res.canvases) ? res.canvases : [];
     state.notesFlat = flattenNotes(res.notes);
+    reloadOpenCanvas();
     applyAliases();
+    loadBaseTexts();
   }
   await refreshAttachList();
 }
@@ -3733,7 +4192,7 @@ function renderTreeChildren(node, depth, parentEl, folderRel) {
   }
   for (const n of node.notes) {
     if (e && e.kind === 'rename-note' && e.rel === n.rel) parentEl.append(treeEditRow(depth));
-    else parentEl.append(noteRow(n, depth));
+    else parentEl.append(isCanvasRel(n.rel) ? canvasRow(n, depth) : noteRow(n, depth));
   }
 }
 
@@ -3962,6 +4421,7 @@ function folderRow(f, depth) {
 }
 
 function noteRow(n, depth) {
+  if (isBaseRel(n.rel)) return baseRow(n, depth);
   const row = elem('div', 'tree-row note-row' + (state.openNote === n.rel ? ' selected' : ''));
   row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
   row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'note';
@@ -3984,6 +4444,7 @@ function folderMenuItems(f) {
     { label: 'New note', fn: () => { closeMenu(); newNoteIn(f.rel); } },
     { label: 'New note from template…', fn: () => { closeMenu(); newFromTemplate(f.rel); } },
     { label: 'New folder', fn: () => { closeMenu(); newFolderIn(f.rel); } },
+    { label: 'New canvas', fn: () => { closeMenu(); newCanvas(f.rel); } },
     SEP,
     ...(daily ? [] : [{ label: 'Move to…', fn: () => { closeMenu(); moveToFolder(`f:${f.rel}`); } }]),
     { label: 'Search in folder', fn: () => { closeMenu(); searchFor(`path:"${f.rel}"`); } },
@@ -4897,17 +5358,107 @@ function propNewRow(scope) {
   return row;
 }
 
-function blockPreview(scope, b) {
+// --- heading folds (lib/fold.mjs): kept per note in this window's storage,
+// not in the note, as in Obsidian ---
+let folds = {};
+try { folds = JSON.parse(localStorage.getItem('mufka-folds') || '{}') || {}; } catch { /* none */ }
+function foldRel(scope) { return scope === 'note' ? state.openNote : (state.dailyNote.key ? dailyRel(state.dailyNote.key) : ''); }
+function foldPlanFor(scope, src = getSrcFor(scope), blocks = parseBlocks(src)) {
+  return foldPlan(blocks, (b) => blockText(src, b), new Set(folds[foldRel(scope)] || []));
+}
+function setFolds(scope, keys) {
+  const rel = foldRel(scope);
+  if (!rel) return;
+  if (keys.length) folds[rel] = keys; else delete folds[rel];
+  try { localStorage.setItem('mufka-folds', JSON.stringify(folds)); } catch { /* ignore */ }
+}
+function toggleFold(scope, key) {
+  const keys = new Set(folds[foldRel(scope)] || []);
+  if (keys.has(key)) keys.delete(key); else keys.add(key);
+  setFolds(scope, [...keys]);
+  render();
+}
+function foldAll(scope, on) {
+  if (state.blockEdit) flushActiveEditor();
+  setFolds(scope, on ? foldPlanFor(scope).heads.filter((h) => h.hidden > 0).map((h) => h.key) : []);
+  render();
+}
+// ⌘.: the heading of the block being edited, else of the first one in view.
+function toggleFoldHere(scope) {
+  const src = getSrcFor(scope);
+  const blocks = parseBlocks(src);
+  let start = state.blockEdit && state.blockEdit.scope === scope ? state.blockEdit.startLine ?? state.blockEdit.newAfter : null;
+  if (start == null) {
+    const top = contentEl.getBoundingClientRect().top;
+    const first = [...contentEl.querySelectorAll('.blocks > [data-block-start]')].find((x) => x.getBoundingClientRect().bottom > top + 40);
+    start = first ? Number(first.dataset.blockStart) : null;
+  }
+  const idx = blocks.findIndex((x) => x.start === start);
+  const head = idx < 0 ? null : headingFor(foldPlan(blocks, (b) => blockText(src, b), new Set(folds[foldRel(scope)] || [])), idx);
+  if (!head || head.hidden === 0) return;
+  if (state.blockEdit) flushActiveEditor();
+  toggleFold(scope, head.key);
+}
+// Unfold whatever hides a heading (followed link, outline click).
+function unfoldHeading(scope, text) {
+  const src = getSrcFor(scope);
+  const blocks = parseBlocks(src);
+  const plan = foldPlanFor(scope, src, blocks);
+  const want = foldTR(String(text).trim());
+  const h = plan.heads.find((x) => foldTR(x.text) === want);
+  const hiding = h ? foldsHiding(plan, h.index) : [];
+  if (!hiding.length) return false;
+  setFolds(scope, (folds[foldRel(scope)] || []).filter((k) => !hiding.includes(k)));
+  render();
+  return true;
+}
+// Unfold whatever hides a block ([[Note#^id]] followed).
+function unfoldBlock(id) {
+  const src = getSrcFor('note');
+  const at = findBlock(src, id);
+  if (!at) return;
+  const blocks = parseBlocks(src);
+  const idx = blocks.findIndex((x) => x.start <= at.start && x.end >= at.start);
+  const hiding = idx < 0 ? [] : foldsHiding(foldPlanFor('note', src, blocks), idx);
+  if (!hiding.length) return;
+  setFolds('note', (folds[foldRel('note')] || []).filter((k) => !hiding.includes(k)));
+  render();
+}
+const FOLD_ARROW = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function foldControl(el, scope, head) {
+  const h = el.querySelector('h1, h2, h3, h4, h5, h6');
+  if (!h || head.hidden === 0) return;
+  el.classList.add('foldable');
+  if (head.folded) el.classList.add('folded');
+  const btn = elem('button', 'fold-toggle');
+  btn.type = 'button';
+  btn.innerHTML = FOLD_ARROW;
+  btn.setAttribute('aria-expanded', String(!head.folded));
+  btn.setAttribute('aria-label', `${head.folded ? 'Unfold' : 'Fold'} ${head.text}`);
+  btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toggleFold(scope, head.key); });
+  h.prepend(btn);
+  if (head.folded) {
+    const more = elem('button', 'fold-more', `${head.hidden} ${head.hidden === 1 ? 'block' : 'blocks'}`);
+    more.type = 'button';
+    more.title = 'Unfold';
+    more.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toggleFold(scope, head.key); });
+    h.append(more);
+  }
+}
+
+function blockPreview(scope, b, head) {
   if (b.type === 'frontmatter') return propertiesBlock(scope, b);
   const el = elem('div', `block md block-${b.type}`); // block-image, block-heading… for spacing
   el.dataset.blockStart = String(b.start);
   mountBlockMarkdown(el, blockText(getSrcFor(scope), b), b.start, scope);
+  if (head) foldControl(el, scope, head);
   decorateBudgetBlock(el, scope === 'note' ? state.openNote : dailyRel(state.dailyNote.key), getSrcFor(scope), b);
   el.addEventListener('mousedown', (e) => {
     if (e.target.closest('a, input, img:not(.mermaid-img), button, [data-att], summary, .tag')) return; // keep links/tasks/folds/tags/buttons single-click
     e.preventDefault();
     startEditBlock(scope, b.start, 'end');
   });
+  el.addEventListener('contextmenu', (e) => { if (!e.target.closest('a, img, [data-att], .embed')) blockRefMenu(e, scope, b); });
   return el;
 }
 
@@ -5012,9 +5563,11 @@ function renderBlockEditor(container, scope) {
   const wrap = elem('div', 'blocks');
   if (state.propAdding === scope && !blocks.some((b) => b.type === 'frontmatter')) wrap.append(propertiesBlock(scope, null));
   if (edit && edit.newAfter === -1) wrap.append(blockTextarea(scope, null, edit));
+  const plan = foldPlanFor(scope, src, blocks);
+  const heads = new Map(plan.heads.map((h) => [h.start, h]));
   for (const b of blocks) {
     if (edit && edit.startLine === b.start) { wrap.append(blockTextarea(scope, b, edit)); continue; }
-    wrap.append(blockPreview(scope, b));
+    if (!plan.hidden.has(b.start)) wrap.append(blockPreview(scope, b, heads.get(b.start)));
     if (edit && edit.newAfter === b.start) wrap.append(blockTextarea(scope, null, edit));
   }
   const tail = elem('div', 'block-tail'); tail.setAttribute('aria-hidden', 'true');
@@ -5032,7 +5585,8 @@ function renderNotePane() {
   if (!state.openNote) { contentEl.append(hint('Choose a note, or create one with "New note".')); return; }
   const pane = elem('div', 'note-pane');
   // A book's head is its cover (below); its page icon is for the tree.
-  if (!(isTemplateNote(state.openNote) ? null : bookOf(state.openNote, state.noteContent))) pane.append(pageHead());
+  const tpl = isTemplateNote(state.openNote);
+  if (!(tpl ? null : bookOf(state.openNote, state.noteContent) || movieOf(state.openNote, state.noteContent))) pane.append(pageHead());
 
   // The folder path is in the toolbar title. The inline title is the file
   // name (click to rename); it steps aside when the note already starts with
@@ -5053,13 +5607,23 @@ function renderNotePane() {
       onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
       onCover: () => addBookCover(book),
     }));
-  } else pane.append(header);
-  const job = book || isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
-  const project = book || job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
+  }
+  // A movie: its poster beside the title, with its row and facts.
+  const movie = book || isTemplateNote(state.openNote) ? null : movieOf(state.openNote, state.noteContent);
+  if (movie) {
+    pane.append(movieHead(movie, bookCoverUrl(movie), header, {
+      onStage: (stage) => moveMovie(movie, stage),
+      onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
+      onPoster: () => addMoviePoster(movie),
+    }));
+  }
+  if (!book && !movie) pane.append(header);
+  const job = book || movie || isTemplateNote(state.openNote) ? null : jobOf(state.openNote, state.noteContent);
+  const project = book || movie || job || isTemplateNote(state.openNote) ? null : projectOf(state.openNote, state.noteContent);
   if (project) pane.append(projectStrip(project, { onStage: (stage) => changeNoteText(state.openNote, (text) => setJobStatus(text, stage, setProp)) }));
   // A trip: its countdown, where and when, packing; a meeting: when, who,
   // action items.
-  const plain = !(book || job || project) && !isTemplateNote(state.openNote);
+  const plain = !(book || movie || job || project) && !isTemplateNote(state.openNote);
   const trip = plain ? tripOf(state.openNote, state.noteContent) : null;
   if (trip) pane.append(tripStrip(trip));
   const meeting = plain && !trip ? meetingOf(state.openNote, state.noteContent) : null;
@@ -5259,12 +5823,112 @@ function runSlashAction(action, ta) {
   if (action === 'attach') addFileToNote();
   else if (action === 'template') openTemplatePicker();
 }
+// [[Note#^ → the note's paragraphs and list items; choosing one without an
+// id gives it one in that note. The open note's own blocks are offered only
+// when they have an id (writing it would replace the block being edited).
+function blockSuggestions(trigger) {
+  const rel = trigger.note.trim() ? resolveLink(trigger.note.trim(), state.openNote || '', state.notesFlat) : state.openNote;
+  const note = rel && embedNote(rel.replace(/\.md$/i, ''));
+  if (!note) return [];
+  const self = rel === state.openNote;
+  const linkText = trigger.note.trim() ? linkTextFor(rel, state.notesFlat.map((n) => n.rel)) : '';
+  let choices = blockChoices(note.content).filter((c) => !self || c.id);
+  if (trigger.query) choices = choices.filter((c) => (c.id && c.id.startsWith(trigger.query)) || fuzzyMatch(trigger.query, c.text));
+  return choices.map((c) => {
+    const id = c.id || newBlockId(note.content);
+    return {
+      label: c.text.length > 72 ? `${c.text.slice(0, 70)}…` : c.text,
+      detail: [c.heading, c.id ? `^${c.id}` : c.kind === 'item' ? 'list item' : c.kind].filter(Boolean).join(' · '),
+      insert: `[[${linkText}#^${id}]]`,
+      run: c.id ? null : () => addIdQuietly(rel, (t) => (t.split('\n')[c.idLine] === note.content.split('\n')[c.idLine] ? addBlockId(t, c.idLine, id) : t)),
+    };
+  });
+}
+
+// Write an id into another note while a block is being edited here: no
+// re-render, which would drop the text being typed.
+async function addIdQuietly(rel, edit) {
+  const now = await currentText(rel);
+  if (!now || now.scope) return;
+  const next = edit(now.text);
+  if (next === now.text) return;
+  const w = await notesApi.write(rel, next);
+  if (w && w.error) { showToast('Could not add the block id'); return; }
+  state.noteCache.set(rel, next);
+  const v = state.vaultNotes.find((n) => n.rel === rel);
+  if (v) v.content = next;
+}
+
+// Right-click a paragraph, list item, quote, table or code: copy a link to
+// it, or an embed; it gets an id first when it has none.
+function blockRefMenu(e, scope, b) {
+  const rel = scope === 'note' ? state.openNote : (state.dailyNote.key ? dailyRel(state.dailyNote.key) : '');
+  if (!rel) return;
+  const src = getSrcFor(scope);
+  const inBlock = blockChoices(src).filter((c) => c.start >= b.start && c.end <= b.end);
+  let target = null;
+  const li = e.target.closest('li');
+  if (li && b.type === 'list') {
+    const i = [...e.currentTarget.querySelectorAll('li')].indexOf(li);
+    target = inBlock.filter((c) => c.kind === 'item')[i] || null;
+  } else if (b.type === 'paragraph' || b.type === 'quote') target = inBlock.find((c) => c.start === b.start) || null;
+  if (!target && !['table', 'code', 'list', 'image', 'html'].includes(b.type)) return;
+  e.preventDefault();
+  const name = linkTextFor(rel, state.notesFlat.map((n) => n.rel));
+  const copy = async (embed) => {
+    closeMenu();
+    let id = target ? target.id : null;
+    if (!id) {
+      // A whole block (table, code) is named by an "^id" line after it.
+      const next = src.split('\n')[b.end + 2];
+      const own = next && /^\^([A-Za-z0-9-]+)\s*$/.exec(next);
+      id = own ? own[1] : newBlockId(src);
+      if (!own) await changeNoteText(rel, (t) => (target ? addBlockId(t, target.idLine, id) : addBlockIdLine(t, b.end, id)));
+    }
+    const text = `${embed ? '!' : ''}[[${name}#^${id}]]`;
+    await notesApi.copy(text);
+    showToast(`Copied ${text}`);
+  };
+  openMenu(`block-${b.start}`, () => [
+    { label: 'Copy link to block', fn: () => copy(false) },
+    { label: 'Copy embed of block', fn: () => copy(true) },
+  ], { align: 'left', at: { x: e.clientX, y: e.clientY } });
+}
+
+// Scroll to a block of the open note ("^id") and light it up for a moment.
+// A re-render in that moment (a save elsewhere) carries the light over.
+let blockFlash = null; // { id, at }
+function blockEl(id) {
+  const el = contentEl.querySelector(`.md [data-block-id="${CSS.escape(id)}"]`);
+  if (el) return el;
+  const at = findBlock(state.noteContent, id);
+  return at && [...contentEl.querySelectorAll('.blocks > [data-block-start]')].filter((x) => Number(x.dataset.blockStart) <= at.start).pop();
+}
+function applyBlockFlash() {
+  if (!blockFlash) return;
+  const past = Date.now() - blockFlash.at;
+  if (past > 1800) { blockFlash = null; return; }
+  const el = blockEl(blockFlash.id);
+  if (el && !el.classList.contains('block-flash')) { el.style.animationDelay = `-${past}ms`; el.classList.add('block-flash'); }
+}
+function scrollToBlock(id) {
+  requestAnimationFrame(() => {
+    const el = blockEl(id);
+    if (!el) { showToast(`Block not found: ^${id}`); return; }
+    el.scrollIntoView({ block: 'center' });
+    blockFlash = { id, at: Date.now() };
+    applyBlockFlash();
+    setTimeout(() => { blockFlash = null; contentEl.querySelectorAll('.block-flash').forEach((x) => { x.classList.remove('block-flash'); x.style.animationDelay = ''; }); }, 1850);
+  });
+}
+
 const suggestApi = {
   items(kind, q, trigger) {
     if (kind === 'slash') {
       return slashItems(q, { atLineStart: trigger ? trigger.atLineStart : true, dailyLink: dayKey(new Date()) })
         .map((r) => ({ ...r, run: r.action ? (ta) => runSlashAction(r.action, ta) : null }));
     }
+    if (kind === 'block') return blockSuggestions(trigger);
     if (kind === 'tag') {
       return buildTagIndex(state.vaultNotes).map((t) => ({ t, m: fuzzyMatch(q, t.tag) })).filter((x) => x.m)
         .sort((a, b) => b.m.score - a.m.score || b.t.count - a.t.count)
@@ -5466,13 +6130,111 @@ function mcpSection() {
   sec.append(row);
   return sec;
 }
-function openSettings() {
+// The notes folder: where it is, show it, open another one (as the folder
+// button at the bottom of the sidebar does).
+function vaultSection() {
+  const sec = elem('section', 'settings-section');
+  sec.append(elem('h3', 'settings-heading', 'Notes folder'));
+  const row = elem('div', 'conn-row vault-row');
+  const tx = elem('div', 'conn-text');
+  tx.append(elem('span', 'conn-name', 'Your notes are .md files in'), elem('span', 'conn-note vault-path', vaultInfo && vaultInfo.path ? vaultInfo.path : ''));
+  const side = elem('div', 'conn-side');
+  const btn = (label, fn) => { const b = elem('button', 'btn', label); b.type = 'button'; b.addEventListener('click', fn); return b; };
+  side.append(btn(`Show in ${FILES_APP}`, () => notesApi.reveal()), btn('Open another folder…', () => notesApi.chooseVault()));
+  if (vaultInfo && vaultInfo.custom) side.append(btn("Use Mufka's own folder", () => notesApi.useDefaultVault()));
+  row.append(tx, side);
+  sec.append(row);
+  return sec;
+}
+// --- Settings → Shortcuts (lib/hotkeys.mjs): the keys of every command ---
+function saveHotkeys(next) {
+  hotkeys = next;
+  try { localStorage.setItem('mufka-hotkeys', JSON.stringify(hotkeys)); } catch { /* ignore */ }
+}
+function shortcutsSection() {
+  const sec = elem('section', 'settings-section shortcuts');
+  sec.append(elem('h3', 'settings-heading', 'Shortcuts'));
+  sec.append(elem('p', 'conn-note shortcuts-lede', 'Click a shortcut to change it, then press the new keys (with ⌘). Esc cancels.'.replace(/⌘/g, K('⌘'))));
+  const filter = document.createElement('input');
+  filter.type = 'search'; filter.className = 'shortcuts-filter'; filter.placeholder = 'Filter: name or keys…';
+  filter.setAttribute('aria-label', 'Filter shortcuts');
+  const list = elem('div', 'shortcuts-list');
+  sec.append(filter, list);
+  let rec = null; // { id, combo, warn }
+  const stopRec = () => { rec = null; document.removeEventListener('keydown', onKey, true); draw(); };
+  const set = (next) => { saveHotkeys(next); stopRec(); };
+  function onKey(e) {
+    if (!rec || !sec.isConnected) { rec = null; document.removeEventListener('keydown', onKey, true); return; }
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { stopRec(); return; }
+    const cmds = commandList(true);
+    if (e.key === 'Enter' && rec.combo && !RESERVED[rec.combo]) { set(assignKeys(hotkeys, cmds, rec.id, rec.combo)); return; }
+    const combo = comboOf(e);
+    if (!combo || !combo.includes('⌘')) return; // still waiting for the keys
+    rec.combo = combo;
+    const other = takenBy(combo, cmds, hotkeys, rec.id);
+    if (RESERVED[combo]) rec.warn = `${K(combo)} is kept for ${RESERVED[combo]}. Press other keys.`;
+    else if (other) rec.warn = `${K(combo)} is used by “${other.label}”. Press other keys, or Enter to take it.`;
+    else { set(assignKeys(hotkeys, cmds, rec.id, combo)); return; }
+    draw();
+  }
+  const record = (id) => { if (!rec) document.addEventListener('keydown', onKey, true); rec = { id, combo: '', warn: '' }; draw(); };
+  function draw() {
+    const q = foldTR(filter.value.trim());
+    const cmds = commandList(true).filter((c) => !q || foldTR(`${c.label} ${c.keys} ${K(c.keys)}`).includes(q));
+    const groups = [['With a shortcut', cmds.filter((c) => c.keys)], ['No shortcut', cmds.filter((c) => !c.keys)]];
+    list.replaceChildren();
+    for (const [title, rows] of groups) {
+      if (!rows.length) continue;
+      list.append(elem('div', 'shortcuts-group', title));
+      const card = elem('div', 'shortcuts-card');
+      for (const c of rows) {
+        const id = idOf(c);
+        const on = rec && rec.id === id;
+        const changed = c.keys !== (c.hint || '');
+        const row = elem('div', `shortcut-row${on ? ' rec' : ''}`);
+        row.dataset.command = id;
+        const tx = elem('div', 'shortcut-text');
+        tx.append(elem('span', 'shortcut-name', c.label));
+        if (on && rec.warn) tx.append(elem('span', 'shortcut-warn', rec.warn));
+        const keys = elem('div', 'shortcut-keys');
+        const kb = elem('button', `kbd${on ? ' rec' : changed && c.keys ? ' custom' : ''}`, on ? (rec.combo ? K(rec.combo) : 'Press keys…') : c.keys ? K(c.keys) : '+');
+        kb.type = 'button';
+        kb.setAttribute('aria-label', on ? 'Press the new keys' : c.keys ? `Change ${c.label}: ${K(c.keys)}` : `Add a shortcut to ${c.label}`);
+        kb.addEventListener('click', () => (on ? stopRec() : record(id)));
+        if (!c.keys && !on) keys.append(elem('span', 'shortcut-none', 'No shortcut'));
+        keys.append(kb);
+        if (c.keys && !on) {
+          const x = elem('button', 'shortcut-icon', '✕'); x.type = 'button'; x.title = 'No shortcut';
+          x.setAttribute('aria-label', `Remove the shortcut of ${c.label}`);
+          x.addEventListener('click', () => set(assignKeys(hotkeys, commandList(true), id, '')));
+          keys.append(x);
+        }
+        const back = elem('button', 'shortcut-icon', '↺'); back.type = 'button';
+        back.hidden = !changed;
+        back.title = c.hint ? `Back to ${K(c.hint)}` : 'Back to no shortcut';
+        back.setAttribute('aria-label', `Reset ${c.label}`);
+        back.addEventListener('click', () => set(resetKeys(hotkeys, commandList(true), id)));
+        row.append(tx, keys, back);
+        card.append(row);
+      }
+      list.append(card);
+    }
+  }
+  filter.addEventListener('input', draw);
+  draw();
+  return sec;
+}
+
+// The pages of Settings, in the order of the list on the left.
+const SETTINGS_PAGES = [['general', 'General', 'settings'], ['appearance', 'Appearance', 'tiPalette'],
+  ['shortcuts', 'Shortcuts', 'command'], ['calendars', 'Calendars', 'calendar'], ['voice', 'Voice', 'mic'], ['ai', 'AI clients (MCP)', 'tiSparkles']];
+function openSettings(page = 'general') {
   if (settingsLayer) settingsLayer._close();
   const layer = elem('div', 'palette-layer');
   const box = elem('div', 'palette plan-dialog settings-dialog');
   box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Settings');
   box.append(elem('div', 'plan-dialog-title', 'Settings'));
-  box.append(appearanceSection());
   // Calendars: Microsoft (Outlook / Microsoft 365, Teams) and Google.
   const calSection = elem('section', 'settings-section');
   calSection.append(elem('h3', 'settings-heading', 'Calendars'));
@@ -5492,7 +6254,6 @@ function openSettings() {
     calSection.append(r);
     return { id, name, side: sd, list: ls, busy: false };
   });
-  box.append(calSection);
 
   const section = elem('section', 'settings-section');
   section.append(elem('h3', 'settings-heading', 'Voice'));
@@ -5548,9 +6309,35 @@ function openSettings() {
   };
   drawHandy(); drawStudio();
   loadVoice().then(() => { drawHandy(); drawStudio(); });
-  box.append(section);
-  box.append(mcpSection());
-  box.append(updatesSection());
+
+  // A list of pages on the left, one page shown at a time.
+  const body = elem('div', 'settings-body');
+  const nav = elem('nav', 'settings-nav');
+  nav.setAttribute('aria-label', 'Settings pages');
+  const pages = elem('div', 'settings-pages');
+  const content = { general: [updatesSection(), vaultSection()], appearance: [appearanceSection()], shortcuts: [shortcutsSection()], calendars: [calSection], voice: [section], ai: [mcpSection()] };
+  const show = (id) => {
+    for (const b of nav.children) { const on = b.dataset.page === id; b.classList.toggle('on', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); }
+    for (const pg of pages.children) pg.hidden = pg.dataset.page !== id;
+    pages.scrollTop = 0;
+  };
+  for (const [id, label, ic] of SETTINGS_PAGES) {
+    const b = elem('button', 'settings-nav-item');
+    b.type = 'button'; b.dataset.page = id;
+    b.append(icon(ic), elem('span', null, label));
+    b.addEventListener('click', () => show(id));
+    nav.append(b);
+    const pg = elem('div', 'settings-page');
+    pg.dataset.page = id;
+    pg.append(elem('h2', 'settings-page-title', label));
+    // One section: the page's title is its heading.
+    if (content[id].length === 1) content[id][0].querySelector('.settings-heading')?.remove();
+    pg.append(...content[id]);
+    pages.append(pg);
+  }
+  body.append(nav, pages);
+  box.append(body);
+  show(SETTINGS_PAGES.some(([id]) => id === page) ? page : 'general');
 
   let busy = false;
   const button = (label, quiet, fn) => {
@@ -5657,7 +6444,7 @@ function openSettings() {
   layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
   document.body.append(layer);
   settingsLayer = layer;
-  Promise.all([calRefreshAll(), refresh()]).then(() => (box.querySelector('.conn-side button') || done).focus());
+  Promise.all([calRefreshAll(), refresh()]).then(() => (box.querySelector('.settings-nav-item.on') || done).focus());
 }
 
 // --- calendar events (read-only) ---
@@ -6244,14 +7031,25 @@ document.addEventListener('keydown', (e) => {
   // In a drawing, Excalidraw's own shortcuts (undo, group, copy…) win; only
   // the app's way out (modes, switcher, palette, settings) stays.
   if (e.target && e.target.closest && e.target.closest('.draw-host') && !['1', '2', '3', '4', 'o', 'p', ',', 't', 'n', 'w'].includes(k) && !(e.shiftKey && /^Bracket/.test(e.code))) return;
+  // Shortcuts set in Settings → Shortcuts come first; an app shortcut whose
+  // command was given other keys does nothing.
+  const combo = comboOf(e);
+  if (combo && Object.keys(hotkeys).length) {
+    const cmds = commandList(true);
+    const mine = customCommand(combo, cmds, hotkeys);
+    if (mine) { e.preventDefault(); if (!mine.when || mine.when()) mine.run(); return; }
+    if (freedDefault(combo, cmds, hotkeys)) { e.preventDefault(); return; }
+  }
   if (k === 'z') {
     if (findBar.contains(e.target)) return; // the find fields' own undo
     // Whole-document undo/redo for the block editor (overrides native undo).
     const editScope = state.blockEdit ? state.blockEdit.scope
       : (state.contentView === 'note' && state.openNote && state.noteView === 'blocks' ? 'note' : null);
     if (editScope) { e.preventDefault(); if (e.shiftKey) histRedo(editScope); else histUndo(editScope); return; }
-    if (e.shiftKey) return;
     if (isTextTarget(e.target)) return; // native text undo
+    // A canvas is open but the focus is not on it (the card that had it was removed).
+    if (state.contentView === 'canvas' && canvasBoard) { e.preventDefault(); if (e.shiftKey) canvasBoard.api.redo(); else canvasBoard.api.undo(); return; }
+    if (e.shiftKey) return;
     e.preventDefault();
     if (state.contentView === 'tasks') undoBoard(); else undoDelete();
     return;
@@ -6275,6 +7073,10 @@ document.addEventListener('keydown', (e) => {
   if (k === 't') { e.preventDefault(); goToday(); return; }
   if (k === 'n') { e.preventDefault(); newNote(); return; }
   if (k === ',') { e.preventDefault(); openSettings(); return; }
+  const foldScope = state.blockEdit ? state.blockEdit.scope
+    : (state.contentView === 'note' && state.openNote && state.noteView === 'blocks' ? 'note' : null);
+  if (e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { if (foldScope) { e.preventDefault(); foldAll(foldScope, e.code === 'BracketLeft'); } return; }
+  if (e.code === 'Period' && !e.shiftKey && !e.altKey) { if (foldScope) { e.preventDefault(); toggleFoldHere(foldScope); } return; }
   if (e.key === '[' || e.code === 'BracketLeft') { if (!isTextTarget(e.target)) { e.preventDefault(); goNav(-1); } return; }
   if (e.key === ']' || e.code === 'BracketRight') { if (!isTextTarget(e.target)) { e.preventDefault(); goNav(1); } return; }
   if (k === '/') { e.preventDefault(); showShortcuts(); return; }

@@ -90,8 +90,22 @@ Planner.
   notes.
 - **Write in place**: notes always look formatted; click a paragraph to edit it.
   Tables, task lists, callouts, footnotes, properties, `==highlights==`.
+- **Fold headings**: the arrow beside a heading hides its section; folds stay
+  when the note opens again. **⌘.** folds the heading you are in, **⌥⌘[** /
+  **⌥⌘]** fold or unfold them all.
+- **Canvas**: `.canvas` files (Obsidian's format) open as a board of cards,
+  notes, links and groups joined by arrows. Drag, resize, colour; double-click
+  the board for a new card; **New canvas** from the command palette or a
+  folder's menu.
+- **Clip web pages**: **Clip web page…** in the command palette takes an
+  address and saves the article (not the menus and ads) as a note in
+  Clippings, with its source, author, dates and the `clippings` tag, as
+  Obsidian Web Clipper does.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
+- **Block links**: `[[Note#^` lists that note's paragraphs and list items;
+  choosing one gives it an id (`^abc123`, as in Obsidian). `![[Note#^id]]`
+  shows just that block; right-click a block to copy a link to it.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
   a mention into a link) and all tags.
 - **Dictate with [Handy](https://handy.computer)** (free, offline): speak and
@@ -136,6 +150,11 @@ Planner.
   **Reading shelf** is a bookcase: a shelf per status with the books standing
   by their covers; drag one to another shelf. A cover is any image you add
   (kept in the vault, never fetched from the internet).
+- **Movies:** a movie note shows its poster beside the title, whether it is to
+  watch or watched, its director, year and genre, when and where you watched
+  it, and stars to rate it. The **Watchlist** is a wall of posters, a row per
+  status; drag one to the other row to mark it watched. A poster is any image
+  you add (kept in the vault, never fetched from the internet).
 - **Trips:** a trip note counts down to it ("12 days to go", "Day 3 of 7") and
   shows how much of the packing list is packed and how many bookings are done.
 - **Meetings:** a meeting note (and one from Wispr Flow) shows when and who,
@@ -157,6 +176,18 @@ Planner.
   tasks and `file.*`; inline `` `= this.field` ``; ticking a task in a result
   ticks it in its note. ` ```dataviewjs ` scripts run too — in a sandbox with
   no files and no network.
+- **Bases**, like Obsidian's: a `.base` file in the sidebar opens as its views
+  — a table, cards (with an image property) or a list — with filters
+  (`file.hasTag`, `file.inFolder`, `and` / `or` / `not`, comparisons),
+  formulas, sorting, grouping and summaries (Average, Sum…). Change a note's
+  property right in the table; **+ New** makes a note that fits the view.
+  `![[Books.base#View]]` or a ` ```base ` block shows one in a note.
+- **Tasks queries**, like Obsidian's Tasks plugin: a ` ```tasks ` block lists
+  tasks from across the vault — `not done`, `due before next monday`,
+  `priority is high`, `tags include #work`, `path includes Projects`, combined
+  with AND / OR / NOT — with `sort by`, `group by` (late ones together) and
+  `limit`. Tasks are read in its emoji format (📅 ⏳ 🛫 ✅ 🔁 ⏫); ticking one
+  ticks it in its note with the ✅ date.
 - **Mermaid diagrams** (` ```mermaid `) are drawn in the app's colours, and
   **HTML** in notes works for formatting (`<kbd>`, `<details>`, `<br>`,
   `<mark>`, tables…); scripts, frames and styles never run.
@@ -231,7 +262,8 @@ Planner.
   `-word`, `a OR b`, `file:`, `path:`, `#tag`, `line:(…)`, `section:(…)`,
   `task:` / `task-todo:` / `task-done:`, `[property:value]` and `/regex/`, and
   marks the hits. **⌘O** jumps to any note, **⌘P** runs any command, **⌘/**
-  lists every shortcut.
+  lists every shortcut. **Settings → Shortcuts** changes the keys of any
+  command, or gives one to a command that has none.
 - **Code blocks** are coloured by their language (```js, ```python, ```bash and
   about 40 more), on screen and in PDF exports.
 - **Pasting from the web**, Google Docs or Mail gives Markdown: headings, bold,

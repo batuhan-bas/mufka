@@ -1475,8 +1475,38 @@ app.whenReady().then(() => setTimeout(async () => {
       // Google needs the build's client (.env.local): connectable, or "not set up" without it.
       assert(await waitFor('/Not connected|Not set up/.test(document.querySelector("[data-conn=google] .conn-side")?.textContent || "")', 2000), 'no Google calendar state');
       assert(!fs.existsSync(path.join(tmp, 'calendars.bin')), 'a calendar sign-in was stored');
-      assert(await js('document.activeElement?.textContent === "Connect"'), 'Connect not focused');
+      assert(await waitFor('document.activeElement?.dataset.page === "general"', 2000), 'General not focused');
+      if (process.env.MUFKA_E2E_SHOTS) {
+        for (const pg of ['general', 'appearance', 'calendars', 'voice']) {
+          await clickSel(`.settings-nav-item[data-page="${pg}"]`); await sleep(300);
+          fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `settings-${pg}-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+        }
+      }
       assert(!fs.existsSync(path.join(tmp, 'wispr.bin')), 'a sign-in was stored');
+      // Shortcuts: give "Open graph view" ⌘J; take ⌘E for "Insert template"
+      // (the source toggle is left with none); ⌘J then opens the graph.
+      await clickSel('.settings-nav-item[data-page="shortcuts"]');
+      const sc = (label) => `[...document.querySelectorAll('.shortcut-row')].find(r => r.querySelector('.shortcut-name')?.textContent === ${JSON.stringify(label)})`;
+      assert(await waitFor(`!!(${sc('Open graph view')})`, 2000), 'no Shortcuts page');
+      await clickEval(`${sc('Open graph view')}.querySelector('.kbd')`, 'graph keys');
+      assert(await waitFor(`${sc('Open graph view')}.querySelector('.kbd')?.textContent === 'Press keys…'`, 2000), 'not recording');
+      await press('J', ['meta']);
+      assert(await waitFor(`/J$/.test(${sc('Open graph view')}.querySelector('.kbd.custom')?.textContent || '')`, 2000), `⌘J not set: ${await js(`${sc('Open graph view')}?.textContent`)}`);
+      await clickEval(`${sc('Insert template')}.querySelector('.kbd')`, 'template keys');
+      await press('E', ['meta']);
+      assert(await waitFor(`/is used by “Toggle source \\/ preview”/.test(${sc('Insert template')}.querySelector('.shortcut-warn')?.textContent || '')`, 2000), `no conflict warning: ${await js(`${sc('Insert template')}?.textContent`)}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `settings-shortcuts-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await enter();
+      assert(await waitFor(`/E$/.test(${sc('Insert template')}.querySelector('.kbd.custom')?.textContent || '') && [...document.querySelectorAll('.shortcut-row')].some(r => r.querySelector('.shortcut-name')?.textContent === 'Toggle source / preview' && r.querySelector('.kbd')?.textContent === '+')`, 2000), 'the keys were not taken');
+      await press('Escape');
+      assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
+      await press('J', ['meta']);
+      assert(await waitFor('!!document.querySelector(".graph-view")', 3000), '⌘J did not open the graph');
+      // Back to the app's own keys.
+      await press(',', ['meta']);
+      await clickSel('.settings-nav-item[data-page="shortcuts"]');
+      for (const label of ['Open graph view', 'Insert template', 'Toggle source / preview']) await clickEval(`${sc(label)}.querySelector('.shortcut-icon:not([hidden])[title^="Back"]')`, `reset ${label}`);
+      assert(await waitFor(`localStorage.getItem('mufka-hotkeys') === '{}'`, 2000), `not reset: ${await js(`localStorage.getItem('mufka-hotkeys')`)}`);
       await press('Escape');
       assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
       // The gear next to the notes folder opens it too.
@@ -1984,9 +2014,271 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await js('document.querySelectorAll(".meeting-task-btn").length === 1'), 'the open action item has no Add to board');
     });
 
+    // 64e2. Movies: a movie stands in the Watchlist with its poster image;
+    //       marked watched from its note (the day written); "+ New movie"
+    //       makes a note with its director and year.
+    await step('64e2', 'movies in the watchlist with posters, watched from the note, a new movie', async () => {
+      const dir = path.join(tvault, 'Cinema');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'arrival.png'), makePng(20, 30));
+      fs.writeFileSync(path.join(dir, 'Arrival.md'), '---\ntype: movie\ndirector: Denis Villeneuve\nyear: 2016\nstatus: To watch\nimage: "[[arrival.png]]"\n---\n## In one sentence\n');
+      fs.writeFileSync(path.join(dir, 'Parasite.md'), '---\ntype: movie\nyear: 2019\nstatus: Watched\nwatched: 2026-10-02\nrating: 5\n---\n');
+      fs.writeFileSync(path.join(dir, 'Watchlist.md'), '---\ntype: watchlist\n---\n```movies\nfolder: Cinema\n```\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Watchlist'); await enter();
+      const arrival = `[...document.querySelectorAll('.movie-row[data-stage="To watch"] .movie-item')].find(b => b.textContent.includes('Arrival'))`;
+      assert(await waitFor(`!!(${arrival}) && !!${arrival}.querySelector('img[src]')`, 4000), `Arrival not on To watch with its poster: ${await js('[...document.querySelectorAll(".movie-row")].map(s => s.dataset.stage + ":" + s.textContent).join(" | ")')}`);
+      assert(await js(`/Parasite/.test(document.querySelector('.movie-row[data-stage="Watched"]')?.textContent || '') && !!document.querySelector('.movie-row[data-stage="Watched"] .movie-poster:not(.has-image) .movie-poster-title')`), 'Parasite not on Watched with a plain poster');
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `watchlist-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await clickEval(arrival, 'Arrival in the watchlist');
+      assert(await waitFor('!!document.querySelector(".movie-head img") && document.querySelector(".note-title")?.textContent === "Arrival" && /Denis Villeneuve/.test(document.querySelector(".movie-head")?.textContent || "")', 3000), 'the movie note has no poster head');
+      await clickEval(`[...document.querySelectorAll('.movie-head .job-step')].find(s => s.textContent === 'Watched')`, 'Watched');
+      assert(await waitFor2(() => { const t = fs.readFileSync(path.join(dir, 'Arrival.md'), 'utf8'); return /status: Watched/.test(t) && new RegExp(`watched: ${todayK}`).test(t); }, 3000), `not marked watched:\n${fs.readFileSync(path.join(dir, 'Arrival.md'), 'utf8')}`);
+      if (process.env.MUFKA_E2E_SHOTS) { await sleep(300); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `movie-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG()); }
+      await press('O', ['meta']); await typeText('Watchlist'); await enter();
+      assert(await waitFor('!!document.querySelector(".watchlist .job-new")', 3000), 'no + New movie');
+      await clickSel('.watchlist .job-new');
+      assert(await waitFor('document.activeElement?.classList.contains("movie-title-input")', 2000), 'the New movie dialog is not open');
+      await typeText('Tenet');
+      await clickSel('.movie-director-input'); await typeText('Christopher Nolan');
+      await clickSel('.movie-year-input'); await typeText('2020');
+      await enter();
+      const tenet = path.join(dir, 'Tenet.md');
+      assert(await waitFor2(() => fs.existsSync(tenet) && /type: movie/.test(fs.readFileSync(tenet, 'utf8')) && /director: Christopher Nolan/.test(fs.readFileSync(tenet, 'utf8')) && /year: "?2020"?/.test(fs.readFileSync(tenet, 'utf8')), 3000), `Tenet not made: ${fs.existsSync(tenet) ? fs.readFileSync(tenet, 'utf8') : 'missing'}`);
+    });
+
+    // 64e3. Obsidian Bases: a .base file in the tree opens as its views (a
+    //      table, cards); a cell changes the note; ![[X.base#View]] and a
+    //      ```base block draw it in a note.
+    await step('64e3', 'bases: a .base file as a table and cards, a cell edit, embeds', async () => {
+      const dir = path.join(tvault, 'Bookbase');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'hobbit.png'), makePng(30, 40));
+      fs.writeFileSync(path.join(dir, 'Sapiens.md'), '---\ntags: [book]\nauthor: Yuval Noah Harari\nstatus: Reading\nrating: 4\npages: 443\n---\n');
+      fs.writeFileSync(path.join(dir, 'Hobbit.md'), '---\ntags: [book]\nauthor: J. R. R. Tolkien\nstatus: Finished\nrating: 5\npages: 310\ncover: "[[hobbit.png]]"\n---\n');
+      fs.writeFileSync(path.join(dir, 'Dune.md'), '---\ntags: [book]\nauthor: Frank Herbert\nstatus: To read\npages: 412\n---\n');
+      fs.writeFileSync(path.join(dir, 'Books.base'), [
+        'filters:', '  and:', '    - file.hasTag("book")', '    - file.inFolder("Bookbase")',
+        'formulas:', '  per_star: if(rating, (pages / rating).round(1))',
+        'views:', '  - type: table', '    name: All books', '    order: [file.name, author, status, rating, formula.per_star]',
+        '    sort:', '      - property: rating', '        direction: DESC', '    summaries:', '      rating: Average',
+        '  - type: cards', '    name: Covers', '    image: note.cover', '    order: [file.name, author]', '    groupBy:', '      property: status', '',
+      ].join('\n'));
+      fs.writeFileSync(path.join(dir, 'Reading list.md'), '# Reading list\n\n![[Books.base#Covers]]\n\n```base\nfilters: status == "Reading"\nviews:\n  - type: list\n    order: [file.name, author]\n```\n');
+      await sleep(900);
+      await clickSel('#mode-notes'); await sleep(200);
+      const row = (n) => `[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === ${JSON.stringify(n)})`;
+      if (!(await js(`!!(${row('Books')})`))) await clickUntil('document.querySelector(\'.tree-row[data-rel="Bookbase"]\')', `!!(${row('Books')})`, 'Bookbase folder');
+      assert(await waitFor(`${row('Books')}?.dataset.type === 'base'`, 3000), `Books.base not in the tree (${consoleErr}): ${await js(`[...document.querySelectorAll('.tree-row')].map(r => r.textContent).filter(t => /Bookbase|Books|Sapiens/.test(t)).join('|')`)}`);
+      await clickEval(row('Books'), 'Books.base');
+      const cells = '[...document.querySelectorAll(".base-pane .base-table tbody tr.base-row")].map(r => [...r.cells].map(c => c.textContent).join(";")).join(" | ")';
+      assert(await waitFor(`${cells} === "Hobbit;J. R. R. Tolkien;Finished;5;62 | Sapiens;Yuval Noah Harari;Reading;4;110.8 | Dune;Frank Herbert;To read;;"`, 4000), `table: ${await js(cells)}`);
+      assert(await js('/Average 4.5/.test(document.querySelector(".base-pane .base-table tfoot")?.textContent || "") && /3 results/.test(document.querySelector(".base-count")?.textContent || "")'), `summary/count: ${await js('document.querySelector(".base-pane tfoot")?.textContent')} ${await js('document.querySelector(".base-count")?.textContent')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `base-table-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      // Dune gets a rating from the table.
+      await clickEval('[...document.querySelectorAll(".base-pane tr.base-row")].find(r => r.dataset.rel === "Bookbase/Dune.md").querySelector("td[data-key=\\"note.rating\\"]")', 'Dune rating cell');
+      assert(await waitFor('document.activeElement?.classList.contains("base-cell-input")', 2000), 'the cell is not being edited');
+      await typeText('3'); await enter();
+      assert(await waitFor2(() => /rating: 3/.test(fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8')), 3000), `rating not written:\n${fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8')}`);
+      assert(await waitFor('/Dune;Frank Herbert;To read;3;137.3/.test(' + cells + ')', 3000), `after the edit: ${await js(cells)}`);
+      await clickEval('[...document.querySelectorAll(".base-pane .base-tab")].find(t => t.textContent === "Covers")', 'Covers view');
+      assert(await waitFor('[...document.querySelectorAll(".base-pane .base-group-head .base-group-name")].map(x => x.textContent).join(",") === "Finished,Reading,To read" && !!document.querySelector(".base-pane .base-card[data-rel=\\"Bookbase/Hobbit.md\\"] .base-card-image img[src]")', 3000), `cards: ${await js('document.querySelector(".base-pane .base-view")?.textContent')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `base-cards-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await press('O', ['meta']); await typeText('Reading list'); await enter();
+      assert(await waitFor('document.querySelectorAll(".note-pane .base-view.embed .base-card").length === 3 && /Sapiens · Yuval Noah Harari/.test(document.querySelector(".note-pane .base-list")?.textContent || "")', 4000), `embeds: ${await js('[...document.querySelectorAll(".note-pane .base-view")].map(v => v.textContent).join(" || ")')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `base-embed-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await clickEval('document.querySelector(".note-pane .base-view.embed .base-card[data-rel=\\"Bookbase/Sapiens.md\\"]")', 'Sapiens card');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Sapiens"', 3000), 'the card did not open its note');
+    });
+
+    // 64e4. Tasks queries: a ```tasks block lists open tasks from across the
+    //       vault by due date (late ones together); ticking one ticks it in
+    //       its note with the ✅ date; its note opens from the row.
+    await step('64e4', 'tasks queries: grouped by due, tick in place, open the note', async () => {
+      const dir = path.join(tvault, 'TQ');
+      fs.mkdirSync(dir, { recursive: true });
+      const d = (n) => { const x = new Date(); x.setDate(x.getDate() + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+      fs.writeFileSync(path.join(dir, 'Work.md'), `# Clients\n- [ ] Send the invoice ⏫ 📅 ${d(-3)}\n- [ ] Write the notes 🔼 📅 ${d(0)}\n- [x] Old one ✅ ${d(-9)}\n`);
+      fs.writeFileSync(path.join(dir, 'Home.md'), `- [ ] Call the bank 🔽 📅 ${d(3)}\n- [ ] Someday\n`);
+      fs.writeFileSync(path.join(dir, 'This week.md'), '# This week\n\n```tasks\nnot done\nhas due date\npath includes TQ/\ngroup by due\n```\n\n```tasks\ngroup by wibble\n```\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('This week'); await enter();
+      const groups = '[...document.querySelectorAll(".note-pane .tq .tq-group")].map(g => g.firstChild.textContent + ":" + g.querySelector(".tq-group-count").textContent).join("|")';
+      assert(await waitFor(`/^Overdue:1\\|Today · .*:1\\|.*:1$/.test(${groups})`, 4000), `groups: ${await js(groups)}`);
+      assert(await js('/3 tasks/.test(document.querySelector(".note-pane .tq-head")?.textContent || "") && /could not read "group by wibble"/.test(document.querySelector(".note-pane .tq-error")?.textContent || "")'), `head / error: ${await js('[...document.querySelectorAll(".note-pane .tq")].map(x => x.textContent).join(" || ")')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `tasks-query-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      const row = (txt) => `[...document.querySelectorAll(".note-pane .tq-task")].find(li => li.textContent.includes(${JSON.stringify(txt)}))`;
+      await clickEval(`${row('Send the invoice')}.querySelector(".tq-check")`, 'tick the invoice');
+      assert(await waitFor2(() => fs.readFileSync(path.join(dir, 'Work.md'), 'utf8').includes(`- [x] Send the invoice ⏫ 📅 ${d(-3)} ✅ ${d(0)}`), 3000), `not ticked:\n${fs.readFileSync(path.join(dir, 'Work.md'), 'utf8')}`);
+      assert(await waitFor(`!(${row('Send the invoice')}) && /2 tasks/.test(document.querySelector(".note-pane .tq-head")?.textContent || "")`, 3000), `still listed: ${await js('document.querySelector(".note-pane .tq")?.textContent')}`);
+      await clickEval(`${row('Call the bank')}.querySelector(".tq-src")`, 'Home link');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Home"', 3000), 'the task\'s note did not open');
+    });
+
     // 64f. Right-click menus: a note's path is copied, it is duplicated and
     //      moved; a drawing in the sidebar is renamed (keeping .excalidraw)
     //      and deleted after asking.
+    // 64e5. Heading folds: the arrow folds a section (nested headings too),
+    //       the fold is still there when the note opens again, a link to a
+    //       heading inside it unfolds it, ⌥⌘] unfolds everything.
+    await step('64e5', 'fold a heading, kept on reopen, unfolded by a link and by unfold all', async () => {
+      const dir = path.join(tvault, 'Folds');
+      fs.mkdirSync(dir, { recursive: true });
+      const text = '# Lisbon\n\nFive days.\n\n## Flights\n\n- Out\n- Back\n\n## The flat\n\nAddress.\n\n### Keys\n\nAt the cafe.\n\n## Budget\n\nAbout 900.\n';
+      fs.writeFileSync(path.join(dir, 'Lisbon.md'), text);
+      fs.writeFileSync(path.join(dir, 'Pointer.md'), 'See [[Lisbon#Keys]].\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Lisbon'); await enter();
+      const head = (t) => `[...document.querySelectorAll('.blocks .block-heading')].find(b => b.querySelector('h1,h2,h3')?.textContent.includes(${JSON.stringify(t)}))`;
+      assert(await waitFor(`!!(${head('The flat')})?.querySelector('.fold-toggle')`, 4000), 'no fold arrow on The flat');
+      await clickEval(`${head('The flat')}.querySelector('.fold-toggle')`, 'fold The flat');
+      const shown = (t) => `[...document.querySelectorAll('.blocks > .block')].some(b => b.textContent.includes(${JSON.stringify(t)}))`;
+      assert(await waitFor(`!${shown('Address.')} && !${shown('At the cafe.')} && ${shown('About 900.')} && /3 blocks/.test(${head('The flat')}.textContent)`, 3000), `fold did not hide the section: ${await js('[...document.querySelectorAll(".blocks > .block")].map(b => b.textContent).join(" | ")')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `fold-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG());
+      assert(fs.readFileSync(path.join(dir, 'Lisbon.md'), 'utf8') === text, 'folding changed the note');
+      await press('O', ['meta']); await typeText('Pointer'); await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Pointer"', 3000), 'Pointer did not open');
+      await press('O', ['meta']); await typeText('Lisbon'); await enter();
+      assert(await waitFor(`!!(${head('Flights')}) && !${shown('Address.')}`, 3000), 'the fold was not kept');
+      await press('O', ['meta']); await typeText('Pointer'); await enter();
+      await clickEval(`[...document.querySelectorAll('a[data-wiki]')].find(a => a.getAttribute('data-wiki') === 'Lisbon')`, 'link to Lisbon#Keys');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Lisbon" && ${shown('At the cafe.')}`, 3000), 'the link did not unfold Keys');
+      await clickEval(`${head('Lisbon')}.querySelector('.fold-toggle')`, 'fold Lisbon');
+      assert(await waitFor(`!${shown('Five days.')}`, 3000), 'the top heading did not fold');
+      await press(']', ['meta', 'alt']);
+      assert(await waitFor(`${shown('Five days.')} && ${shown('At the cafe.')}`, 3000), '⌥⌘] did not unfold all');
+    });
+
+    // 64e6. Block references: typing [[Note#^ offers the note's blocks and
+    //       choosing one gives it an id there; the id is hidden in the note;
+    //       the link scrolls to the block, the embed shows only it; right-click
+    //       copies a link to a block.
+    await step('64e6', 'block references: suggest and add an id, follow, embed, copy link', async () => {
+      const dir = path.join(tvault, 'Refs');
+      fs.mkdirSync(dir, { recursive: true });
+      const trip = path.join(dir, 'Lisbon trip.md');
+      fs.writeFileSync(trip, '# Lisbon trip\n\n## The flat\n\nRua das Flores 28, keys with Ana. ^flat\n\n## Budget\n\nAbout 900 euros.\n\n- Out: 12 May\n- Back: 17 May\n');
+      fs.writeFileSync(path.join(dir, 'Weekend.md'), 'Sleep: ![[Lisbon trip#^flat]]\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Weekend'); await enter();
+      assert(await waitFor('/Rua das Flores 28, keys with Ana\\.$/.test(document.querySelector(".embed-body")?.textContent.trim() || "") && !/Budget/.test(document.querySelector(".embed-body")?.textContent || "")', 3000), `embed: ${await js('document.querySelector(".embed-body")?.textContent')}`);
+      await clickEval(`document.querySelector('.block-tail')`, 'end of the note');
+      assert(await waitFor('document.activeElement?.id === "block-editor"', 2000), 'no new block');
+      await typeText('Money: [[Lisbon trip#^900');
+      assert(await waitFor('document.querySelector(".suggest-item.selected .suggest-label")?.textContent === "About 900 euros."', 2000), `block not offered: ${await js('document.querySelector("#suggest-list")?.textContent')}`);
+      await enter();
+      const val = await blockVal();
+      const id = (/\[\[Lisbon trip#\^([a-z0-9]{6})\]\]$/.exec(val) || [])[1];
+      assert(id, `link not inserted: ${val}`);
+      assert(await waitFor2(() => fs.readFileSync(trip, 'utf8').includes(`About 900 euros. ^${id}\n`), 3000), `id not added:\n${fs.readFileSync(trip, 'utf8')}`);
+      await press('Escape'); await sleep(500);
+      await clickEval(`[...document.querySelectorAll('.block a[data-wiki]')].find(a => a.getAttribute('data-heading') === '^${id}')`, 'link to the block');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Lisbon trip" && document.querySelector('[data-block-id="${id}"]')?.classList.contains('block-flash')`, 3000), `the link did not light up the block: title=${await js('document.querySelector(".note-title")?.textContent')} ids=${await js('[...document.querySelectorAll("[data-block-id]")].map(e => e.dataset.blockId + ":" + e.className).join(",")')} file=${fs.readFileSync(trip, 'utf8')}`);
+      assert(await js('![...document.querySelectorAll(".blocks .md")].some(b => /\\^(flat|[a-z0-9]{6})/.test(b.textContent))'), 'a block id shows in the note');
+      if (process.env.MUFKA_E2E_SHOTS) { await sleep(150); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `blockref-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG()); }
+      await clipboard.writeText('');
+      await js(`(() => { const r = [...document.querySelectorAll('.blocks li')].find(l => l.textContent === 'Back: 17 May'); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 20, clientY: b.y + b.height / 2 })); return true; })()`);
+      await clickEval(`[...document.querySelectorAll('.menu-item')].find(m => m.textContent === 'Copy link to block')`, 'Copy link to block');
+      let clip = ''; for (let i = 0; i < 30 && !/^\[\[Lisbon trip#\^[a-z0-9]{6}\]\]$/.test(clip); i++) { clip = await clipboard.readText(); await sleep(100); }
+      assert(/^\[\[Lisbon trip#\^[a-z0-9]{6}\]\]$/.test(clip), `clipboard: ${clip}`);
+      const back = /\^([a-z0-9]{6})\]\]$/.exec(clip)[1];
+      assert(await waitFor2(() => fs.readFileSync(trip, 'utf8').includes(`- Back: 17 May ^${back}`), 3000), `item id not added:\n${fs.readFileSync(trip, 'utf8')}`);
+    });
+
+    // 64e7. Canvas: a .canvas file in the tree opens as a board with its
+    //       cards, note, link, group and labelled arrow; a dragged card, a new
+    //       card typed on the board, a deleted (and undone) card and a new
+    //       arrow are saved to the file in Obsidian's format.
+    await step('64e7', 'canvas: open, drag, new card, delete and undo, join with an arrow', async () => {
+      const dir = path.join(tvault, 'Boards');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'Spec.md'), '# Spec\n\nThe canvas spec note.\n');
+      const file = path.join(dir, 'Plan.canvas');
+      fs.writeFileSync(file, JSON.stringify({ nodes: [
+        { id: 'g1', type: 'group', label: 'Shipped', x: 0, y: 0, width: 640, height: 260 },
+        { id: 't1', type: 'text', text: '# Bases\n\nTables and cards.', x: 20, y: 20, width: 260, height: 140, color: '4' },
+        { id: 'f1', type: 'file', file: 'Boards/Spec.md', x: 340, y: 20, width: 260, height: 180 },
+        { id: 'l1', type: 'link', url: 'https://jsoncanvas.org', x: 760, y: 40, width: 280, height: 80 },
+      ], edges: [{ id: 'e1', fromNode: 't1', fromSide: 'right', toNode: 'f1', toSide: 'left', label: 'then' }] }, null, '\t'));
+      const data = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+      await sleep(900);
+      await clickUntil(`document.querySelector('.tree-row[data-rel="Boards"]')`, `!!document.querySelector('.canvas-row[data-rel="Boards/Plan.canvas"]')`, 'Boards folder');
+      await clickEval(`document.querySelector('.canvas-row[data-rel="Boards/Plan.canvas"]')`, 'Plan canvas');
+      assert(await waitFor(`document.querySelectorAll('.cv-node').length === 4 && document.querySelector('.cv-node[data-id="t1"] h1')?.textContent === 'Bases' && /canvas spec note/.test(document.querySelector('.cv-node[data-id="f1"]')?.textContent || '') && document.querySelector('.cv-edge-label')?.textContent === 'then' && document.querySelector('.cv-group-label')?.textContent === 'Shipped'`, 4000), `board: ${await js(`[...document.querySelectorAll('.cv-node')].map(n => n.dataset.id + ':' + n.textContent.slice(0, 30)).join(' | ')`)}`);
+      assert(await js(`document.getElementById('pane-title')?.textContent.includes('Plan')`), 'no pane title');
+      await sleep(400); // fitted to the screen
+      // Drag the text card right by 60 screen pixels.
+      const r = await rectEval(`document.querySelector('.cv-node[data-id="t1"]')`);
+      wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y }); await sleep(50);
+      wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 }); await sleep(50);
+      for (let i = 1; i <= 6; i++) { wc.sendInputEvent({ type: 'mouseMove', x: r.x + i * 10, y: r.y, button: 'left' }); await sleep(30); }
+      wc.sendInputEvent({ type: 'mouseUp', x: r.x + 60, y: r.y, button: 'left', clickCount: 1 });
+      assert(await waitFor2(() => data().nodes.find((n) => n.id === 't1').x > 20, 3000), `not moved: ${JSON.stringify(data().nodes.find((n) => n.id === 't1'))}`);
+      assert(/^\{\n\t"nodes"/.test(fs.readFileSync(file, 'utf8')), 'not written the way Obsidian writes it');
+      // Join the text card to the link with an arrow from its bottom port.
+      const port = await rectEval(`document.querySelector('.cv-node[data-id="t1"] .cv-port-bottom')`);
+      const link = await rectEval(`document.querySelector('.cv-node[data-id="l1"]')`);
+      assert(port && link, 'no port or link card');
+      wc.sendInputEvent({ type: 'mouseMove', x: port.x, y: port.y }); await sleep(50);
+      wc.sendInputEvent({ type: 'mouseDown', x: port.x, y: port.y, button: 'left', clickCount: 1 }); await sleep(50);
+      for (let i = 1; i <= 8; i++) { wc.sendInputEvent({ type: 'mouseMove', x: Math.round(port.x + (link.x - port.x) * i / 8), y: Math.round(port.y + (link.y - port.y) * i / 8), button: 'left' }); await sleep(30); }
+      wc.sendInputEvent({ type: 'mouseUp', x: link.x, y: link.y, button: 'left', clickCount: 1 });
+      assert(await waitFor2(() => data().edges.some((e) => e.fromNode === 't1' && e.fromSide === 'bottom' && e.toNode === 'l1'), 3000), `no new arrow: ${JSON.stringify(data().edges)}`);
+      // A new card: double-click an empty spot, type, click away.
+      const b = await js(`(() => { const r = document.querySelector('.cv-board').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.bottom - 120) }; })()`);
+      wc.sendInputEvent({ type: 'mouseDown', x: b.x, y: b.y, button: 'left', clickCount: 1 }); wc.sendInputEvent({ type: 'mouseUp', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+      wc.sendInputEvent({ type: 'mouseDown', x: b.x, y: b.y, button: 'left', clickCount: 2 }); wc.sendInputEvent({ type: 'mouseUp', x: b.x, y: b.y, button: 'left', clickCount: 2 });
+      assert(await waitFor(`document.activeElement?.classList.contains('cv-edit')`, 2000), 'the new card is not being typed in');
+      await typeText('Next: the web clipper');
+      await clickAt(b.x + 300, b.y - 40);
+      const cvDiag = async () => JSON.stringify({ dom: await js(`[...document.querySelectorAll('.cv-node')].map((n) => n.dataset.id)`), focus: await js(`document.activeElement?.className || document.activeElement?.tagName`), toast: await js(`document.getElementById('toast')?.textContent`), file: data() });
+      if (!(await waitFor2(() => data().nodes.some((n) => n.type === 'text' && n.text === 'Next: the web clipper'), 3000))) assert(false, `the new card was not saved: ${await cvDiag()}`);
+      if (process.env.MUFKA_E2E_SHOTS) { await clickEval(`document.querySelector('.cv-node[data-id="t1"]')`, 'select'); await sleep(200); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `canvas-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG()); }
+      // Delete the link card (its arrow goes too), then undo.
+      await clickEval(`document.querySelector('.cv-node[data-id="l1"]')`, 'link card');
+      await press('Backspace');
+      assert(await waitFor2(() => !data().nodes.some((n) => n.id === 'l1') && !data().edges.some((e) => e.toNode === 'l1'), 3000), 'not deleted');
+      // On Windows the focus falls to the page when the card goes: undo must still work.
+      await js(`document.activeElement?.blur?.()`);
+      await press('Z', ['meta']);
+      if (!(await waitFor2(() => data().nodes.some((n) => n.id === 'l1') && data().edges.some((e) => e.toNode === 'l1'), 3000))) assert(false, `undo did not bring it back: ${await cvDiag()}`);
+      // Opening the note card's title opens the note.
+      await clickEval(`document.querySelector('.cv-node[data-id="f1"] .cv-file-title')`, 'Spec title');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Spec"', 3000), 'the note did not open');
+    });
+
+    // 64e8. Web clipper: "Clip web page…" from the command palette takes an
+    //       address; the article (not the menu, sidebar or footer) becomes a
+    //       note in Clippings with source, author, dates and the clippings tag.
+    await step('64e8', 'clip a web page into a note', async () => {
+      const http = require('http');
+      const page = '<!doctype html><html><head><title>Plain text wins | Blog</title><meta property="og:title" content="Plain text wins"><meta name="author" content="Jane Doe"><meta property="article:published_time" content="2026-11-10T09:00:00Z"><meta name="description" content="Why notes should outlive their apps."></head><body><nav><a href="/">Home</a></nav><aside class="sidebar"><p>Subscribe to the newsletter for weekly posts like this one.</p></aside><article><h1>Plain text wins</h1><p>Files you can read in any editor outlive every app that made them, and that is the point.</p><h2>Links</h2><p>See <a href="/more">more</a> about it.</p></article><footer><p>All rights reserved by the blog, forever and ever.</p></footer></body></html>';
+      const server = http.createServer((req, res) => { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(page); });
+      await new Promise((r) => server.listen(0, '127.0.0.1', r));
+      const url = `http://127.0.0.1:${server.address().port}/posts/plain-text`;
+      try {
+        await press('P', ['meta']); await typeText('Clip web'); 
+        assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Clip web page…"', 2000), 'no clip command');
+        await enter();
+        assert(await waitFor('document.activeElement?.classList.contains("clip-url")', 2000), 'no address field');
+        await typeText(url); await enter();
+        const file = path.join(tvault, 'Clippings', 'Plain text wins.md');
+        assert(await waitFor2(() => fs.existsSync(file), 5000), `no clipped note: ${await js('document.querySelector(".clip-status")?.textContent')}`);
+        const text = fs.readFileSync(file, 'utf8');
+        assert(text.startsWith(`---\ntitle: "Plain text wins"\nsource: "${url}"\nauthor:\n  - "[[Jane Doe]]"\npublished: 2026-11-10\ncreated: ${todayK}\ndescription: "Why notes should outlive their apps."\ntags:\n  - clippings\n---\n`), text);
+        assert(/^Files you can read in any editor/m.test(text) && /\[more\]\(http:\/\/127\.0\.0\.1:\d+\/more\)/.test(text) && !/Subscribe|rights reserved|Home/.test(text), text);
+        assert(await waitFor('document.querySelector(".note-title")?.textContent === "Plain text wins"', 3000), 'the clipped note did not open');
+        if (process.env.MUFKA_E2E_SHOTS) { await sleep(300); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `clip-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG()); }
+        // A page that cannot be reached says so and keeps the dialog.
+        await press('P', ['meta']); await typeText('Clip web'); await enter();
+        assert(await waitFor('document.activeElement?.classList.contains("clip-url")', 2000), 'no address field');
+        await typeText('http://127.0.0.1:1/nothing'); await enter();
+        assert(await waitFor('/Could not reach the page/.test(document.querySelector(".clip-status.error")?.textContent || "")', 6000), `no error: ${await js('document.querySelector(".clip-status")?.textContent')}`);
+        await press('Escape');
+        assert(await waitFor('!document.querySelector(".clip-dialog")', 2000), 'the dialog did not close');
+      } finally { server.close(); }
+    });
+
     await step('64f', 'right-click: copy path, duplicate, move; rename and delete a drawing', async () => {
       const dir = path.join(tvault, 'Menus');
       fs.mkdirSync(path.join(dir, 'Inner'), { recursive: true });
@@ -2550,6 +2842,7 @@ app.whenReady().then(() => setTimeout(async () => {
       const bg = 'getComputedStyle(document.body.closest("html")).getPropertyValue("--ground").trim()';
       await press(',', ['meta']);
       const startTheme = process.env.MUFKA_E2E_THEME || 'system';
+      await clickSel('.settings-nav-item[data-page="appearance"]');
       assert(await waitFor(`!!document.querySelector('.theme-seg button[data-theme="${startTheme}"][aria-pressed="true"]')`, 3000), `${startTheme} not chosen at start`);
       await clickSel('.theme-seg button[data-theme="light"]');
       assert(await waitFor(`${bg} === "#ffffff"`, 3000), `light: ${await js(bg)}`);
@@ -2714,7 +3007,11 @@ app.whenReady().then(() => setTimeout(async () => {
     //     this app's MCP server with ELECTRON_RUN_AS_NODE.
     await step(81, 'settings: AI clients (MCP) switches and copied config; updates and menu bar switches', async () => {
       await press(',', ['meta']);
-      assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row")', 3000), 'no AI clients section');
+      // Opens on General; the list on the left shows one page at a time.
+      assert(await waitFor('document.querySelector(".settings-nav-item.on")?.dataset.page === "general" && !document.querySelector(".settings-page[data-page=general]").hidden && document.querySelector(".settings-page[data-page=ai]").hidden', 3000), 'Settings does not open on General');
+      assert(await js('[...document.querySelectorAll(".settings-nav-item")].map(b => b.textContent).join("|")') === 'General|Appearance|Shortcuts|Calendars|Voice|AI clients (MCP)', 'the pages on the left');
+      await clickSel('.settings-nav-item[data-page="ai"]');
+      assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row") && !document.querySelector(".settings-page[data-page=ai]").hidden', 3000), 'no AI clients section');
       const box = (k) => `document.querySelector('.mcp-row input[data-mcp="${k}"]')`;
       assert(await waitFor(`${box('enabled')}.checked === false && ${box('allowWrite')}.disabled === true && ${box('allowTicks')}.disabled === true`, 2000), 'not off by default');
       const settingsFile = path.join(tmp, 'settings.json');
@@ -2734,6 +3031,8 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickSel('.mcp-row [data-mcp-copy="command"]');
       assert(await copied((t) => t.startsWith('claude mcp add --transport stdio --scope user --env ELECTRON_RUN_AS_NODE=1 mufka -- ')), `command not copied: ${await clipboard.readText()}`);
       // Updates: on by default; in a run that is not the installed app it says so.
+      await clickSel('.settings-nav-item[data-page="general"]');
+      assert(await js('!!document.querySelector(".settings-page[data-page=general] .vault-path")?.textContent'), 'no notes folder on General');
       const upd = 'document.querySelector(\'.upd-row input[data-update="auto"]\')';
       assert(await waitFor(`${upd}.checked === true && document.querySelector('.upd-status')?.textContent.includes('updates work in the installed app')`, 2000), `updates section: ${await js('document.querySelector(".upd-row")?.textContent')}`);
       await clickEval(upd, 'automatic updates off');
@@ -2741,12 +3040,14 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval(upd, 'automatic updates on');
       assert(await waitFor2(() => !('autoUpdate' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'autoUpdate on should clear the key');
       // Today's plan in the menu bar / tray: on by default, off is saved.
+      await clickSel('.settings-nav-item[data-page="appearance"]');
       const bar = 'document.querySelector(\'.menubar-row input[data-menubar="on"]\')';
       assert(await waitFor(`${bar}?.checked === true`, 2000), 'menu bar switch not on by default');
       await clickEval(bar, 'menu bar off');
       assert(await waitFor2(() => JSON.parse(fs.readFileSync(settingsFile, 'utf8')).menubar === false, 3000), 'menu bar off not saved');
       await clickEval(bar, 'menu bar on');
       assert(await waitFor2(() => !('menubar' in JSON.parse(fs.readFileSync(settingsFile, 'utf8'))), 3000), 'menu bar on should clear the key');
+      await clickSel('.settings-nav-item[data-page="ai"]');
       await clickEval(box('enabled'), 'disable MCP');
       assert(await waitFor2(() => saved().enabled === false, 3000), 'not turned off');
       await press('Escape');
