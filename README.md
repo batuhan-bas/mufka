@@ -93,6 +93,10 @@ Planner.
 - **Fold headings**: the arrow beside a heading hides its section; folds stay
   when the note opens again. **⌘.** folds the heading you are in, **⌥⌘[** /
   **⌥⌘]** fold or unfold them all.
+- **Canvas**: `.canvas` files (Obsidian's format) open as a board of cards,
+  notes, links and groups joined by arrows. Drag, resize, colour; double-click
+  the board for a new card; **New canvas** from the command palette or a
+  folder's menu.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Block links**: `[[Note#^` lists that note's paragraphs and list items;

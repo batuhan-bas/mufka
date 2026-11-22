@@ -2185,6 +2185,65 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor2(() => fs.readFileSync(trip, 'utf8').includes(`- Back: 17 May ^${back}`), 3000), `item id not added:\n${fs.readFileSync(trip, 'utf8')}`);
     });
 
+    // 64e7. Canvas: a .canvas file in the tree opens as a board with its
+    //       cards, note, link, group and labelled arrow; a dragged card, a new
+    //       card typed on the board, a deleted (and undone) card and a new
+    //       arrow are saved to the file in Obsidian's format.
+    await step('64e7', 'canvas: open, drag, new card, delete and undo, join with an arrow', async () => {
+      const dir = path.join(tvault, 'Boards');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'Spec.md'), '# Spec\n\nThe canvas spec note.\n');
+      const file = path.join(dir, 'Plan.canvas');
+      fs.writeFileSync(file, JSON.stringify({ nodes: [
+        { id: 'g1', type: 'group', label: 'Shipped', x: 0, y: 0, width: 640, height: 260 },
+        { id: 't1', type: 'text', text: '# Bases\n\nTables and cards.', x: 20, y: 20, width: 260, height: 140, color: '4' },
+        { id: 'f1', type: 'file', file: 'Boards/Spec.md', x: 340, y: 20, width: 260, height: 180 },
+        { id: 'l1', type: 'link', url: 'https://jsoncanvas.org', x: 760, y: 40, width: 280, height: 80 },
+      ], edges: [{ id: 'e1', fromNode: 't1', fromSide: 'right', toNode: 'f1', toSide: 'left', label: 'then' }] }, null, '\t'));
+      const data = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+      await sleep(900);
+      await clickUntil(`document.querySelector('.tree-row[data-rel="Boards"]')`, `!!document.querySelector('.canvas-row[data-rel="Boards/Plan.canvas"]')`, 'Boards folder');
+      await clickEval(`document.querySelector('.canvas-row[data-rel="Boards/Plan.canvas"]')`, 'Plan canvas');
+      assert(await waitFor(`document.querySelectorAll('.cv-node').length === 4 && document.querySelector('.cv-node[data-id="t1"] h1')?.textContent === 'Bases' && /canvas spec note/.test(document.querySelector('.cv-node[data-id="f1"]')?.textContent || '') && document.querySelector('.cv-edge-label')?.textContent === 'then' && document.querySelector('.cv-group-label')?.textContent === 'Shipped'`, 4000), `board: ${await js(`[...document.querySelectorAll('.cv-node')].map(n => n.dataset.id + ':' + n.textContent.slice(0, 30)).join(' | ')`)}`);
+      assert(await js(`document.getElementById('pane-title')?.textContent.includes('Plan')`), 'no pane title');
+      await sleep(400); // fitted to the screen
+      // Drag the text card right by 60 screen pixels.
+      const r = await rectEval(`document.querySelector('.cv-node[data-id="t1"]')`);
+      wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y }); await sleep(50);
+      wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 }); await sleep(50);
+      for (let i = 1; i <= 6; i++) { wc.sendInputEvent({ type: 'mouseMove', x: r.x + i * 10, y: r.y, button: 'left' }); await sleep(30); }
+      wc.sendInputEvent({ type: 'mouseUp', x: r.x + 60, y: r.y, button: 'left', clickCount: 1 });
+      assert(await waitFor2(() => data().nodes.find((n) => n.id === 't1').x > 20, 3000), `not moved: ${JSON.stringify(data().nodes.find((n) => n.id === 't1'))}`);
+      assert(/^\{\n\t"nodes"/.test(fs.readFileSync(file, 'utf8')), 'not written the way Obsidian writes it');
+      // Join the text card to the link with an arrow from its bottom port.
+      const port = await rectEval(`document.querySelector('.cv-node[data-id="t1"] .cv-port-bottom')`);
+      const link = await rectEval(`document.querySelector('.cv-node[data-id="l1"]')`);
+      assert(port && link, 'no port or link card');
+      wc.sendInputEvent({ type: 'mouseMove', x: port.x, y: port.y }); await sleep(50);
+      wc.sendInputEvent({ type: 'mouseDown', x: port.x, y: port.y, button: 'left', clickCount: 1 }); await sleep(50);
+      for (let i = 1; i <= 8; i++) { wc.sendInputEvent({ type: 'mouseMove', x: Math.round(port.x + (link.x - port.x) * i / 8), y: Math.round(port.y + (link.y - port.y) * i / 8), button: 'left' }); await sleep(30); }
+      wc.sendInputEvent({ type: 'mouseUp', x: link.x, y: link.y, button: 'left', clickCount: 1 });
+      assert(await waitFor2(() => data().edges.some((e) => e.fromNode === 't1' && e.fromSide === 'bottom' && e.toNode === 'l1'), 3000), `no new arrow: ${JSON.stringify(data().edges)}`);
+      // A new card: double-click an empty spot, type, click away.
+      const b = await js(`(() => { const r = document.querySelector('.cv-board').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.bottom - 120) }; })()`);
+      wc.sendInputEvent({ type: 'mouseDown', x: b.x, y: b.y, button: 'left', clickCount: 1 }); wc.sendInputEvent({ type: 'mouseUp', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+      wc.sendInputEvent({ type: 'mouseDown', x: b.x, y: b.y, button: 'left', clickCount: 2 }); wc.sendInputEvent({ type: 'mouseUp', x: b.x, y: b.y, button: 'left', clickCount: 2 });
+      assert(await waitFor(`document.activeElement?.classList.contains('cv-edit')`, 2000), 'the new card is not being typed in');
+      await typeText('Next: the web clipper');
+      await clickAt(b.x + 300, b.y - 40);
+      assert(await waitFor2(() => data().nodes.some((n) => n.type === 'text' && n.text === 'Next: the web clipper'), 3000), 'the new card was not saved');
+      if (process.env.MUFKA_E2E_SHOTS) { await clickEval(`document.querySelector('.cv-node[data-id="t1"]')`, 'select'); await sleep(200); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `canvas-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG()); }
+      // Delete the link card (its arrow goes too), then undo.
+      await clickEval(`document.querySelector('.cv-node[data-id="l1"]')`, 'link card');
+      await press('Backspace');
+      assert(await waitFor2(() => !data().nodes.some((n) => n.id === 'l1') && !data().edges.some((e) => e.toNode === 'l1'), 3000), 'not deleted');
+      await press('Z', ['meta']);
+      assert(await waitFor2(() => data().nodes.some((n) => n.id === 'l1') && data().edges.some((e) => e.toNode === 'l1'), 3000), 'undo did not bring it back');
+      // Opening the note card's title opens the note.
+      await clickEval(`document.querySelector('.cv-node[data-id="f1"] .cv-file-title')`, 'Spec title');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Spec"', 3000), 'the note did not open');
+    });
+
     await step('64f', 'right-click: copy path, duplicate, move; rename and delete a drawing', async () => {
       const dir = path.join(tvault, 'Menus');
       fs.mkdirSync(path.join(dir, 'Inner'), { recursive: true });

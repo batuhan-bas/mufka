@@ -748,7 +748,7 @@ function siblingNames(folderAbs, dirs) {
 function walkVault() {
   ensureNotesDirs();
   const hidden = hiddenAttachmentsFolder(layout());
-  const folders = []; const notes = []; const bases = [];
+  const folders = []; const notes = []; const bases = []; const canvases = [];
   const walk = (absDir, rel) => {
     let entries;
     try { entries = fs.readdirSync(absDir, { withFileTypes: true }); } catch { return; }
@@ -765,11 +765,15 @@ function walkVault() {
         // Obsidian Bases: shown in the tree and opened as a view, not a note.
         let st; try { st = fs.statSync(childAbs); } catch { continue; }
         bases.push({ rel: childRel, mtime: st.mtimeMs });
+      } else if (e.isFile() && e.name.toLowerCase().endsWith('.canvas')) {
+        // Obsidian Canvas files: shown in the tree and opened as a board.
+        let st; try { st = fs.statSync(childAbs); } catch { continue; }
+        canvases.push({ rel: childRel, mtime: st.mtimeMs });
       }
     }
   };
   walk(notesRoot(), '');
-  return { folders, notes, bases };
+  return { folders, notes, bases, canvases };
 }
 
 function readNoteRel(rel) {
