@@ -68,6 +68,7 @@ import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
 import { buildTagIndex } from '../lib/tags.mjs';
 import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
+import { comboOf, RESERVED, idOf, keyOf, customCommand, freedDefault, takenBy, assign as assignKeys, reset as resetKeys } from '../lib/hotkeys.mjs';
 import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
 
 const plansApi = window.planner;
@@ -76,6 +77,9 @@ if (plansApi.isMac) document.documentElement.classList.add('mac');
 else document.documentElement.classList.add('win');
 // Shortcuts read the system's way: ⌘O on a Mac, Ctrl+O elsewhere (lib/keys.mjs).
 const K = (text) => keyLabel(text, plansApi.isMac);
+// Shortcuts changed in Settings → Shortcuts: { command: keys }, '' = none.
+let hotkeys = {};
+try { hotkeys = JSON.parse(localStorage.getItem('mufka-hotkeys') || '{}') || {}; } catch { /* none */ }
 // The Mac's Finder, Windows' Explorer.
 const FILES_APP = plansApi.isMac ? 'Finder' : 'File Explorer';
 // The static page (index.html) too: tooltips and the sidebar's key hints.
@@ -1781,7 +1785,7 @@ function showShortcuts() {
     id: 'shortcuts',
     placeholder: 'Keyboard shortcuts — type to filter',
     footer: 'esc close',
-    items: (q) => SHORTCUTS.flatMap(([group, rows]) => rows.map(([keys, what]) => ({ label: what, hint: keys, detail: group, run: () => {} })))
+    items: (q) => [...SHORTCUTS, ['Your shortcuts', commandList(true).filter((c) => c.keys && c.keys !== (c.hint || '')).map((c) => [c.keys, c.label])]].flatMap(([group, rows]) => rows.map(([keys, what]) => ({ label: what, hint: keys, detail: group, run: () => {} })))
       .filter((r) => !q.trim() || foldTR(`${r.label} ${r.hint} ${r.detail}`).includes(foldTR(q.trim()))),
   });
 }
@@ -2103,7 +2107,8 @@ function openRandomNote() {
 
 // Every command, with the shortcut shown as a hint. `when` hides commands that
 // need an open note.
-function commandList() {
+// all: also the ones that need what is not there now (Settings → Shortcuts).
+function commandList(all = false) {
   const noteOpen = () => state.contentView === 'note' && Boolean(state.openNote);
   const saveOpen = () => saveOpenNote();
   return [
@@ -2112,7 +2117,7 @@ function commandList() {
     { label: 'Create new note', hint: '⌘N', run: newNote },
     { label: 'Create new folder', run: newFolder },
     { label: 'Open the week planner', hint: '⌘1', run: () => openPlanner(new Date()) },
-    ...(voice.handy ? [{ label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() }] : []),
+    ...(voice.handy ? [{ id: 'dictate', label: voice.dictating ? 'Stop dictating' : 'Dictate with Handy', hint: '⇧⌘D', when: noteOpen, run: () => toggleDictation() }] : []),
     ...(voice.handy || voice.studio ? [{ label: 'New note from audio…', run: () => openVoiceNote() }] : []),
     { label: 'New plan', hint: '⇧⌘P', run: () => plannerApi.newPlan(new Date()) },
     { label: 'Open tasks', hint: '⌘3', run: () => openTasks() },
@@ -2165,7 +2170,7 @@ function commandList() {
     { label: 'Recover deleted notes', run: openDeletedRecovery },
     { label: 'Show unused attachments', run: showUnusedAttachments },
     { label: `Show notes folder in ${FILES_APP}`, run: () => notesApi.reveal() },
-  ].filter((c) => !c.when || c.when());
+  ].filter((c) => all || !c.when || c.when()).map((c) => ({ ...c, keys: keyOf(c, hotkeys) }));
 }
 function openCommandPalette() {
   openPalette({
@@ -2173,7 +2178,7 @@ function openCommandPalette() {
     placeholder: 'Type a command…',
     footer: '↑↓ navigate · ↵ run · esc close',
     items: (q) => fuzzyFilter(q, commandList(), (c) => c.label)
-      .map(({ item, indices }) => ({ label: item.label, hint: item.hint, indices, run: item.run })),
+      .map(({ item, indices }) => ({ label: item.label, hint: item.keys, indices, run: item.run })),
   });
 }
 
@@ -5482,9 +5487,89 @@ function vaultSection() {
   sec.append(row);
   return sec;
 }
+// --- Settings → Shortcuts (lib/hotkeys.mjs): the keys of every command ---
+function saveHotkeys(next) {
+  hotkeys = next;
+  try { localStorage.setItem('mufka-hotkeys', JSON.stringify(hotkeys)); } catch { /* ignore */ }
+}
+function shortcutsSection() {
+  const sec = elem('section', 'settings-section shortcuts');
+  sec.append(elem('h3', 'settings-heading', 'Shortcuts'));
+  sec.append(elem('p', 'conn-note shortcuts-lede', 'Click a shortcut to change it, then press the new keys (with ⌘). Esc cancels.'.replace(/⌘/g, K('⌘'))));
+  const filter = document.createElement('input');
+  filter.type = 'search'; filter.className = 'shortcuts-filter'; filter.placeholder = 'Filter: name or keys…';
+  filter.setAttribute('aria-label', 'Filter shortcuts');
+  const list = elem('div', 'shortcuts-list');
+  sec.append(filter, list);
+  let rec = null; // { id, combo, warn }
+  const stopRec = () => { rec = null; document.removeEventListener('keydown', onKey, true); draw(); };
+  const set = (next) => { saveHotkeys(next); stopRec(); };
+  function onKey(e) {
+    if (!rec || !sec.isConnected) { rec = null; document.removeEventListener('keydown', onKey, true); return; }
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { stopRec(); return; }
+    const cmds = commandList(true);
+    if (e.key === 'Enter' && rec.combo && !RESERVED[rec.combo]) { set(assignKeys(hotkeys, cmds, rec.id, rec.combo)); return; }
+    const combo = comboOf(e);
+    if (!combo || !combo.includes('⌘')) return; // still waiting for the keys
+    rec.combo = combo;
+    const other = takenBy(combo, cmds, hotkeys, rec.id);
+    if (RESERVED[combo]) rec.warn = `${K(combo)} is kept for ${RESERVED[combo]}. Press other keys.`;
+    else if (other) rec.warn = `${K(combo)} is used by “${other.label}”. Press other keys, or Enter to take it.`;
+    else { set(assignKeys(hotkeys, cmds, rec.id, combo)); return; }
+    draw();
+  }
+  const record = (id) => { if (!rec) document.addEventListener('keydown', onKey, true); rec = { id, combo: '', warn: '' }; draw(); };
+  function draw() {
+    const q = foldTR(filter.value.trim());
+    const cmds = commandList(true).filter((c) => !q || foldTR(`${c.label} ${c.keys} ${K(c.keys)}`).includes(q));
+    const groups = [['With a shortcut', cmds.filter((c) => c.keys)], ['No shortcut', cmds.filter((c) => !c.keys)]];
+    list.replaceChildren();
+    for (const [title, rows] of groups) {
+      if (!rows.length) continue;
+      list.append(elem('div', 'shortcuts-group', title));
+      const card = elem('div', 'shortcuts-card');
+      for (const c of rows) {
+        const id = idOf(c);
+        const on = rec && rec.id === id;
+        const changed = c.keys !== (c.hint || '');
+        const row = elem('div', `shortcut-row${on ? ' rec' : ''}`);
+        row.dataset.command = id;
+        const tx = elem('div', 'shortcut-text');
+        tx.append(elem('span', 'shortcut-name', c.label));
+        if (on && rec.warn) tx.append(elem('span', 'shortcut-warn', rec.warn));
+        const keys = elem('div', 'shortcut-keys');
+        const kb = elem('button', `kbd${on ? ' rec' : changed && c.keys ? ' custom' : ''}`, on ? (rec.combo ? K(rec.combo) : 'Press keys…') : c.keys ? K(c.keys) : '+');
+        kb.type = 'button';
+        kb.setAttribute('aria-label', on ? 'Press the new keys' : c.keys ? `Change ${c.label}: ${K(c.keys)}` : `Add a shortcut to ${c.label}`);
+        kb.addEventListener('click', () => (on ? stopRec() : record(id)));
+        if (!c.keys && !on) keys.append(elem('span', 'shortcut-none', 'No shortcut'));
+        keys.append(kb);
+        if (c.keys && !on) {
+          const x = elem('button', 'shortcut-icon', '✕'); x.type = 'button'; x.title = 'No shortcut';
+          x.setAttribute('aria-label', `Remove the shortcut of ${c.label}`);
+          x.addEventListener('click', () => set(assignKeys(hotkeys, commandList(true), id, '')));
+          keys.append(x);
+        }
+        const back = elem('button', 'shortcut-icon', '↺'); back.type = 'button';
+        back.hidden = !changed;
+        back.title = c.hint ? `Back to ${K(c.hint)}` : 'Back to no shortcut';
+        back.setAttribute('aria-label', `Reset ${c.label}`);
+        back.addEventListener('click', () => set(resetKeys(hotkeys, commandList(true), id)));
+        row.append(tx, keys, back);
+        card.append(row);
+      }
+      list.append(card);
+    }
+  }
+  filter.addEventListener('input', draw);
+  draw();
+  return sec;
+}
+
 // The pages of Settings, in the order of the list on the left.
 const SETTINGS_PAGES = [['general', 'General', 'settings'], ['appearance', 'Appearance', 'tiPalette'],
-  ['calendars', 'Calendars', 'calendar'], ['voice', 'Voice', 'mic'], ['ai', 'AI clients (MCP)', 'tiSparkles']];
+  ['shortcuts', 'Shortcuts', 'command'], ['calendars', 'Calendars', 'calendar'], ['voice', 'Voice', 'mic'], ['ai', 'AI clients (MCP)', 'tiSparkles']];
 function openSettings(page = 'general') {
   if (settingsLayer) settingsLayer._close();
   const layer = elem('div', 'palette-layer');
@@ -5571,7 +5656,7 @@ function openSettings(page = 'general') {
   const nav = elem('nav', 'settings-nav');
   nav.setAttribute('aria-label', 'Settings pages');
   const pages = elem('div', 'settings-pages');
-  const content = { general: [updatesSection(), vaultSection()], appearance: [appearanceSection()], calendars: [calSection], voice: [section], ai: [mcpSection()] };
+  const content = { general: [updatesSection(), vaultSection()], appearance: [appearanceSection()], shortcuts: [shortcutsSection()], calendars: [calSection], voice: [section], ai: [mcpSection()] };
   const show = (id) => {
     for (const b of nav.children) { const on = b.dataset.page === id; b.classList.toggle('on', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); }
     for (const pg of pages.children) pg.hidden = pg.dataset.page !== id;
@@ -6287,6 +6372,15 @@ document.addEventListener('keydown', (e) => {
   // In a drawing, Excalidraw's own shortcuts (undo, group, copy…) win; only
   // the app's way out (modes, switcher, palette, settings) stays.
   if (e.target && e.target.closest && e.target.closest('.draw-host') && !['1', '2', '3', '4', 'o', 'p', ',', 't', 'n', 'w'].includes(k) && !(e.shiftKey && /^Bracket/.test(e.code))) return;
+  // Shortcuts set in Settings → Shortcuts come first; an app shortcut whose
+  // command was given other keys does nothing.
+  const combo = comboOf(e);
+  if (combo && Object.keys(hotkeys).length) {
+    const cmds = commandList(true);
+    const mine = customCommand(combo, cmds, hotkeys);
+    if (mine) { e.preventDefault(); if (!mine.when || mine.when()) mine.run(); return; }
+    if (freedDefault(combo, cmds, hotkeys)) { e.preventDefault(); return; }
+  }
   if (k === 'z') {
     if (findBar.contains(e.target)) return; // the find fields' own undo
     // Whole-document undo/redo for the block editor (overrides native undo).

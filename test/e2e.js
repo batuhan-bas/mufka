@@ -1483,6 +1483,30 @@ app.whenReady().then(() => setTimeout(async () => {
         }
       }
       assert(!fs.existsSync(path.join(tmp, 'wispr.bin')), 'a sign-in was stored');
+      // Shortcuts: give "Open graph view" ⌘J; take ⌘E for "Insert template"
+      // (the source toggle is left with none); ⌘J then opens the graph.
+      await clickSel('.settings-nav-item[data-page="shortcuts"]');
+      const sc = (label) => `[...document.querySelectorAll('.shortcut-row')].find(r => r.querySelector('.shortcut-name')?.textContent === ${JSON.stringify(label)})`;
+      assert(await waitFor(`!!(${sc('Open graph view')})`, 2000), 'no Shortcuts page');
+      await clickEval(`${sc('Open graph view')}.querySelector('.kbd')`, 'graph keys');
+      assert(await waitFor(`${sc('Open graph view')}.querySelector('.kbd')?.textContent === 'Press keys…'`, 2000), 'not recording');
+      await press('J', ['meta']);
+      assert(await waitFor(`/J$/.test(${sc('Open graph view')}.querySelector('.kbd.custom')?.textContent || '')`, 2000), `⌘J not set: ${await js(`${sc('Open graph view')}?.textContent`)}`);
+      await clickEval(`${sc('Insert template')}.querySelector('.kbd')`, 'template keys');
+      await press('E', ['meta']);
+      assert(await waitFor(`/is used by “Toggle source \\/ preview”/.test(${sc('Insert template')}.querySelector('.shortcut-warn')?.textContent || '')`, 2000), `no conflict warning: ${await js(`${sc('Insert template')}?.textContent`)}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `settings-shortcuts-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await enter();
+      assert(await waitFor(`/E$/.test(${sc('Insert template')}.querySelector('.kbd.custom')?.textContent || '') && [...document.querySelectorAll('.shortcut-row')].some(r => r.querySelector('.shortcut-name')?.textContent === 'Toggle source / preview' && r.querySelector('.kbd')?.textContent === '+')`, 2000), 'the keys were not taken');
+      await press('Escape');
+      assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
+      await press('J', ['meta']);
+      assert(await waitFor('!!document.querySelector(".graph-view")', 3000), '⌘J did not open the graph');
+      // Back to the app's own keys.
+      await press(',', ['meta']);
+      await clickSel('.settings-nav-item[data-page="shortcuts"]');
+      for (const label of ['Open graph view', 'Insert template', 'Toggle source / preview']) await clickEval(`${sc(label)}.querySelector('.shortcut-icon:not([hidden])[title^="Back"]')`, `reset ${label}`);
+      assert(await waitFor(`localStorage.getItem('mufka-hotkeys') === '{}'`, 2000), `not reset: ${await js(`localStorage.getItem('mufka-hotkeys')`)}`);
       await press('Escape');
       assert(await waitFor('!document.querySelector(".settings-dialog")', 2000), 'Esc did not close settings');
       // The gear next to the notes folder opens it too.
@@ -2723,7 +2747,7 @@ app.whenReady().then(() => setTimeout(async () => {
       await press(',', ['meta']);
       // Opens on General; the list on the left shows one page at a time.
       assert(await waitFor('document.querySelector(".settings-nav-item.on")?.dataset.page === "general" && !document.querySelector(".settings-page[data-page=general]").hidden && document.querySelector(".settings-page[data-page=ai]").hidden', 3000), 'Settings does not open on General');
-      assert(await js('[...document.querySelectorAll(".settings-nav-item")].map(b => b.textContent).join("|")') === 'General|Appearance|Calendars|Voice|AI clients (MCP)', 'the pages on the left');
+      assert(await js('[...document.querySelectorAll(".settings-nav-item")].map(b => b.textContent).join("|")') === 'General|Appearance|Shortcuts|Calendars|Voice|AI clients (MCP)', 'the pages on the left');
       await clickSel('.settings-nav-item[data-page="ai"]');
       assert(await waitFor('!!document.querySelector(".settings-dialog .mcp-row") && !document.querySelector(".settings-page[data-page=ai]").hidden', 3000), 'no AI clients section');
       const box = (k) => `document.querySelector('.mcp-row input[data-mcp="${k}"]')`;
