@@ -2231,14 +2231,15 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor(`document.activeElement?.classList.contains('cv-edit')`, 2000), 'the new card is not being typed in');
       await typeText('Next: the web clipper');
       await clickAt(b.x + 300, b.y - 40);
-      assert(await waitFor2(() => data().nodes.some((n) => n.type === 'text' && n.text === 'Next: the web clipper'), 3000), 'the new card was not saved');
+      const cvDiag = async () => JSON.stringify({ dom: await js(`[...document.querySelectorAll('.cv-node')].map((n) => n.dataset.id)`), focus: await js(`document.activeElement?.className || document.activeElement?.tagName`), toast: await js(`document.getElementById('toast')?.textContent`), file: data() });
+      if (!(await waitFor2(() => data().nodes.some((n) => n.type === 'text' && n.text === 'Next: the web clipper'), 3000))) assert(false, `the new card was not saved: ${await cvDiag()}`);
       if (process.env.MUFKA_E2E_SHOTS) { await clickEval(`document.querySelector('.cv-node[data-id="t1"]')`, 'select'); await sleep(200); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `canvas-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG()); }
       // Delete the link card (its arrow goes too), then undo.
       await clickEval(`document.querySelector('.cv-node[data-id="l1"]')`, 'link card');
       await press('Backspace');
       assert(await waitFor2(() => !data().nodes.some((n) => n.id === 'l1') && !data().edges.some((e) => e.toNode === 'l1'), 3000), 'not deleted');
       await press('Z', ['meta']);
-      assert(await waitFor2(() => data().nodes.some((n) => n.id === 'l1') && data().edges.some((e) => e.toNode === 'l1'), 3000), 'undo did not bring it back');
+      if (!(await waitFor2(() => data().nodes.some((n) => n.id === 'l1') && data().edges.some((e) => e.toNode === 'l1'), 3000))) assert(false, `undo did not bring it back: ${await cvDiag()}`);
       // Opening the note card's title opens the note.
       await clickEval(`document.querySelector('.cv-node[data-id="f1"] .cv-file-title')`, 'Spec title');
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "Spec"', 3000), 'the note did not open');
