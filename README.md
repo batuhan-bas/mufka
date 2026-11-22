@@ -128,8 +128,8 @@ Planner.
   ⋯): duplicate, move to a folder, copy its path (in the vault or on the
   computer) or a `[[link]]`, reveal it in Finder, rename, delete. Folders also
   search inside themselves.
-- **Templates:** start a note from one of twelve — daily note, meeting notes,
-  project, project board, book notes, reading shelf, habit tracker, budget, travel plan,
+- **Templates:** start a note from one of fourteen — daily note, meeting notes,
+  project, project board, book notes, reading shelf, movie notes, watchlist, habit tracker, budget, travel plan,
   weekly to-do (with a review of the week), job search and job application — or from your own `Templates` folder (Obsidian-compatible). Copy the
   built-in ones there to make them yours.
 - **Budget** pages: add income and expenses with a small form and a card works
@@ -208,6 +208,10 @@ Planner.
 <p align="center"><img src="docs/screenshots/voice-note.png" width="70%" alt="New note from audio: record or choose a file, written down by Handy or VoiceStudio"></p>
 
 <p align="center"><img src="docs/screenshots/dataview.png" width="85%" alt="A project overview note: a Dataview table of sprints, a total from a dataviewjs script, a Mermaid flowchart and the open tasks"></p>
+
+<p align="center"><img src="docs/screenshots/bases.png" width="85%" alt="A .base file as a table of books: author, status, rating, pages and a formula column, with an average and a sum"></p>
+
+<p align="center"><img src="docs/screenshots/canvas.png" width="85%" alt="A canvas: cards, a note, a link and a group joined by arrows"></p>
 
 <p align="center"><img src="docs/screenshots/note.png" width="85%" alt="A note with the Details panel; the sidebar with coloured folders and icons"></p>
 
