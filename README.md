@@ -90,6 +90,10 @@ Planner.
   notes.
 - **Write in place**: notes always look formatted; click a paragraph to edit it.
   Tables, task lists, callouts, footnotes, properties, `==highlights==`.
+- **Clip web pages**: **Clip web page…** in the command palette takes an
+  address and saves the article (not the menus and ads) as a note in
+  Clippings, with its source, author, dates and the `clippings` tag, as
+  Obsidian Web Clipper does.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns
