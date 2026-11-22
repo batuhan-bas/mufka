@@ -1896,3 +1896,58 @@ body.quick-page { margin: 0; overflow: hidden; background: var(--ground); }
 .shortcut-icon:hover { background: var(--hover-soft); color: var(--text); }
 .shortcut-row > .shortcut-icon[hidden] { display: block; visibility: hidden; }
 .shortcut-row:not(:hover):not(:focus-within) .shortcut-keys .shortcut-icon { visibility: hidden; }
+
+/* --- Bases (src/bases-view.js): a .base file, ```base blocks, ![[X.base]] --- */
+.base-pane .note-head { margin-top: 36px; }
+.base-view { margin: 8px 0 18px; min-width: 0; }
+.base-view.embed { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.base-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.base-tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+.base-tab { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.base-tab svg { flex: none; }
+.base-tab:hover { background: var(--line); color: var(--text); }
+.base-tab.on { background: var(--sel); color: var(--text); font-weight: 600; }
+.base-view.embedded .base-tab { cursor: default; }
+.base-count { color: var(--muted); margin-left: 4px; }
+.base-gap { flex: 1; }
+.base-new { display: inline-flex; align-items: center; gap: 4px; }
+.base-error { border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, transparent); color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.base-empty, .base-note { color: var(--muted); font-size: 13px; }
+.base-link { color: var(--accent); text-decoration: none; cursor: pointer; }
+.base-link:hover { text-decoration: underline; }
+.base-chip { display: inline-block; font-size: 12.5px; background: var(--line); border-radius: 5px; padding: 0 6px; margin: 1px 0; }
+.base-img { max-height: 48px; border-radius: 4px; vertical-align: middle; }
+.base-check { margin: 0; vertical-align: middle; }
+/* table */
+.base-table-wrap { overflow-x: auto; }
+.base-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.base-table th, .base-table td { border-bottom: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+.base-table th { color: var(--muted); font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+.base-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.base-table tr.base-row:hover td { background: color-mix(in srgb, var(--sel) 55%, transparent); }
+.base-table td.can-edit { cursor: text; }
+.base-table td.editing { padding: 3px 4px; }
+.base-cell-input { width: 100%; min-width: 80px; font: inherit; color: var(--text); background: var(--ground); border: 1px solid var(--accent); border-radius: 5px; padding: 3px 6px; outline: none; }
+.base-group-row td { border-bottom: 0; padding-top: 16px; }
+.base-group-name { font-weight: 600; }
+.base-group-count { color: var(--muted); font-size: 12.5px; margin-left: 8px; }
+.base-summary { color: var(--muted); font-size: 12.5px; border-bottom: 0 !important; white-space: nowrap; }
+/* cards */
+.base-group-head { margin: 16px 0 10px; }
+.base-group-head:first-child { margin-top: 4px; }
+.base-cards { --card: 160px; display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card), 1fr)); gap: 14px; }
+.base-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); cursor: pointer; display: flex; flex-direction: column; }
+.base-card:hover { border-color: var(--line-strong); }
+.base-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.base-card-image { background: var(--line); }
+.base-card-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.base-card-image img.contain { object-fit: contain; }
+.base-card-meta { padding: 8px 10px 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.base-card-title { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.base-card-line { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.base-card-label { color: var(--muted); margin-right: 6px; }
+/* list */
+.base-list { margin: 0; padding-left: 22px; }
+.base-list.plain { list-style: none; padding-left: 0; }
+.base-list-item { padding: 3px 0; }
+.base-sep { color: var(--muted); }

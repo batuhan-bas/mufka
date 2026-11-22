@@ -25,6 +25,8 @@ import { createGraphView } from './graph-view.js';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
 import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender, prettyDue } from './tasks.js';
 import { createDataview } from './dataview-view.js';
+import { runBase, parseBase, cellInput, newNoteDefaults } from '../lib/bases/base.mjs';
+import { baseView } from './bases-view.js';
 import { createMermaid } from './mermaid-view.js';
 import { budgetCard, addButton, decorateBudgetTable, categoryColours, moneyFormat, openAddDialog } from './budget-view.js';
 import { habitsCard, decorateHabitTable, addHabitButton, openHabitDialog } from './habits-view.js';
@@ -106,6 +108,9 @@ const state = {
   // Notes vault
   treeFolders: [],        // folder rel strings
   treeNotes: [],          // [{ rel, mtime }]
+  treeBases: [],          // Obsidian Bases files: [{ rel, mtime }]
+  baseTexts: new Map(),   // a base's rel → { mtime, text }
+  base: null,             // the open base: { rel, view }
   notesFlat: [],          // [{ rel, title, folder, mtime }]
   expanded: new Set(),    // expanded folder rels (persisted)
   selectedFolder: null,   // rel of the selected folder, or null
@@ -809,7 +814,7 @@ function renderNotesSection() {
     sortButton(),
   ], 'notes');
   if (!sectionOpen('notes')) return;
-  const tree = buildTree(state.treeFolders, state.treeNotes, { sort: state.noteSort, order: state.treeOrder });
+  const tree = buildTree(state.treeFolders, [...state.treeNotes, ...state.treeBases], { sort: state.noteSort, order: state.treeOrder });
   if (tree.folders.length === 0 && tree.notes.length === 0 && !state.treeEdit) {
     const empty = elem('div', 'side-empty');
     empty.append(document.createTextNode('No notes yet. '), smallButton('Create one', null, () => newNote(), K('⌘N')));
@@ -841,6 +846,7 @@ function renderContent() {
   else if (state.contentView === 'tasks') renderTasks(contentEl, tasksApi());
   else if (state.contentView === 'draw') renderDraw(contentEl, drawApi());
   else if (state.contentView === 'note' && state.openNote) renderNotePane();
+  else if (state.contentView === 'base' && state.base) renderBasePage();
   else renderDayPage();
 }
 
@@ -882,6 +888,7 @@ function currentLocation() {
   if (state.contentView === 'planner') return { view: 'planner', key: dayKey(startOfWeek(state.weekDate)) };
   if (state.contentView === 'tasks') return { view: 'tasks', rel: state.board ? state.board.rel : null };
   if (state.contentView === 'draw') return { view: 'draw', rel: state.drawing ? state.drawing.rel : null };
+  if (state.contentView === 'base' && state.base) return { view: 'base', rel: state.base.rel };
   if (state.contentView === 'note' && state.openNote) return { view: 'note', rel: state.openNote };
   return { view: 'day', key: dayKey(state.selectedDate) };
 }
@@ -891,7 +898,7 @@ let newTabAsk = 0;
 const askNewTab = (e) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.type === 'click' || e.key === 'Enter')) newTabAsk = Date.now(); };
 document.addEventListener('click', askNewTab, true);
 document.addEventListener('keydown', askNewTab, true);
-const docPlace = (loc) => !!(loc && loc.rel && (loc.view === 'note' || loc.view === 'tasks' || loc.view === 'draw'));
+const docPlace = (loc) => !!(loc && loc.rel && (loc.view === 'note' || loc.view === 'tasks' || loc.view === 'draw' || loc.view === 'base'));
 function navVisit(to) {
   hidePreview();
   state.menu = null; // a row menu belongs to the pane it was opened on
@@ -917,7 +924,8 @@ function updateNavButtons() {
   document.getElementById('nav-back').disabled = !curNav().canBack;
   document.getElementById('nav-forward').disabled = !curNav().canForward;
 }
-const navValid = (loc) => (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel);
+const navValid = (loc) => (loc.view === 'base' ? state.treeBases.some((b) => b.rel === loc.rel)
+  : (loc.view !== 'note' && loc.view !== 'tasks' && loc.view !== 'draw') || !loc.rel || state.notesFlat.some((n) => n.rel === loc.rel));
 // Show a place without recording it in the history.
 async function goTo(loc) {
   navigating = true;
@@ -928,6 +936,7 @@ async function goTo(loc) {
     else if (loc.view === 'planner') openPlanner(parseDayKey(loc.key));
     else if (loc.view === 'tasks') await openTasks(loc.rel);
     else if (loc.view === 'draw') await openDraw(loc.rel);
+    else if (loc.view === 'base') await openBase(loc.rel);
     else await selectDay(parseDayKey(loc.key), { keepTab: true });
   } finally { navigating = false; updateNavButtons(); }
 }
@@ -990,9 +999,10 @@ function tabTitle(loc) {
   if (loc.view === 'planner') return 'Planner';
   if (loc.view === 'tasks') return loc.rel ? noteTitleOf(loc.rel) : 'Tasks';
   if (loc.view === 'draw') return loc.rel ? drawingTitle(loc.rel) : 'Draw';
+  if (loc.view === 'base') return baseTitleOf(loc.rel);
   return loc.key === dayKey(new Date()) ? 'Home' : formatDayNumeric(parseDayKey(loc.key));
 }
-const TAB_ICONS = { note: 'tiFileText', graph: 'graph', planner: 'calendar', tasks: 'kanban', draw: 'tiPenLine', day: 'home' };
+const TAB_ICONS = { note: 'tiFileText', graph: 'graph', planner: 'calendar', tasks: 'kanban', draw: 'tiPenLine', base: 'template', day: 'home' };
 // The strip shows only when there is more than one tab.
 const tabStripEl = document.getElementById('tab-strip');
 let tabDrag = null;
@@ -1718,6 +1728,11 @@ function renderPaneTitle() {
   else if (state.contentView === 'note' && state.openNote) {
     title = noteTitleOf(state.openNote);
     const folder = folderOf(state.openNote);
+    if (folder) el.append(elem('span', 'pt-path', `${folder.split('/').join(' / ')} / `));
+    el.append(elem('span', 'pt-main', title));
+  } else if (state.contentView === 'base' && state.base) {
+    title = baseTitleOf(state.base.rel);
+    const folder = folderOf(state.base.rel);
     if (folder) el.append(elem('span', 'pt-path', `${folder.split('/').join(' / ')} / `));
     el.append(elem('span', 'pt-main', title));
   } else {
@@ -3018,9 +3033,147 @@ function noteRenderOptions(rel) {
       projects: (code) => projectsBlock(rel, code),
       books: (code) => booksBlock(rel, code),
       movies: (code) => moviesBlock(rel, code),
+      base: (code) => baseBlock(rel, code),
     },
     embedDrawing,
+    embedBase: (target, view) => embedBase(target, view, rel),
   };
+}
+
+// --- Obsidian Bases (lib/bases, src/bases-view.js) ---
+// A .base file opens as its views; ```base blocks and ![[X.base]] embeds draw
+// one in a note. The vault is Dataview's index; a base's text is read when
+// the tree is.
+const isBaseRel = (rel) => /\.base$/i.test(String(rel || ''));
+const baseTitleOf = (rel) => leafOf(rel).replace(/\.base$/i, '');
+async function loadBaseTexts() {
+  let changed = false;
+  const known = new Set(state.treeBases.map((b) => b.rel));
+  for (const rel of [...state.baseTexts.keys()]) if (!known.has(rel)) { state.baseTexts.delete(rel); changed = true; }
+  for (const b of state.treeBases) {
+    const had = state.baseTexts.get(b.rel);
+    if (had && had.mtime === b.mtime) continue;
+    const res = await notesApi.read(b.rel);
+    if (!res || res.error) continue;
+    state.baseTexts.set(b.rel, { mtime: b.mtime, text: res.content });
+    changed = true;
+  }
+  if (changed && !isEditing()) render();
+}
+async function openBase(rel) {
+  flushActiveEditor();
+  if (!state.baseTexts.has(rel)) {
+    const res = await notesApi.read(rel);
+    if (!res || res.error) { showToast('Could not open the base'); return; }
+    state.baseTexts.set(rel, { mtime: 0, text: res.content });
+  }
+  navVisit({ view: 'base', rel });
+  state.base = { rel, view: baseViews.get(rel) ?? 0 };
+  state.contentView = 'base';
+  state.selectedFolder = null;
+  expandAncestors(rel);
+  render();
+}
+const baseViews = new Map(); // which view a base or a ```base block shows
+// Opening from a base: a note (⌘-click: a new tab) or a link's target.
+function openFromBase(rel, e) {
+  if (e && (e.metaKey || e.ctrlKey)) openNoteInNewTab(rel);
+  else openNote(rel, 'oku');
+}
+// An image in a card: a path or a file name, from the note's folder.
+function baseImageUrl(path, fromRel) {
+  if (/^https?:\/\//i.test(path)) return path;
+  const dir = folderOf(fromRel || '');
+  const att = resolveAttachment(path, state.attachFiles, dir, attachmentsDirFor(state.layout, dir));
+  return att.url && att.isImage ? att.url : '';
+}
+function baseOptions({ key, thisRel, config, viewIndex, folder, embedded, onOpenBase }) {
+  return {
+    embedded,
+    onView: (i) => { baseViews.set(key, i); if (state.base && state.base.rel === key) state.base.view = i; render(); },
+    onOpen: openFromBase,
+    onExternal: (url) => notesApi.openExternal(url),
+    imageUrl: baseImageUrl,
+    onEdit: async (rel, prop, old, input) => {
+      const value = typeof input === 'boolean' ? input : cellInput(old, input);
+      await changeNoteText(rel, (text) => setProp(text, prop, value));
+      render();
+    },
+    onCancel: () => render(),
+    onNew: config ? async () => {
+      const { folder: dest, props } = newNoteDefaults(config, viewIndex, folder);
+      const res = await notesApi.create(dest, 'Untitled');
+      if (!res || !res.rel) { showToast('Could not create the note'); return; }
+      if (props.length) await notesApi.write(res.rel, props.reduce((t, [k, v]) => setProp(t, k, v), ''));
+      await refreshTree();
+      await rebuildBacklinks();
+      await openNote(res.rel, 'duzenle');
+      startRenameNote();
+    } : null,
+    onOpenBase,
+  };
+}
+function runBaseText(text, which, thisRel) {
+  return runBase(text, which, dataview.index(), { thisRel });
+}
+function renderBasePage() {
+  const { rel } = state.base;
+  const entry = state.baseTexts.get(rel);
+  const pane = elem('div', 'note-pane base-pane');
+  const head = elem('div', 'note-head');
+  head.append(elem('h1', 'note-title', baseTitleOf(rel)));
+  pane.append(head);
+  const res = runBaseText(entry ? entry.text : '', state.base.view, rel);
+  pane.append(baseView(res, baseOptions({ key: rel, thisRel: rel, config: res.config, viewIndex: res.viewIndex, folder: folderOf(rel), embedded: false })));
+  contentEl.append(pane);
+}
+// ```base in a note: the base written in place, about that note (`this`).
+function baseBlock(rel, code) {
+  const key = `${rel}\u0000${code}`;
+  const res = runBaseText(code, baseViews.get(key) ?? 0, rel || '');
+  return baseView(res, baseOptions({ key, thisRel: rel, config: res.config, viewIndex: res.viewIndex, folder: folderOf(rel || ''), embedded: false }));
+}
+// ![[Books.base]] or ![[Books.base#View]]: that view of the file.
+function embedBase(target, view, rel) {
+  const b = resolveBaseTarget(target, rel);
+  if (!b) return null;
+  const entry = state.baseTexts.get(b);
+  if (!entry) return null;
+  const res = runBaseText(entry.text, view || null, rel || '');
+  const box = baseView(res, baseOptions({ key: b, thisRel: rel, config: res.config, viewIndex: res.viewIndex, folder: folderOf(b), embedded: true, onOpenBase: () => openBase(b) }));
+  box.classList.add('embed');
+  return box;
+}
+// A base named in a link: its path, its name, or its name from the folder of `fromRel`.
+function resolveBaseTarget(target, fromRel) {
+  const t = String(target || '').replace(/^\/+/, '');
+  const name = /\.base$/i.test(t) ? t : `${t}.base`;
+  const list = state.treeBases.map((b) => b.rel);
+  if (list.includes(name)) return name;
+  const local = fromRel ? `${folderOf(fromRel) ? `${folderOf(fromRel)}/` : ''}${name}` : null;
+  if (local && list.includes(local)) return local;
+  return list.find((r) => leafOf(r).toLowerCase() === leafOf(name).toLowerCase()) || null;
+}
+// A base in the tree: its own icon; a click opens its views.
+function baseRow(n, depth) {
+  const row = elem('div', 'tree-row note-row base-row' + (state.contentView === 'base' && state.base && state.base.rel === n.rel ? ' selected' : ''));
+  row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
+  row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'base';
+  const color = rowColor(n.rel, 'note', state.treeStyles);
+  if (color) row.style.setProperty('--row-c', color);
+  row.append(treeIcon(n.rel, 'template'));
+  row.append(elem('span', 'tree-name', baseTitleOf(n.rel)));
+  row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openBase(n.rel); });
+  const items = () => [
+    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'base', rel: n.rel }); } },
+    SEP,
+    ...copyItems(n.rel, [{ label: 'Copy embed', fn: () => { closeMenu(); copyText(`![[${leafOf(n.rel)}]]`, 'the embed'); } }]),
+    SEP,
+    revealItem(n.rel),
+  ];
+  addMenuBtn(row, `b:${n.rel}`, items);
+  onRightClick(row, `b:${n.rel}`, items);
+  return row;
 }
 
 // --- budget notes (lib/budget.mjs, src/budget-view.js) ---
@@ -3482,8 +3635,10 @@ async function refreshTree() {
   if (res && !res.error) {
     state.treeFolders = res.folders.map((f) => f.rel);
     state.treeNotes = res.notes;
+    state.treeBases = Array.isArray(res.bases) ? res.bases : [];
     state.notesFlat = flattenNotes(res.notes);
     applyAliases();
+    loadBaseTexts();
   }
   await refreshAttachList();
 }
@@ -4005,6 +4160,7 @@ function folderRow(f, depth) {
 }
 
 function noteRow(n, depth) {
+  if (isBaseRel(n.rel)) return baseRow(n, depth);
   const row = elem('div', 'tree-row note-row' + (state.openNote === n.rel ? ' selected' : ''));
   row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
   row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'note';
