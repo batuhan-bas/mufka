@@ -224,6 +224,9 @@ export function createCanvasView(host, data, o) {
     if (!sel.size) return;
     const ids = [...sel]; sel = new Set();
     commit(removeItems(c, ids));
+    // The removed card may have held the focus; keep it on the board so
+    // Cmd/Ctrl+Z reaches the board's undo, not the app's.
+    host.focus({ preventScroll: true });
   }
 
   // --- opening, editing ---
