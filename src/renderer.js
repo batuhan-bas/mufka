@@ -142,7 +142,6 @@ const state = {
   history: null,          // { key, stack:[src...], i } whole-document undo/redo
   noteCache: new Map(),   // rel -> content (for Ara text search)
   araQuery: '',
-  editPlanId: null,       // plan being edited inline on the day page
   menu: null,             // open row menu: { anchorKey, buildItems }
   contentView: 'day',     // what the right pane shows: 'day' | 'note' | 'graph' | 'planner' | 'tasks' | 'draw'
   board: null,            // the open task board: { rel, content } (src/tasks.js, lib/kanban.mjs)
@@ -196,10 +195,6 @@ function getDayItems(date) {
     : a.time ? -1 : b.time ? 1 : a.created - b.created));
 }
 
-function hasAnything(date) {
-  return getDayItems(date).length > 0 || state.dailyDates.has(dayKey(date));
-}
-
 // Add an explicit plan. Title is stored verbatim (no time parsing from text).
 function addPlan(date, { title, time = '', endTime = '' }) {
   const t = (title || '').trim();
@@ -224,32 +219,16 @@ function toggleItem(p) {
   persistPlans(); render();
 }
 
-// Save an edit with explicit values. An empty title is ignored (use the row
-// menu's "Sil" to delete). Returns false if nothing was saved.
-function savePlanEdit(id, { title, time = '', endTime = '' }) {
-  const plan = state.store.items.find((x) => x.id === id);
-  if (!plan) { removeOutside(); state.editPlanId = null; render(); return true; }
-  const t = (title || '').trim();
-  if (!t) return false;
-  plan.title = t; plan.time = time; plan.endTime = endTime;
-  removeOutside();
-  state.editPlanId = null;
-  persistPlans(); render();
-  return true;
-}
-
 function pushUndo(entry) {
   state.undo.push(entry);
   if (state.undo.length > UNDO_LIMIT) state.undo.shift();
 }
 
 function deletePlan(id) {
-  removeOutside();
   const i = state.store.items.findIndex((x) => x.id === id);
   if (i === -1) return;
   const [removed] = state.store.items.splice(i, 1);
   pushUndo({ type: 'remove', plan: removed, index: i });
-  state.editPlanId = null;
   persistPlans(); render();
 }
 
@@ -310,8 +289,6 @@ let split = null; // { rel, text }
 let splitShown = null;
 let splitAsk = 0;
 function render() {
-  // Safety net: the click-outside-saves listener must never outlive an edit.
-  if (!state.editPlanId) removeOutside();
   // Removing a focused block textarea during a re-render fires its blur
   // synchronously; suppress that so it cannot commit stale text into the
   // already-advanced edit target (data corruption).
@@ -2439,7 +2416,6 @@ async function selectDay(date, opts = {}) {
   state.selectedDate = date;
   state.calCursor = new Date(date.getFullYear(), date.getMonth(), 1);
   state.contentView = 'day';
-  state.editPlanId = null;
   state.menu = null;
   state.dailyDeleteConfirm = false;
   state.blockEdit = null;
@@ -2764,8 +2740,8 @@ function section(titleText, children) {
   return s;
 }
 
-// Shared title + "Saatli" + start/end controls, used by the add row and the
-// in-place editor. idPrefix ('add' | 'edit') keeps element ids stable/unique.
+// Title + "Saatli" + start/end controls of the plan dialog. idPrefix keeps
+// element ids stable/unique.
 function planControls({ idPrefix, title = '', time = '', endTime = '' }) {
   const wrap = elem('div', 'plan-form');
 
@@ -2813,100 +2789,6 @@ function planControls({ idPrefix, title = '', time = '', endTime = '' }) {
   function showError(r) { if (r.error) { msg.textContent = r.error; if (r.field) r.field.focus(); } }
 
   return { wrap, titleInput, start, end, validate, showError };
-}
-
-function addRow(date) {
-  const li = elem('li', 'add-row');
-  const c = planControls({ idPrefix: 'add' });
-  c.titleInput.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    const r = c.validate();
-    if (!r.ok) { c.showError(r); return; }
-    addPlan(date, r);
-    state.focus = 'todo-add';
-    render();
-  });
-  li.append(c.wrap);
-  return li;
-}
-
-function startEdit(id) {
-  closeMenu();
-  state.editPlanId = id;
-  state.focus = 'plan-edit';
-  render();
-}
-
-function editorRow(p) {
-  const li = elem('li', 'plan-row editing');
-  const c = planControls({ idPrefix: 'edit', title: p.title, time: p.time, endTime: p.endTime });
-  const save = () => {
-    const r = c.validate();
-    if (!r.ok) { c.showError(r); return false; }
-    return savePlanEdit(p.id, r);
-  };
-  const cancel = () => { removeOutside(); state.editPlanId = null; render(); };
-  for (const inp of [c.titleInput, c.start, c.end]) {
-    inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); save(); }
-      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-    });
-  }
-  attachOutsideSave(c.wrap, save);
-  li.append(c.wrap);
-  return li;
-}
-
-function planRow(p, timed) {
-  if (state.editPlanId === p.id) return editorRow(p);
-
-  const li = elem('li', 'plan-row' + (p.done ? ' done' : ''));
-  const check = document.createElement('input');
-  check.type = 'checkbox'; check.className = 'check'; check.checked = p.done;
-  check.setAttribute('aria-label', 'Done');
-  check.addEventListener('change', () => toggleItem(p));
-  li.append(check);
-
-  if (timed && p.time) {
-    const chips = elem('span', 'chips');
-    chips.append(elem('span', 'chip', p.time));
-    if (p.endTime) chips.append(elem('span', 'chip-dash', '–'), elem('span', 'chip', p.endTime));
-    li.append(chips);
-  }
-
-  const title = elem('span', 'plan-title', p.title);
-  title.addEventListener('click', () => startEdit(p.id));
-  li.append(title);
-
-  if (p.recur) li.append(elem('span', 'repeat-label', 'repeats'));
-
-  const menuBtn = elem('button', 'menu-btn');
-  menuBtn.append(icon('more', { size: 15 }));
-  menuBtn.type = 'button';
-  menuBtn.setAttribute('aria-label', 'Options');
-  menuBtn.setAttribute('aria-haspopup', 'menu');
-  menuBtn.dataset.menuAnchor = p.id;
-  menuBtn.addEventListener('click', (e) => { e.stopPropagation(); openMenu(p.id, () => planMenuItems(p)); });
-  li.append(menuBtn);
-  return li;
-}
-
-function planMenuItems(p) {
-  return [
-    { label: 'Edit', fn: () => startEdit(p.id) },
-    {
-      label: 'Delete',
-      fn: () => {
-        if (p.recur) {
-          openMenu(p.id, () => [
-            { label: 'Only this day', fn: () => { deleteOccurrence(p.id, dayKey(state.selectedDate)); closeMenu(); } },
-            { label: 'All in series', fn: () => { closeMenu(); deletePlan(p.id); } },
-          ]);
-        } else { closeMenu(); deletePlan(p.id); }
-      },
-    },
-  ];
 }
 
 // --- generic "⋯" menu (top-level layer, never clipped). anchorKey matches a
@@ -2967,16 +2849,6 @@ function renderMenu() {
   let left = state.menu.align === 'left' ? r.left : r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
   menu.style.top = `${top}px`; menu.style.left = `${left}px`;
   (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice, .cover-choice.on') || menu.querySelector('button, input'))?.focus();
-}
-
-let outsideHandler = null;
-function attachOutsideSave(rootEl, save) {
-  removeOutside();
-  outsideHandler = (e) => { if (!rootEl.contains(e.target)) save(); };
-  setTimeout(() => document.addEventListener('mousedown', outsideHandler), 0);
-}
-function removeOutside() {
-  if (outsideHandler) { document.removeEventListener('mousedown', outsideHandler); outsideHandler = null; }
 }
 
 // --- daily note on the day page ---
@@ -7011,7 +6883,7 @@ if (notesApi.onChanged) {
 // An editor (a block, the source textarea, or a tree/plan inline field) is open.
 function isEditing() {
   return !!(state.blockEdit || document.getElementById('block-editor') || document.getElementById('note-editor')
-    || document.getElementById('tree-edit') || state.editPlanId || (state.contentView === 'tasks' && tasksEditing()));
+    || document.getElementById('tree-edit') || (state.contentView === 'tasks' && tasksEditing()));
 }
 
 function isTextTarget(t) {
@@ -7023,7 +6895,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.menu) { closeMenu(); return; }
   if (e.key === 'Escape' && settingsLayer) { e.preventDefault(); settingsLayer._close(); return; }
   if (e.ctrlKey && !e.metaKey && e.key === 'Tab') { e.preventDefault(); toggleMode(); return; }
-  if (e.key === 'Escape' && state.editPlanId) { state.editPlanId = null; removeOutside(); render(); return; }
   if (e.key === 'Escape' && findBar.isOpen() && !isTextTarget(e.target) && !state.blockEdit && !isPaletteOpen()) { findBar.close({ keepFocus: true }); return; }
   const mod = e.metaKey || e.ctrlKey;
   if (!mod) return;
