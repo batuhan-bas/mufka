@@ -2,14 +2,9 @@
 // today's daily note, or "Name: text" to that note (lib/quicknote.mjs, written
 // by main.js); Esc closes. The box is its own small window.
 import { icon } from './icons.js';
+import { el } from './dom.js';
 
 const api = window.notes;
-const el = (tag, cls, text) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-};
 
 document.body.className = 'quick-page';
 const box = el('div', 'quick-box');

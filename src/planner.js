@@ -15,6 +15,7 @@ import { weekDates, layoutDay, toMinutes, toTime, snap, span, moveTo, resizeTo, 
 import { dayKey, weekKey, addDays, isToday, formatWeekRange } from '../lib/dates.mjs';
 import { describeRecur } from '../lib/recur.mjs';
 import { icon } from './icons.js';
+import { el } from './dom.js';
 
 // Shortcuts read the system's way (lib/keys.mjs).
 const K = (text) => keyLabel(text, Boolean(window.planner && window.planner.isMac));
@@ -30,7 +31,6 @@ let resizing = false;   // true while a block's bottom edge is dragged
 const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const WD_LONG = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 export function renderPlanner(container, weekDate, api) {
   const days = weekDates(weekDate);

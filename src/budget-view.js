@@ -2,16 +2,12 @@
 // in, what went out and what is left, a ring of where it went, and the dialog
 // that adds an income or an expense as a row of the note's table.
 import { budgetSummary, categoryChoices, parseAmount } from '../lib/budget.mjs';
+import { el } from './dom.js';
+import { dayKey } from '../lib/dates.mjs';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const COLOURS = 6; // .bud-c0 … .bud-c5
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 function svg(tag, attrs) {
   const e = document.createElementNS(SVG, tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
@@ -187,10 +183,7 @@ export function decorateBudgetTable(container, columns, { money, colourOf, total
   table.append(foot);
 }
 
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+const today = () => dayKey(new Date());
 
 // The add dialog. onSave({ date, what, category, amount }).
 export function openAddDialog({ kind, categories = [], currency = '', colourOf = () => 'bud-c0' }, onSave) {

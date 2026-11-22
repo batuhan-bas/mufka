@@ -3,13 +3,8 @@
 // status, books standing with their covers), and the New book dialog.
 import { BOOK_STAGES, STOPPED } from '../lib/books.mjs';
 import { stageSteps, factsRow } from './jobs-view.js';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 const stageClass = (s) => (s === 'Finished' ? 'job-s-offer' : s === STOPPED ? 'job-s-2' : s === 'Reading' ? 'job-s-1' : 'job-s-0');
 const shortDate = (key) => (key ? new Date(`${key.slice(0, 10)}T12:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
 

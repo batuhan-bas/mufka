@@ -17,6 +17,8 @@ import {
   CARD_TYPES, PRIORITIES,
 } from '../lib/kanban.mjs';
 import { icon } from './icons.js';
+import { el } from './dom.js';
+import { dayKey } from '../lib/dates.mjs';
 
 const K = (text) => keyLabel(text, Boolean(window.planner && window.planner.isMac));
 const TYPE_LABEL = { feature: 'Feature', bug: 'Bug', chore: 'Chore' };
@@ -30,7 +32,6 @@ let scrollLeft = 0;
 let focusAfter = null;   // { col, card } to focus after the next render
 let openAfter = null;    // { rel, col, card, draft } whose dialog opens after the next render
 
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function btn(cls, label, fn, title) {
   const b = el('button', cls, label);
   b.type = 'button';
@@ -45,10 +46,7 @@ export function tasksEditing() { return renaming !== null || dialogOpen; }
 // card null with a draft ({ title, body }): the New task dialog, filled in.
 export function openTaskAfterRender(rel, col, card, draft = null) { openAfter = { rel, col, card, draft }; }
 
-function today() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+const today = () => dayKey(new Date());
 export function prettyDue(key) {
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);

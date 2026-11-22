@@ -5,6 +5,7 @@
 //   attachHoverPreview(root, { resolve(target) → rel|null, read(rel) → Promise<string>,
 //                              renderInto(el, content, rel), open(rel, heading) })
 // Call it on a container of rendered Markdown; it watches a[data-wiki] inside.
+import { el } from './dom.js';
 
 const SHOW_DELAY = 450;
 const HIDE_DELAY = 250;
@@ -14,7 +15,6 @@ let showTimer = 0;
 let hideTimer = 0;
 let anchor = null;
 
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 export function hidePreview() {
   clearTimeout(showTimer); clearTimeout(hideTimer);

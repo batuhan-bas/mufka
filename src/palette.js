@@ -17,9 +17,9 @@
 let current = null;
 
 import { keyLabel } from '../lib/keys.mjs';
+import { el } from './dom.js';
 
 const IS_MAC = Boolean(window.planner && window.planner.isMac);
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 // label with the matched characters wrapped in <mark>.
 function labelNode(text, indices) {

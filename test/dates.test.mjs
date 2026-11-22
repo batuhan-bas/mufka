@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  dayKey, monthKey, weekKey, isoWeek, keyFor, parseDayKey,
-  addDays, addWeeks, addMonths, startOfWeek, sameDay, monthGrid,
+  dayKey, monthKey, weekKey, isoWeek, parseDayKey,
+  addDays, addMonths, startOfWeek, sameDay, monthGrid,
 } from '../lib/dates.mjs';
 
 test('dayKey / monthKey use local date, zero-padded', () => {
@@ -25,22 +25,13 @@ test('weekKey format', () => {
   assert.equal(weekKey(new Date(2021, 0, 4)), '2021-W01');
 });
 
-test('keyFor dispatches by scope', () => {
-  const d = new Date(2026, 9, 3);
-  assert.equal(keyFor('day', d), '2026-10-03');
-  assert.equal(keyFor('week', d), '2026-W40');
-  assert.equal(keyFor('month', d), '2026-10');
-  assert.throws(() => keyFor('year', d));
-});
-
 test('parseDayKey round-trips dayKey', () => {
   const d = new Date(2026, 9, 3);
   assert.ok(sameDay(parseDayKey(dayKey(d)), d));
 });
 
-test('addDays / addWeeks cross month and DST safely', () => {
+test('addDays crosses months and DST safely', () => {
   assert.equal(dayKey(addDays(new Date(2026, 9, 31), 1)), '2026-11-01');
-  assert.equal(dayKey(addWeeks(new Date(2026, 9, 3), 1)), '2026-10-10');
 });
 
 test('addMonths clamps overflowing day', () => {

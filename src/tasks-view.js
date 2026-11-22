@@ -1,11 +1,6 @@
 // A ```tasks block (lib/tasks-query.mjs): the vault's tasks that pass the
 // query, grouped, each with its box, dates and the note it is in.
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
+import { el } from './dom.js';
 
 const PRIORITY_EMOJI = { highest: '🔺', high: '⏫', medium: '🔼', low: '🔽', lowest: '⏬' };
 const asDate = (k) => new Date(`${k}T12:00`);

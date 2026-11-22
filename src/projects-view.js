@@ -3,13 +3,8 @@
 // and the form for a new project. Built from the job board's parts.
 import { projectColumns, projectStats, daysLeft, PROJECT_STAGES, ON_HOLD } from '../lib/projects.mjs';
 import { stageSteps, factsRow, stageBoard, noteName } from './jobs-view.js';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const stageClass = (s) => (same(s, 'Done') ? 'job-s-offer' : same(s, ON_HOLD) ? 'job-s-2' : same(s, 'Active') ? 'job-s-1' : 'job-s-0');
 

@@ -4,13 +4,8 @@
 // is added to the page); in the source view a copy of the text sits behind the
 // transparent textarea with the matches marked.
 import { findMatches, replaceMatches, matchAtOrAfter } from '../lib/find.mjs';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 
 // Text nodes of `root` and their offsets in its concatenated text.
 function textIndex(root) {

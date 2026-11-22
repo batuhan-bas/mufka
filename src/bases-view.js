@@ -5,13 +5,8 @@ import { Link } from '../lib/dataview/values.mjs';
 import { FileRef, isDate, isDuration, textOf } from '../lib/bases/expr.mjs';
 import { editableKey, propRef } from '../lib/bases/base.mjs';
 import { icon } from './icons.js';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 
 const VIEW_ICONS = { table: 'template', cards: 'tiImage', list: 'outline' };
 

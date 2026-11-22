@@ -3,16 +3,11 @@
 // that adds a habit.
 import { habitSummary } from '../lib/habits.mjs';
 import { periodNav } from './budget-view.js';
+import { el } from './dom.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 function svg(tag, attrs) {
   const e = document.createElementNS(SVG, tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));

@@ -1911,13 +1911,10 @@ ipcMain.handle('planner:notify', (event, payload) => {
   return { ok: true };
 });
 
-function pad2(n) { return String(n).padStart(2, '0'); }
-
 // Export the current store to a user-chosen JSON file.
 ipcMain.handle('planner:export', async (_event, data) => {
   assertTrustedSender(_event);
-  const now = new Date();
-  const name = `mufka-backup-${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}.json`;
+  const name = `mufka-backup-${dayKey(new Date())}.json`;
   const res = await dialog.showSaveDialog({
     title: 'Export Plans',
     defaultPath: dialogPath(name),

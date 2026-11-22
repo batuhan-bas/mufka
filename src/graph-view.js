@@ -13,6 +13,7 @@
 // first matching note.
 
 import { buildGraph, localGraph, filterGraph, createSimulation, adjacency, DEFAULT_FORCES } from '../lib/graph.mjs';
+import { el } from './dom.js';
 
 // Colours come from the theme tokens in styles.css (read once per draw).
 let COLORS = null;
@@ -22,7 +23,6 @@ function themeColors() {
   return { note: v('--muted'), current: v('--accent'), tag: v('--ink-green'), missing: v('--line-strong'), link: v('--line-strong'), linkHi: v('--accent'), label: v('--text'), labelDim: v('--muted') };
 }
 
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 function loadPrefs() {
   try { return { tags: false, unresolved: false, orphans: true, depth: 1, ...JSON.parse(localStorage.getItem('mufka-graph') || '{}') }; } catch { return { tags: false, unresolved: false, orphans: true, depth: 1 }; }

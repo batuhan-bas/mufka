@@ -2,13 +2,8 @@
 // note as it is now, or its whole text) and the notes deleted in the last
 // seven days. The versions live outside the vault (lib/history.mjs, main.js).
 import { lineDiff } from '../lib/diff.mjs';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 
 // "Today 14:05", "Yesterday 09:12", "Mon 3 Nov 18:40".
 export function versionTime(t, now = Date.now()) {

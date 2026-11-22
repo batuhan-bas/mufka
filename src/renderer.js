@@ -8,14 +8,14 @@ import {
 } from '../lib/dates.mjs';
 import { weekDates } from '../lib/week.mjs';
 import { migrate, emptyStore } from '../lib/migrate.mjs';
-import { genId, searchPlans, foldTR } from '../lib/plans.mjs';
+import { genId, searchPlans, foldTR, byTimeThenCreated } from '../lib/plans.mjs';
 import { occursOn, describeRecur, repeatChoices, recurFromChoice, choiceFromRecur } from '../lib/recur.mjs';
 import { duePlans } from '../lib/notify.mjs';
 import { mergeOutside } from '../lib/outside.mjs';
 import { renderMarkdown, toggleTaskLine } from '../lib/markdown.mjs';
 import {
   buildTree, TREE_SORTS, flattenNotes, resolveLink, folderOf, joinRel, canMoveInto,
-  leafOf, placeInOrder, remapOrder, forgetOrder,
+  leafOf, placeInOrder, remapOrder, forgetOrder, titleOf as noteTitleOf,
 } from '../lib/notestree.mjs';
 import { buildBacklinkIndex, backlinksFor } from '../lib/backlinks.mjs';
 import { resolveAttachment, attachInsertText } from '../lib/attach.mjs';
@@ -82,6 +82,7 @@ import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
 import { comboOf, RESERVED, idOf, keyOf, customCommand, freedDefault, takenBy, assign as assignKeys, reset as resetKeys } from '../lib/hotkeys.mjs';
 import { foldPlan, headingFor, foldsHiding } from '../lib/fold.mjs';
 import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
+import { el as elem } from './dom.js';
 
 const plansApi = window.planner;
 // macOS: Mufka draws its own title bar (styles.css, "Title bar").
@@ -142,7 +143,6 @@ const state = {
   history: null,          // { key, stack:[src...], i } whole-document undo/redo
   noteCache: new Map(),   // rel -> content (for Ara text search)
   araQuery: '',
-  editPlanId: null,       // plan being edited inline on the day page
   menu: null,             // open row menu: { anchorKey, buildItems }
   contentView: 'day',     // what the right pane shows: 'day' | 'note' | 'graph' | 'planner' | 'tasks' | 'draw'
   board: null,            // the open task board: { rel, content } (src/tasks.js, lib/kanban.mjs)
@@ -192,12 +192,7 @@ function getDayItems(date) {
       });
     }
   }
-  return out.sort((a, b) => (a.time && b.time ? a.time.localeCompare(b.time)
-    : a.time ? -1 : b.time ? 1 : a.created - b.created));
-}
-
-function hasAnything(date) {
-  return getDayItems(date).length > 0 || state.dailyDates.has(dayKey(date));
+  return out.sort(byTimeThenCreated);
 }
 
 // Add an explicit plan. Title is stored verbatim (no time parsing from text).
@@ -224,32 +219,16 @@ function toggleItem(p) {
   persistPlans(); render();
 }
 
-// Save an edit with explicit values. An empty title is ignored (use the row
-// menu's "Sil" to delete). Returns false if nothing was saved.
-function savePlanEdit(id, { title, time = '', endTime = '' }) {
-  const plan = state.store.items.find((x) => x.id === id);
-  if (!plan) { removeOutside(); state.editPlanId = null; render(); return true; }
-  const t = (title || '').trim();
-  if (!t) return false;
-  plan.title = t; plan.time = time; plan.endTime = endTime;
-  removeOutside();
-  state.editPlanId = null;
-  persistPlans(); render();
-  return true;
-}
-
 function pushUndo(entry) {
   state.undo.push(entry);
   if (state.undo.length > UNDO_LIMIT) state.undo.shift();
 }
 
 function deletePlan(id) {
-  removeOutside();
   const i = state.store.items.findIndex((x) => x.id === id);
   if (i === -1) return;
   const [removed] = state.store.items.splice(i, 1);
   pushUndo({ type: 'remove', plan: removed, index: i });
-  state.editPlanId = null;
   persistPlans(); render();
 }
 
@@ -310,8 +289,6 @@ let split = null; // { rel, text }
 let splitShown = null;
 let splitAsk = 0;
 function render() {
-  // Safety net: the click-outside-saves listener must never outlive an edit.
-  if (!state.editPlanId) removeOutside();
   // Removing a focused block textarea during a re-render fires its blur
   // synchronously; suppress that so it cannot commit stale text into the
   // already-advanced edit target (data corruption).
@@ -394,6 +371,12 @@ async function wavFor(bytes) {
 const VOICE_ENGINES = { handy: 'Handy', studio: 'VoiceStudio' };
 const localGet = (k) => { try { return localStorage.getItem(`mufka-${k}`); } catch { return null; } };
 const localSet = (k, v) => { try { localStorage.setItem(`mufka-${k}`, v); } catch { /* ignore */ } };
+const localDel = (k) => { try { localStorage.removeItem(`mufka-${k}`); } catch { /* ignore */ } };
+// A stored JSON value, or `fallback` when there is none or it does not parse.
+const localJson = (k, fallback) => { try { return JSON.parse(localGet(k)) ?? fallback; } catch { return fallback; } };
+
+// A button with a class, a label and what a click does.
+function button(label, cls, fn) { const b = elem('button', cls, label); b.type = 'button'; b.addEventListener('click', fn); return b; }
 const VOICE_LEDE = {
   handy: 'Handy turns it into text on your computer, with the model chosen in Handy; the note opens when it is done.',
   studio: 'VoiceStudio turns it into text on your computer, with the model chosen in VoiceStudio; the note opens when it is done.',
@@ -596,11 +579,11 @@ function applySidebar() {
   sidebarEl.inert = collapsed; // not tabbable / hidden from AT while collapsed
   sidebarEl.setAttribute('aria-hidden', String(collapsed));
   sidebarToggle.setAttribute('aria-label', collapsed ? 'Show sidebar' : 'Hide sidebar');
-  try { localStorage.setItem('mufka-sidebar', collapsed ? '1' : '0'); } catch { /* ignore */ }
+  localSet('sidebar', collapsed ? '1' : '0');
 }
 function setSidebar(collapsed) { state.sidebarCollapsed = collapsed; applySidebar(); }
 function toggleSidebar() { setSidebar(!state.sidebarCollapsed); }
-function loadSidebar() { try { state.sidebarCollapsed = localStorage.getItem('mufka-sidebar') === '1'; } catch { /* ignore */ } applySidebar(); }
+function loadSidebar() { state.sidebarCollapsed = localGet('sidebar') === '1'; applySidebar(); }
 sidebarToggle.addEventListener('click', toggleSidebar);
 
 // The sidebar's width: drag its right edge (arrow keys when focused),
@@ -611,12 +594,10 @@ function setSidebarWidth(w, save = true) {
   const px = Math.round(Math.min(Math.max(w, SIDEBAR_W.min), Math.min(SIDEBAR_W.max, window.innerWidth - 360)));
   appEl.style.setProperty('--sidebar-w', `${px}px`);
   sidebarResizer.setAttribute('aria-valuenow', String(px));
-  if (save) { try { localStorage.setItem('mufka-sidebar-width', String(px)); } catch { /* ignore */ } }
+  if (save) { localSet('sidebar-width', String(px)); }
 }
 function loadSidebarWidth() {
-  let w = SIDEBAR_W.def;
-  try { w = Number(localStorage.getItem('mufka-sidebar-width')) || SIDEBAR_W.def; } catch { /* ignore */ }
-  setSidebarWidth(w, false);
+  setSidebarWidth(Number(localGet('sidebar-width')) || SIDEBAR_W.def, false);
 }
 sidebarResizer.setAttribute('aria-valuemin', String(SIDEBAR_W.min));
 sidebarResizer.setAttribute('aria-valuemax', String(SIDEBAR_W.max));
@@ -676,12 +657,12 @@ function focusTree() {
 // places (Today, Graph), Calendar, Bookmarks and the Notes tree. Sections
 // collapse; their state persists.
 
-const SECTIONS_KEY = 'mufka-sections';
-function sectionsState() { try { return JSON.parse(localStorage.getItem(SECTIONS_KEY) || '{}') || {}; } catch { return {}; } }
+const SECTIONS_KEY = 'sections';
+function sectionsState() { return localJson(SECTIONS_KEY, {}); }
 function sectionOpen(id) { return sectionsState()[id] !== false; }
 function setSectionOpen(id, open) {
   const st = sectionsState(); st[id] = open;
-  try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(st)); } catch { /* ignore */ }
+  localSet(SECTIONS_KEY, JSON.stringify(st));
 }
 function sidebarSection(id, title, actions = [], iconName = null) {
   const sec = elem('section', `side-section side-${id}`);
@@ -722,14 +703,14 @@ function sortButton() {
     e.stopPropagation();
     openMenu('note-sort', () => TREE_SORTS.map((s) => ({
       label: `${s === state.noteSort ? '✓ ' : '\u2003'}${SORT_LABELS[s]}`,
-      fn: () => { closeMenu(); state.noteSort = s; try { localStorage.setItem('mufka-note-sort', s); } catch { /* ignore */ } renderSidebar(); },
+      fn: () => { closeMenu(); state.noteSort = s; localSet('note-sort', s); renderSidebar(); },
     })));
   }, `Sort notes: ${SORT_LABELS[state.noteSort]}`);
   b.dataset.menuAnchor = 'note-sort';
   b.setAttribute('aria-haspopup', 'menu');
   return b;
 }
-function loadNoteSort() { try { const s = localStorage.getItem('mufka-note-sort'); if (TREE_SORTS.includes(s)) state.noteSort = s; } catch { /* ignore */ } }
+function loadNoteSort() { const s = localGet('note-sort'); if (TREE_SORTS.includes(s)) state.noteSort = s; }
 
 function smallButton(label, aria, fn, title) {
   const b = elem('button', 'side-btn', label);
@@ -1161,7 +1142,7 @@ function syncTabs() {
   tabs.active.loc = currentLocation();
   tabs.prune(navValid);
   renderTabStrip();
-  try { localStorage.setItem('mufka-tabs', JSON.stringify(tabs)); } catch { /* private window */ }
+  localSet('tabs', JSON.stringify(tabs));
 }
 async function switchTab(t) {
   if (!t || t === tabs.active) return;
@@ -1575,32 +1556,32 @@ const plannerApi = {
 // A board is a note in the format of Obsidian's Kanban plugin (lib/kanban.mjs);
 // new ones go to the Tasks folder. Every change writes the whole note.
 
-const BOARD_KEY = 'mufka-board';
+const BOARD_KEY = 'board';
 const BOARD_FOLDER = 'Tasks';
 function boardList() {
   return state.vaultNotes.filter((n) => isBoard(n.content))
     .map((n) => ({ rel: n.rel, title: noteTitleOf(n.rel), content: n.content }))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
-async function openTasks(rel) {
+// Open a board (Tasks) or a drawing (Draw): `rel`, or the last one, or the first.
+async function openListItem(view, stateKey, storeKey, list, rel) {
   if (rel === undefined) {
-    const boards = boardList();
-    let last = null;
-    try { last = localStorage.getItem(BOARD_KEY); } catch { /* ignore */ }
-    rel = (boards.find((b) => b.rel === last) || boards[0] || {}).rel || null;
+    const last = localGet(storeKey);
+    rel = (list.find((x) => x.rel === last) || list[0] || {}).rel || null;
   }
   let content = null;
   if (rel) {
     const res = await notesApi.read(rel);
     if (res && !res.error) content = res.content; else rel = null;
   }
-  navVisit({ view: 'tasks', rel });
-  state.board = rel ? { rel, content } : null;
-  state.contentView = 'tasks';
+  navVisit({ view, rel });
+  state[stateKey] = rel ? { rel, content } : null;
+  state.contentView = view;
   state.menu = null;
-  if (rel) { try { localStorage.setItem(BOARD_KEY, rel); } catch { /* ignore */ } }
+  if (rel) localSet(storeKey, rel);
   render();
 }
+function openTasks(rel) { return openListItem('tasks', 'board', BOARD_KEY, rel === undefined ? boardList() : [], rel); }
 // The board changed on disk (Obsidian, a sync): show it, unless it is our own write.
 const ownBoardWrites = new Set();
 async function reloadBoard() {
@@ -1704,7 +1685,7 @@ function boardMenuItems() {
       closeMenu();
       askDialog({ heading: `Delete ${noteTitleOf(b.rel)}?`, text: 'The board and its tasks go to the Trash.', okLabel: 'Delete', danger: true }, async () => {
         await notesApi.remove(b.rel);
-        try { localStorage.removeItem(BOARD_KEY); } catch { /* ignore */ }
+        localDel(BOARD_KEY);
         state.board = null;
         await refreshTree(); await rebuildBacklinks();
         await openTasks();
@@ -1761,31 +1742,13 @@ function renderBoardsSection() {
 // In the Obsidian Excalidraw plugin's format (lib/drawing.mjs); new ones go to
 // the Excalidraw folder.
 
-const DRAWING_KEY = 'mufka-drawing';
+const DRAWING_KEY = 'drawing';
 function drawingList() {
   return state.vaultNotes.filter((n) => isDrawingRel(n.rel) || isDrawingText(n.content))
     .map((n) => ({ rel: n.rel, title: drawingTitle(n.rel) }))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
-async function openDraw(rel) {
-  if (rel === undefined) {
-    const list = drawingList();
-    let last = null;
-    try { last = localStorage.getItem(DRAWING_KEY); } catch { /* ignore */ }
-    rel = (list.find((d) => d.rel === last) || list[0] || {}).rel || null;
-  }
-  let content = null;
-  if (rel) {
-    const res = await notesApi.read(rel);
-    if (res && !res.error) content = res.content; else rel = null;
-  }
-  navVisit({ view: 'draw', rel });
-  state.drawing = rel ? { rel, content } : null;
-  state.contentView = 'draw';
-  state.menu = null;
-  if (rel) { try { localStorage.setItem(DRAWING_KEY, rel); } catch { /* ignore */ } }
-  render();
-}
+function openDraw(rel) { return openListItem('draw', 'drawing', DRAWING_KEY, rel === undefined ? drawingList() : [], rel); }
 // What the editor last wrote, so the change it causes on disk is not reloaded.
 const ownDrawingWrites = new Set();
 async function saveDrawing(rel, text) {
@@ -1837,7 +1800,7 @@ function drawingMenu() {
       askDialog({ heading: `Delete ${drawingTitle(d.rel)}?`, text: 'The drawing goes to the Trash.', okLabel: 'Delete', danger: true }, async () => {
         closeDrawing();
         await notesApi.remove(d.rel);
-        try { localStorage.removeItem(DRAWING_KEY); } catch { /* ignore */ }
+        localDel(DRAWING_KEY);
         state.drawing = null;
         await refreshTree(); await rebuildBacklinks();
         await openDraw();
@@ -2027,9 +1990,9 @@ function showShortcuts() {
 const rightbarEl = document.getElementById('rightbar');
 const rightbarBtn = document.getElementById('rightbar-btn');
 function loadRightbar() {
-  try { Object.assign(state.rightbar, JSON.parse(localStorage.getItem('mufka-rightbar') || '{}')); } catch { /* ignore */ }
+  Object.assign(state.rightbar, localJson('rightbar', {}));
 }
-function saveRightbar() { try { localStorage.setItem('mufka-rightbar', JSON.stringify(state.rightbar)); } catch { /* ignore */ } }
+function saveRightbar() { localSet('rightbar', JSON.stringify(state.rightbar)); }
 function toggleRightbar(open = !state.rightbar.open) {
   state.rightbar.open = open; saveRightbar();
   if (open) rebuildBacklinks().then(renderRightbar).catch(() => {});
@@ -2281,7 +2244,7 @@ async function copyBuiltinTemplates() {
 function loadRecent() { try { state.recent = JSON.parse(localStorage.getItem('mufka-recent') || '[]').filter((r) => typeof r === 'string'); } catch { state.recent = []; } }
 function rememberRecent(rel) {
   state.recent = pushRecent(state.recent, rel);
-  try { localStorage.setItem('mufka-recent', JSON.stringify(state.recent)); } catch { /* ignore */ }
+  localSet('recent', JSON.stringify(state.recent));
 }
 
 // Notes by fuzzy title (path as a fallback); recent notes first when empty.
@@ -2427,7 +2390,6 @@ function searchFor(q) {
 }
 
 function hint(text) { const d = document.createElement('div'); d.className = 'ara-empty'; d.textContent = text; return d; }
-function elem(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 // --- Takvim sidebar: mini month + selected-day timed plans ---
 
@@ -2439,7 +2401,6 @@ async function selectDay(date, opts = {}) {
   state.selectedDate = date;
   state.calCursor = new Date(date.getFullYear(), date.getMonth(), 1);
   state.contentView = 'day';
-  state.editPlanId = null;
   state.menu = null;
   state.dailyDeleteConfirm = false;
   state.blockEdit = null;
@@ -2764,8 +2725,8 @@ function section(titleText, children) {
   return s;
 }
 
-// Shared title + "Saatli" + start/end controls, used by the add row and the
-// in-place editor. idPrefix ('add' | 'edit') keeps element ids stable/unique.
+// Title + "Saatli" + start/end controls of the plan dialog. idPrefix keeps
+// element ids stable/unique.
 function planControls({ idPrefix, title = '', time = '', endTime = '' }) {
   const wrap = elem('div', 'plan-form');
 
@@ -2813,100 +2774,6 @@ function planControls({ idPrefix, title = '', time = '', endTime = '' }) {
   function showError(r) { if (r.error) { msg.textContent = r.error; if (r.field) r.field.focus(); } }
 
   return { wrap, titleInput, start, end, validate, showError };
-}
-
-function addRow(date) {
-  const li = elem('li', 'add-row');
-  const c = planControls({ idPrefix: 'add' });
-  c.titleInput.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    const r = c.validate();
-    if (!r.ok) { c.showError(r); return; }
-    addPlan(date, r);
-    state.focus = 'todo-add';
-    render();
-  });
-  li.append(c.wrap);
-  return li;
-}
-
-function startEdit(id) {
-  closeMenu();
-  state.editPlanId = id;
-  state.focus = 'plan-edit';
-  render();
-}
-
-function editorRow(p) {
-  const li = elem('li', 'plan-row editing');
-  const c = planControls({ idPrefix: 'edit', title: p.title, time: p.time, endTime: p.endTime });
-  const save = () => {
-    const r = c.validate();
-    if (!r.ok) { c.showError(r); return false; }
-    return savePlanEdit(p.id, r);
-  };
-  const cancel = () => { removeOutside(); state.editPlanId = null; render(); };
-  for (const inp of [c.titleInput, c.start, c.end]) {
-    inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); save(); }
-      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-    });
-  }
-  attachOutsideSave(c.wrap, save);
-  li.append(c.wrap);
-  return li;
-}
-
-function planRow(p, timed) {
-  if (state.editPlanId === p.id) return editorRow(p);
-
-  const li = elem('li', 'plan-row' + (p.done ? ' done' : ''));
-  const check = document.createElement('input');
-  check.type = 'checkbox'; check.className = 'check'; check.checked = p.done;
-  check.setAttribute('aria-label', 'Done');
-  check.addEventListener('change', () => toggleItem(p));
-  li.append(check);
-
-  if (timed && p.time) {
-    const chips = elem('span', 'chips');
-    chips.append(elem('span', 'chip', p.time));
-    if (p.endTime) chips.append(elem('span', 'chip-dash', '–'), elem('span', 'chip', p.endTime));
-    li.append(chips);
-  }
-
-  const title = elem('span', 'plan-title', p.title);
-  title.addEventListener('click', () => startEdit(p.id));
-  li.append(title);
-
-  if (p.recur) li.append(elem('span', 'repeat-label', 'repeats'));
-
-  const menuBtn = elem('button', 'menu-btn');
-  menuBtn.append(icon('more', { size: 15 }));
-  menuBtn.type = 'button';
-  menuBtn.setAttribute('aria-label', 'Options');
-  menuBtn.setAttribute('aria-haspopup', 'menu');
-  menuBtn.dataset.menuAnchor = p.id;
-  menuBtn.addEventListener('click', (e) => { e.stopPropagation(); openMenu(p.id, () => planMenuItems(p)); });
-  li.append(menuBtn);
-  return li;
-}
-
-function planMenuItems(p) {
-  return [
-    { label: 'Edit', fn: () => startEdit(p.id) },
-    {
-      label: 'Delete',
-      fn: () => {
-        if (p.recur) {
-          openMenu(p.id, () => [
-            { label: 'Only this day', fn: () => { deleteOccurrence(p.id, dayKey(state.selectedDate)); closeMenu(); } },
-            { label: 'All in series', fn: () => { closeMenu(); deletePlan(p.id); } },
-          ]);
-        } else { closeMenu(); deletePlan(p.id); }
-      },
-    },
-  ];
 }
 
 // --- generic "⋯" menu (top-level layer, never clipped). anchorKey matches a
@@ -2967,16 +2834,6 @@ function renderMenu() {
   let left = state.menu.align === 'left' ? r.left : r.right - mw; if (left < 8) left = 8; if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
   menu.style.top = `${top}px`; menu.style.left = `${left}px`;
   (menu.querySelector('.menu-item, .swatch.on, .swatch, .icon-choice.on, .icon-choice, .cover-choice.on') || menu.querySelector('button, input'))?.focus();
-}
-
-let outsideHandler = null;
-function attachOutsideSave(rootEl, save) {
-  removeOutside();
-  outsideHandler = (e) => { if (!rootEl.contains(e.target)) save(); };
-  setTimeout(() => document.addEventListener('mousedown', outsideHandler), 0);
-}
-function removeOutside() {
-  if (outsideHandler) { document.removeEventListener('mousedown', outsideHandler); outsideHandler = null; }
 }
 
 // --- daily note on the day page ---
@@ -3214,13 +3071,20 @@ function dataviewBlocks(src) {
   return renderMarkdown(src, { doc: document, noteExists: wikiExists, attach: (raw) => resolveAttachment(raw, state.attachFiles, '', attachmentsDirFor(state.layout, '')) });
 }
 
+// Clicks on rendered Markdown: attachments, web links, tags, and [[links]]
+// (onWiki gets the link element).
+function wireLinks(el, onWiki) {
+  const on = (sel, fn) => el.querySelectorAll(sel).forEach((x) => x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(x); }));
+  on('[data-att]', (x) => openAttachment(x.getAttribute('data-att')));
+  on('a[data-external]', (a) => notesApi.openExternal(a.getAttribute('href')));
+  on('.tag[data-tag]', (t) => searchFor(`#${t.getAttribute('data-tag')}`));
+  on('a[data-wiki]', onWiki);
+}
+const followWiki = (a) => openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
+
 // Links and boxes in dataviewjs output, which arrives after the note mounted.
 function wireDataviewContent(box) {
-  box.querySelectorAll('a[data-wiki]').forEach((a) => a.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation(); hidePreview(); openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
-  }));
-  box.querySelectorAll('a[data-external]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); }));
-  box.querySelectorAll('.tag[data-tag]').forEach((t) => t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); }));
+  wireLinks(box, (a) => { hidePreview(); followWiki(a); });
   wireDataview(box);
 }
 
@@ -3626,19 +3490,22 @@ const coverInto = (dir) => {
     files: async (paths) => took(await notesApi.attachAddFiles(paths, dir)),
   };
 };
-// "Add cover" on a book: an image file picked for it.
-async function addBookCover(book) {
-  const img = await coverInto(folderOf(book.rel)).pick();
+// "Add cover" on a book or "Add poster" on a movie: an image file picked for it.
+async function addCover(item) {
+  const img = await coverInto(folderOf(item.rel)).pick();
   if (!img) return;
-  await changeNoteText(book.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
+  await changeNoteText(item.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
   render();
 }
-// A book moved to another shelf: its status, and the day it was started or
-// finished when not written yet.
-function moveBook(book, stage) {
-  return changeNoteText(book.rel, (text) => stageChanges(book, stage, dayKey(new Date()))
+// A book or movie moved to another shelf or row: its status, and the day it was
+// started, finished or watched when not written yet (`changes`: stageChanges
+// or movieStageChanges).
+function moveItem(item, stage, changes) {
+  return changeNoteText(item.rel, (text) => changes(item, stage, dayKey(new Date()))
     .reduce((t, [k, v]) => (k === 'status' ? setJobStatus(t, v, setProp) : setProp(t, k, v)), text));
 }
+const moveBook = (book, stage) => moveItem(book, stage, stageChanges);
+const moveMovie = (movie, stage) => moveItem(movie, stage, movieStageChanges);
 function booksBlock(rel, code) {
   const settings = projectsSettings(code); // the same settings: folder, template
   const books = vaultBooks();
@@ -3647,7 +3514,7 @@ function booksBlock(rel, code) {
     urlOf: bookCoverUrl,
     onOpen: (to) => openNote(to),
     onMove: (to, stage) => { const b = books.find((x) => x.rel === to); if (b) moveBook(b, stage); },
-    onCover: (b) => addBookCover(b),
+    onCover: addCover,
     onNew: () => openBookDialog({ cover: coverInto(folder), pathOf: (f) => notesApi.pathForFile(f) }, async (b) => {
       const today = dayKey(new Date());
       const made = await noteFromTemplate({
@@ -3662,19 +3529,6 @@ function booksBlock(rel, code) {
 
 // --- movies (lib/movies.mjs, src/movies-view.js) ---
 const vaultMovies = () => vaultItems(mayBeMovie, movieOf);
-// "Add poster" on a movie: an image file picked for it.
-async function addMoviePoster(movie) {
-  const img = await coverInto(folderOf(movie.rel)).pick();
-  if (!img) return;
-  await changeNoteText(movie.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
-  render();
-}
-// A movie moved to another row: its status, and the day it was watched when
-// not written yet.
-function moveMovie(movie, stage) {
-  return changeNoteText(movie.rel, (text) => movieStageChanges(movie, stage, dayKey(new Date()))
-    .reduce((t, [k, v]) => (k === 'status' ? setJobStatus(t, v, setProp) : setProp(t, k, v)), text));
-}
 function moviesBlock(rel, code) {
   const settings = projectsSettings(code); // the same settings: folder, template
   const movies = vaultMovies();
@@ -3683,7 +3537,7 @@ function moviesBlock(rel, code) {
     urlOf: bookCoverUrl,
     onOpen: (to) => openNote(to),
     onMove: (to, stage) => { const m = movies.find((x) => x.rel === to); if (m) moveMovie(m, stage); },
-    onPoster: (m) => addMoviePoster(m),
+    onPoster: addCover,
     onNew: () => openMovieDialog({ poster: coverInto(folder), pathOf: (f) => notesApi.pathForFile(f) }, async (m) => {
       const made = await noteFromTemplate({
         folder, name: m.title, template: settings.template, builtin: 'movie',
@@ -3887,7 +3741,6 @@ async function openWiki(target, heading) {
 
 // The daily notes folder is special in the tree (cannot be renamed/moved/deleted).
 const isGunluk = (rel) => state.layout.daily !== '' && rel === state.layout.daily;
-const noteTitleOf = (rel) => rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/i, '');
 
 async function refreshTree() {
   const res = await notesApi.tree();
@@ -3969,13 +3822,13 @@ function scheduleBacklinks() {
 // When never toggled, it defaults to collapsed only when there are no backlinks.
 function backlinksCollapsed(n) {
   let pref = null;
-  try { pref = localStorage.getItem('mufka-backlinks'); } catch { /* ignore */ }
+  pref = localGet('backlinks');
   if (pref === '1') return false; // expanded
   if (pref === '0') return true;  // collapsed
   return n === 0;
 }
 function setBacklinksCollapsed(collapsed) {
-  try { localStorage.setItem('mufka-backlinks', collapsed ? '0' : '1'); } catch { /* ignore */ }
+  localSet('backlinks', collapsed ? '0' : '1');
 }
 
 // "Linked mentions (N)" section for the note at `rel`. Collapsible; each
@@ -4024,7 +3877,7 @@ function backlinkSection(rel) {
 function loadExpanded() {
   try { state.expanded = new Set(JSON.parse(localStorage.getItem('mufka-expanded') || '[]')); } catch { state.expanded = new Set(); }
 }
-function saveExpanded() { try { localStorage.setItem('mufka-expanded', JSON.stringify([...state.expanded])); } catch { /* ignore */ } }
+function saveExpanded() { localSet('expanded', JSON.stringify([...state.expanded])); }
 function ensureExpanded(rel) { if (rel) { state.expanded.add(rel); saveExpanded(); } }
 function expandAncestors(rel) {
   let f = folderOf(rel);
@@ -4268,7 +4121,7 @@ async function dropBeside(srcKey, targetRel, where) {
   state.treeOrder = placeInOrder(state.treeOrder, dest, siblings, leafOf(rel), before);
   if (state.noteSort !== 'custom') {
     state.noteSort = 'custom';
-    try { localStorage.setItem('mufka-note-sort', 'custom'); } catch { /* ignore */ }
+    localSet('note-sort', 'custom');
   }
   saveTreeStyles();
   render();
@@ -4502,7 +4355,7 @@ function askDelete(rel, what, after) {
   });
 }
 function drawingMenuItems(d) {
-  const name = d.rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+  const name = noteTitleOf(d.rel);
   return [
     { label: 'Open', fn: () => { closeMenu(); openDraw(d.rel); } },
     { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'draw', rel: d.rel }); } },
@@ -4558,7 +4411,7 @@ function boardRowMenuItems(b) {
     SEP,
     { label: 'Delete', danger: true, fn: () => askDelete(b.rel, 'board and its tasks', async () => {
       if (state.board && state.board.rel === b.rel) {
-        try { localStorage.removeItem(BOARD_KEY); } catch { /* ignore */ }
+        localDel(BOARD_KEY);
         state.board = null;
         if (state.contentView === 'tasks') await openTasks(); else render();
       } else render();
@@ -4589,8 +4442,8 @@ const revealItem = (rel) => ({ label: plansApi.isMac ? 'Reveal in Finder' : 'Sho
 // What a [[link]] to the note is: its name, or its path when another note has
 // the same name.
 function linkTarget(rel) {
-  const name = rel.replace(/^.*\//, '').replace(/\.md$/i, '');
-  const same = state.notesFlat.filter((x) => x.rel.replace(/^.*\//, '').replace(/\.md$/i, '').toLowerCase() === name.toLowerCase());
+  const name = noteTitleOf(rel);
+  const same = state.notesFlat.filter((x) => noteTitleOf(x.rel).toLowerCase() === name.toLowerCase());
   return same.length > 1 ? rel.replace(/\.md$/i, '') : name;
 }
 // Move to…: a folder picked from a list (the top of the vault first).
@@ -4601,7 +4454,7 @@ function moveToFolder(key) {
   const folders = ['', ...state.treeFolders].filter((f) => f !== here && !(isFolder && (f === rel || f.startsWith(`${rel}/`))));
   openPalette({
     id: 'move',
-    placeholder: `Move ${rel.replace(/^.*\//, '').replace(/\.md$/i, '')} to…`,
+    placeholder: `Move ${noteTitleOf(rel)} to…`,
     footer: '↑↓ navigate · ↵ move · esc close',
     items: (q) => folders
       .filter((f) => !q.trim() || f.toLowerCase().includes(q.trim().toLowerCase()))
@@ -4614,7 +4467,7 @@ async function duplicateFile(rel) {
   const res = await notesApi.read(rel);
   if (!res || res.error) { showToast('Could not read it'); return null; }
   const folder = folderOf(rel);
-  let name = rel.replace(/^.*\//, '').replace(/\.md$/i, '');
+  let name = noteTitleOf(rel);
   const drawing = /\.excalidraw$/i.test(name);
   if (drawing) {
     const base = name.replace(/\.excalidraw$/i, '');
@@ -4824,10 +4677,10 @@ const askSplit = (e) => { if ((e.metaKey || e.ctrlKey) && e.altKey && (e.type ==
 document.addEventListener('click', askSplit, true);
 document.addEventListener('keydown', askSplit, true);
 function takeSplitAsk() { const yes = splitAsk && Date.now() - splitAsk < 1500; splitAsk = 0; return !!yes; }
-function saveSplit() { try { localStorage.setItem('mufka-split', split ? split.rel : ''); } catch { /* private window */ } }
+function saveSplit() { localSet('split', split ? split.rel : ''); }
 function loadSplit() {
   let rel = '';
-  try { rel = localStorage.getItem('mufka-split') || ''; } catch { /* none */ }
+  rel = localGet('split') || '';
   if (rel && state.notesFlat.some((n) => n.rel === rel)) openSplit(rel);
 }
 const splitText = () => (split.rel === state.openNote ? state.noteContent : (state.noteCache.get(split.rel) ?? split.text));
@@ -4900,14 +4753,11 @@ function renderSplit() {
     const el = elem('div', `block md block-${b.type}`);
     el.dataset.blockStart = String(b.start);
     for (const n of renderMarkdown(blockText(text, b), { doc: document, noteExists: wikiExists, attach, refs: text, embedNote, embedStack: [rel], ...noteRenderOptions(rel) })) el.append(n);
-    el.querySelectorAll('a[data-wiki]').forEach((a) => a.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation(); hidePreview();
+    wireLinks(el, (a) => {
+      hidePreview();
       const to = resolveLink(a.getAttribute('data-wiki'), rel, state.notesFlat);
-      if (to) openSplit(to); else openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading'));
-    }));
-    el.querySelectorAll('a[data-external]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); }));
-    el.querySelectorAll('[data-att]').forEach((x) => x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAttachment(x.getAttribute('data-att')); }));
-    el.querySelectorAll('.tag[data-tag]').forEach((t) => t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); }));
+      if (to) openSplit(to); else followWiki(a);
+    });
     el.querySelectorAll('input.task-check').forEach((box) => box.addEventListener('change', () => toggleSplitTask(b.start + Number(box.getAttribute('data-line')))));
     wireDataview(el);
     el.addEventListener('mousedown', (e) => {
@@ -4929,9 +4779,9 @@ splitEl.querySelector('.split-close').addEventListener('click', () => closeSplit
     const room = document.getElementById('app').clientWidth - document.getElementById('sidebar').offsetWidth - 360;
     if (w == null) splitEl.style.removeProperty('flex');
     else splitEl.style.flex = `0 0 ${Math.round(Math.max(280, Math.min(w, room)))}px`;
-    if (save) { try { localStorage.setItem('mufka-split-width', w == null ? '' : String(splitEl.offsetWidth)); } catch { /* ignore */ } }
+    if (save) { localSet('split-width', w == null ? '' : String(splitEl.offsetWidth)); }
   };
-  try { const w = Number(localStorage.getItem('mufka-split-width')); if (w) splitEl.style.flex = `0 0 ${w}px`; } catch { /* none */ }
+  const w = Number(localGet('split-width')); if (w) splitEl.style.flex = `0 0 ${w}px`;
   handle.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     handle.setPointerCapture(e.pointerId);
@@ -5015,17 +4865,13 @@ function histRecord(scope) {
   h.stack.push(cur);
   h.i = h.stack.length - 1;
 }
-function histUndo(scope) {
+// Undo (d = -1) or redo (d = 1) the whole document.
+function histStep(scope, d) {
   const h = state.history;
-  if (!h || h.key !== histKey(scope) || h.i <= 0) return false;
+  const i = h ? h.i + d : -1;
+  if (!h || h.key !== histKey(scope) || i < 0 || i >= h.stack.length) return false;
   flushActiveEditor();
-  h.i -= 1; setSrc(scope, h.stack[h.i], true); state.blockEdit = null; render(); return true;
-}
-function histRedo(scope) {
-  const h = state.history;
-  if (!h || h.key !== histKey(scope) || h.i >= h.stack.length - 1) return false;
-  flushActiveEditor();
-  h.i += 1; setSrc(scope, h.stack[h.i], true); state.blockEdit = null; render(); return true;
+  h.i = i; setSrc(scope, h.stack[h.i], true); state.blockEdit = null; render(); return true;
 }
 
 // Commit the active block textarea into the source WITHOUT rendering. Idempotent
@@ -5091,19 +4937,8 @@ function mountBlockMarkdown(container, bsrc, startLine, scope) {
   const nodes = renderMarkdown(bsrc, { doc: document, noteExists: wikiExists, attach: attachResolverFor(scope), refs: getSrcFor(scope), embedNote, ...noteRenderOptions(rel) });
   for (const n of nodes) container.append(n);
   wireDataview(container);
-  container.querySelectorAll('[data-att]').forEach((el) => {
-    el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAttachment(el.getAttribute('data-att')); });
-  });
-  container.querySelectorAll('a[data-external]').forEach((a) => {
-    a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); notesApi.openExternal(a.getAttribute('href')); });
-  });
-  container.querySelectorAll('a[data-wiki]').forEach((a) => {
-    a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openWiki(a.getAttribute('data-wiki'), a.getAttribute('data-heading')); });
-  });
+  wireLinks(container, followWiki);
   attachHoverPreview(container, previewApi);
-  container.querySelectorAll('.tag[data-tag]').forEach((t) => {
-    t.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); searchFor(`#${t.getAttribute('data-tag')}`); });
-  });
   container.querySelectorAll('input.task-check').forEach((box) => {
     box.addEventListener('change', () => {
       const full = getSrcFor(scope);
@@ -5360,8 +5195,7 @@ function propNewRow(scope) {
 
 // --- heading folds (lib/fold.mjs): kept per note in this window's storage,
 // not in the note, as in Obsidian ---
-let folds = {};
-try { folds = JSON.parse(localStorage.getItem('mufka-folds') || '{}') || {}; } catch { /* none */ }
+let folds = localJson('folds', {});
 function foldRel(scope) { return scope === 'note' ? state.openNote : (state.dailyNote.key ? dailyRel(state.dailyNote.key) : ''); }
 function foldPlanFor(scope, src = getSrcFor(scope), blocks = parseBlocks(src)) {
   return foldPlan(blocks, (b) => blockText(src, b), new Set(folds[foldRel(scope)] || []));
@@ -5370,7 +5204,7 @@ function setFolds(scope, keys) {
   const rel = foldRel(scope);
   if (!rel) return;
   if (keys.length) folds[rel] = keys; else delete folds[rel];
-  try { localStorage.setItem('mufka-folds', JSON.stringify(folds)); } catch { /* ignore */ }
+  localSet('folds', JSON.stringify(folds));
 }
 function toggleFold(scope, key) {
   const keys = new Set(folds[foldRel(scope)] || []);
@@ -5605,7 +5439,7 @@ function renderNotePane() {
     pane.append(bookHead(book, bookCoverUrl(book), header, {
       onStage: (stage) => moveBook(book, stage),
       onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
-      onCover: () => addBookCover(book),
+      onCover: () => addCover(book),
     }));
   }
   // A movie: its poster beside the title, with its row and facts.
@@ -5614,7 +5448,7 @@ function renderNotePane() {
     pane.append(movieHead(movie, bookCoverUrl(movie), header, {
       onStage: (stage) => moveMovie(movie, stage),
       onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
-      onPoster: () => addMoviePoster(movie),
+      onPoster: () => addCover(movie),
     }));
   }
   if (!book && !movie) pane.append(header);
@@ -6139,9 +5973,8 @@ function vaultSection() {
   const tx = elem('div', 'conn-text');
   tx.append(elem('span', 'conn-name', 'Your notes are .md files in'), elem('span', 'conn-note vault-path', vaultInfo && vaultInfo.path ? vaultInfo.path : ''));
   const side = elem('div', 'conn-side');
-  const btn = (label, fn) => { const b = elem('button', 'btn', label); b.type = 'button'; b.addEventListener('click', fn); return b; };
-  side.append(btn(`Show in ${FILES_APP}`, () => notesApi.reveal()), btn('Open another folder…', () => notesApi.chooseVault()));
-  if (vaultInfo && vaultInfo.custom) side.append(btn("Use Mufka's own folder", () => notesApi.useDefaultVault()));
+  side.append(button(`Show in ${FILES_APP}`, 'btn', () => notesApi.reveal()), button('Open another folder…', 'btn', () => notesApi.chooseVault()));
+  if (vaultInfo && vaultInfo.custom) side.append(button("Use Mufka's own folder", 'btn', () => notesApi.useDefaultVault()));
   row.append(tx, side);
   sec.append(row);
   return sec;
@@ -6149,7 +5982,7 @@ function vaultSection() {
 // --- Settings → Shortcuts (lib/hotkeys.mjs): the keys of every command ---
 function saveHotkeys(next) {
   hotkeys = next;
-  try { localStorage.setItem('mufka-hotkeys', JSON.stringify(hotkeys)); } catch { /* ignore */ }
+  localSet('hotkeys', JSON.stringify(hotkeys));
 }
 function shortcutsSection() {
   const sec = elem('section', 'settings-section shortcuts');
@@ -6340,23 +6173,17 @@ function openSettings(page = 'general') {
   show(SETTINGS_PAGES.some(([id]) => id === page) ? page : 'general');
 
   let busy = false;
-  const button = (label, quiet, fn) => {
-    const b = elem('button', quiet ? 'btn quiet' : 'btn', label);
-    b.type = 'button';
-    b.addEventListener('click', fn);
-    return b;
-  };
   const draw = (s, note) => {
     if (!layer.isConnected) return;
     const hadFocus = box.contains(document.activeElement);
     side.replaceChildren();
     if (s.signingIn || busy) {
       side.append(elem('span', 'conn-state', 'Waiting for sign-in in your browser\u2026'),
-        button('Cancel', true, () => wisprApi.cancel()));
+        button('Cancel', 'btn quiet', () => wisprApi.cancel()));
     } else if (s.connected) {
       side.append(elem('span', 'conn-state ok', `Connected \u00b7 ${s.account || 'Wispr Flow'}`),
-        button(s.syncing ? 'Syncing\u2026' : 'Sync now', false, syncNow),
-        button('Disconnect', true, async () => { await wisprApi.disconnect(); refresh(); showToast('Wispr Flow disconnected'); }));
+        button(s.syncing ? 'Syncing\u2026' : 'Sync now', 'btn', syncNow),
+        button('Disconnect', 'btn quiet', async () => { await wisprApi.disconnect(); refresh(); showToast('Wispr Flow disconnected'); }));
       if (s.syncing) side.querySelector('.btn:not(.quiet)').disabled = true;
       const info = s.imported
         ? `${s.imported} meeting${s.imported === 1 ? '' : 's'} in the ${s.folder} folder`
@@ -6364,7 +6191,7 @@ function openSettings(page = 'general') {
       side.append(elem('span', 'conn-info', s.lastSync ? `${info} \u00b7 last synced ${timeAgo(s.lastSync)}` : info));
       if (s.lastError && !note) note = `Last sync failed: ${s.lastError}`;
     } else {
-      side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', false, connect));
+      side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', 'btn', connect));
     }
     if (note) side.append(elem('span', 'conn-error', note));
     if (hadFocus && !box.contains(document.activeElement)) (side.querySelector('button') || done).focus();
@@ -6397,11 +6224,11 @@ function openSettings(page = 'general') {
       row.side.append(elem('span', 'conn-state', 'Not set up in this copy of Mufka'));
     } else if (s.signingIn || row.busy) {
       row.side.append(elem('span', 'conn-state', 'Waiting for sign-in in your browser\u2026'),
-        button('Cancel', true, () => calApi.cancel(row.id)));
+        button('Cancel', 'btn quiet', () => calApi.cancel(row.id)));
     } else if (s.connected) {
       row.side.append(elem('span', 'conn-state ok', `Connected \u00b7 ${s.account || row.name}`),
-        button('Refresh', true, async () => { const r = await calApi.refresh(); calRefreshAll(r && r.error); }),
-        button('Disconnect', true, async () => { await calApi.disconnect(row.id); calRefreshAll(); showToast(`${row.name} disconnected`); }));
+        button('Refresh', 'btn quiet', async () => { const r = await calApi.refresh(); calRefreshAll(r && r.error); }),
+        button('Disconnect', 'btn quiet', async () => { await calApi.disconnect(row.id); calRefreshAll(); showToast(`${row.name} disconnected`); }));
       for (const c of s.calendars) {
         const l = elem('label', 'cal-item');
         const cb = document.createElement('input');
@@ -6414,7 +6241,7 @@ function openSettings(page = 'general') {
         row.list.append(l);
       }
     } else {
-      row.side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', false, () => calConnectRow(row)));
+      row.side.append(elem('span', 'conn-state', 'Not connected'), button('Connect', 'btn', () => calConnectRow(row)));
     }
     if (note) row.side.append(elem('span', 'conn-error', note));
     if (hadFocus && !box.contains(document.activeElement)) (row.side.querySelector('button') || done).focus();
@@ -6437,7 +6264,7 @@ function openSettings(page = 'general') {
   layer._close = close;
   layer._refresh = () => refresh();
   const actions = elem('div', 'plan-dialog-actions');
-  const done = button('Done', false, close);
+  const done = button('Done', 'btn', close);
   actions.append(done);
   box.append(actions);
   layer.append(box);
@@ -6513,10 +6340,9 @@ function openEventCard(ev) {
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   document.addEventListener('keydown', onKey, true);
   const actions = elem('div', 'plan-dialog-actions');
-  const btn = (label, cls, fn) => { const b = elem('button', cls, label); b.type = 'button'; b.addEventListener('click', fn); return b; };
-  if (ev.webLink) actions.append(btn(ev.source === 'google' ? 'Open in Google Calendar' : 'Open in Outlook', 'btn quiet', () => notesApi.openExternal(ev.webLink)));
-  actions.append(btn('Close', 'btn quiet', close));
-  if (ev.joinUrl) actions.append(btn('Join meeting', 'btn', () => { notesApi.openExternal(ev.joinUrl); close(); }));
+  if (ev.webLink) actions.append(button(ev.source === 'google' ? 'Open in Google Calendar' : 'Open in Outlook', 'btn quiet', () => notesApi.openExternal(ev.webLink)));
+  actions.append(button('Close', 'btn quiet', close));
+  if (ev.joinUrl) actions.append(button('Join meeting', 'btn', () => { notesApi.openExternal(ev.joinUrl); close(); }));
   box.append(actions);
   layer.append(box);
   layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
@@ -6906,7 +6732,7 @@ function welcomeCard() {
   card.append(list);
   const ok = elem('button', 'btn', 'Got it');
   ok.type = 'button';
-  ok.addEventListener('click', () => { try { localStorage.setItem('mufka-welcome', 'done'); } catch { /* ignore */ } render(); });
+  ok.addEventListener('click', () => { localSet('welcome', 'done'); render(); });
   card.append(ok);
   return card;
 }
@@ -7011,7 +6837,7 @@ if (notesApi.onChanged) {
 // An editor (a block, the source textarea, or a tree/plan inline field) is open.
 function isEditing() {
   return !!(state.blockEdit || document.getElementById('block-editor') || document.getElementById('note-editor')
-    || document.getElementById('tree-edit') || state.editPlanId || (state.contentView === 'tasks' && tasksEditing()));
+    || document.getElementById('tree-edit') || (state.contentView === 'tasks' && tasksEditing()));
 }
 
 function isTextTarget(t) {
@@ -7023,7 +6849,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.menu) { closeMenu(); return; }
   if (e.key === 'Escape' && settingsLayer) { e.preventDefault(); settingsLayer._close(); return; }
   if (e.ctrlKey && !e.metaKey && e.key === 'Tab') { e.preventDefault(); toggleMode(); return; }
-  if (e.key === 'Escape' && state.editPlanId) { state.editPlanId = null; removeOutside(); render(); return; }
   if (e.key === 'Escape' && findBar.isOpen() && !isTextTarget(e.target) && !state.blockEdit && !isPaletteOpen()) { findBar.close({ keepFocus: true }); return; }
   const mod = e.metaKey || e.ctrlKey;
   if (!mod) return;
@@ -7045,7 +6870,7 @@ document.addEventListener('keydown', (e) => {
     // Whole-document undo/redo for the block editor (overrides native undo).
     const editScope = state.blockEdit ? state.blockEdit.scope
       : (state.contentView === 'note' && state.openNote && state.noteView === 'blocks' ? 'note' : null);
-    if (editScope) { e.preventDefault(); if (e.shiftKey) histRedo(editScope); else histUndo(editScope); return; }
+    if (editScope) { e.preventDefault(); histStep(editScope, e.shiftKey ? 1 : -1); return; }
     if (isTextTarget(e.target)) return; // native text undo
     // A canvas is open but the focus is not on it (the card that had it was removed).
     if (state.contentView === 'canvas' && canvasBoard) { e.preventDefault(); if (e.shiftKey) canvasBoard.api.redo(); else canvasBoard.api.undo(); return; }
@@ -7153,7 +6978,7 @@ async function boot() {
   loadVoice();
   // Tabs come back as they were left, when there were several.
   let savedTabs = null;
-  try { savedTabs = JSON.parse(localStorage.getItem('mufka-tabs') || 'null'); } catch { /* none */ }
+  savedTabs = localJson('tabs', null);
   const restored = savedTabs && Array.isArray(savedTabs.tabs) && savedTabs.tabs.length > 1 && tabs.restore(savedTabs, navValid);
   const startAt = restored ? tabs.active.loc : null;
   loadSplit();
