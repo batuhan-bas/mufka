@@ -1560,25 +1560,25 @@ function boardList() {
     .map((n) => ({ rel: n.rel, title: noteTitleOf(n.rel), content: n.content }))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
-async function openTasks(rel) {
+// Open a board (Tasks) or a drawing (Draw): `rel`, or the last one, or the first.
+async function openListItem(view, stateKey, storeKey, list, rel) {
   if (rel === undefined) {
-    const boards = boardList();
-    let last = null;
-    last = localGet(BOARD_KEY);
-    rel = (boards.find((b) => b.rel === last) || boards[0] || {}).rel || null;
+    const last = localGet(storeKey);
+    rel = (list.find((x) => x.rel === last) || list[0] || {}).rel || null;
   }
   let content = null;
   if (rel) {
     const res = await notesApi.read(rel);
     if (res && !res.error) content = res.content; else rel = null;
   }
-  navVisit({ view: 'tasks', rel });
-  state.board = rel ? { rel, content } : null;
-  state.contentView = 'tasks';
+  navVisit({ view, rel });
+  state[stateKey] = rel ? { rel, content } : null;
+  state.contentView = view;
   state.menu = null;
-  if (rel) { localSet(BOARD_KEY, rel); }
+  if (rel) localSet(storeKey, rel);
   render();
 }
+function openTasks(rel) { return openListItem('tasks', 'board', BOARD_KEY, rel === undefined ? boardList() : [], rel); }
 // The board changed on disk (Obsidian, a sync): show it, unless it is our own write.
 const ownBoardWrites = new Set();
 async function reloadBoard() {
@@ -1745,25 +1745,7 @@ function drawingList() {
     .map((n) => ({ rel: n.rel, title: drawingTitle(n.rel) }))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
-async function openDraw(rel) {
-  if (rel === undefined) {
-    const list = drawingList();
-    let last = null;
-    last = localGet(DRAWING_KEY);
-    rel = (list.find((d) => d.rel === last) || list[0] || {}).rel || null;
-  }
-  let content = null;
-  if (rel) {
-    const res = await notesApi.read(rel);
-    if (res && !res.error) content = res.content; else rel = null;
-  }
-  navVisit({ view: 'draw', rel });
-  state.drawing = rel ? { rel, content } : null;
-  state.contentView = 'draw';
-  state.menu = null;
-  if (rel) { localSet(DRAWING_KEY, rel); }
-  render();
-}
+function openDraw(rel) { return openListItem('draw', 'drawing', DRAWING_KEY, rel === undefined ? drawingList() : [], rel); }
 // What the editor last wrote, so the change it causes on disk is not reloaded.
 const ownDrawingWrites = new Set();
 async function saveDrawing(rel, text) {
@@ -3498,19 +3480,22 @@ const coverInto = (dir) => {
     files: async (paths) => took(await notesApi.attachAddFiles(paths, dir)),
   };
 };
-// "Add cover" on a book: an image file picked for it.
-async function addBookCover(book) {
-  const img = await coverInto(folderOf(book.rel)).pick();
+// "Add cover" on a book or "Add poster" on a movie: an image file picked for it.
+async function addCover(item) {
+  const img = await coverInto(folderOf(item.rel)).pick();
   if (!img) return;
-  await changeNoteText(book.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
+  await changeNoteText(item.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
   render();
 }
-// A book moved to another shelf: its status, and the day it was started or
-// finished when not written yet.
-function moveBook(book, stage) {
-  return changeNoteText(book.rel, (text) => stageChanges(book, stage, dayKey(new Date()))
+// A book or movie moved to another shelf or row: its status, and the day it was
+// started, finished or watched when not written yet (`changes`: stageChanges
+// or movieStageChanges).
+function moveItem(item, stage, changes) {
+  return changeNoteText(item.rel, (text) => changes(item, stage, dayKey(new Date()))
     .reduce((t, [k, v]) => (k === 'status' ? setJobStatus(t, v, setProp) : setProp(t, k, v)), text));
 }
+const moveBook = (book, stage) => moveItem(book, stage, stageChanges);
+const moveMovie = (movie, stage) => moveItem(movie, stage, movieStageChanges);
 function booksBlock(rel, code) {
   const settings = projectsSettings(code); // the same settings: folder, template
   const books = vaultBooks();
@@ -3519,7 +3504,7 @@ function booksBlock(rel, code) {
     urlOf: bookCoverUrl,
     onOpen: (to) => openNote(to),
     onMove: (to, stage) => { const b = books.find((x) => x.rel === to); if (b) moveBook(b, stage); },
-    onCover: (b) => addBookCover(b),
+    onCover: addCover,
     onNew: () => openBookDialog({ cover: coverInto(folder), pathOf: (f) => notesApi.pathForFile(f) }, async (b) => {
       const today = dayKey(new Date());
       const made = await noteFromTemplate({
@@ -3534,19 +3519,6 @@ function booksBlock(rel, code) {
 
 // --- movies (lib/movies.mjs, src/movies-view.js) ---
 const vaultMovies = () => vaultItems(mayBeMovie, movieOf);
-// "Add poster" on a movie: an image file picked for it.
-async function addMoviePoster(movie) {
-  const img = await coverInto(folderOf(movie.rel)).pick();
-  if (!img) return;
-  await changeNoteText(movie.rel, (text) => setProp(text, 'image', `[[${img.name}]]`));
-  render();
-}
-// A movie moved to another row: its status, and the day it was watched when
-// not written yet.
-function moveMovie(movie, stage) {
-  return changeNoteText(movie.rel, (text) => movieStageChanges(movie, stage, dayKey(new Date()))
-    .reduce((t, [k, v]) => (k === 'status' ? setJobStatus(t, v, setProp) : setProp(t, k, v)), text));
-}
 function moviesBlock(rel, code) {
   const settings = projectsSettings(code); // the same settings: folder, template
   const movies = vaultMovies();
@@ -3555,7 +3527,7 @@ function moviesBlock(rel, code) {
     urlOf: bookCoverUrl,
     onOpen: (to) => openNote(to),
     onMove: (to, stage) => { const m = movies.find((x) => x.rel === to); if (m) moveMovie(m, stage); },
-    onPoster: (m) => addMoviePoster(m),
+    onPoster: addCover,
     onNew: () => openMovieDialog({ poster: coverInto(folder), pathOf: (f) => notesApi.pathForFile(f) }, async (m) => {
       const made = await noteFromTemplate({
         folder, name: m.title, template: settings.template, builtin: 'movie',
@@ -4886,17 +4858,13 @@ function histRecord(scope) {
   h.stack.push(cur);
   h.i = h.stack.length - 1;
 }
-function histUndo(scope) {
+// Undo (d = -1) or redo (d = 1) the whole document.
+function histStep(scope, d) {
   const h = state.history;
-  if (!h || h.key !== histKey(scope) || h.i <= 0) return false;
+  const i = h ? h.i + d : -1;
+  if (!h || h.key !== histKey(scope) || i < 0 || i >= h.stack.length) return false;
   flushActiveEditor();
-  h.i -= 1; setSrc(scope, h.stack[h.i], true); state.blockEdit = null; render(); return true;
-}
-function histRedo(scope) {
-  const h = state.history;
-  if (!h || h.key !== histKey(scope) || h.i >= h.stack.length - 1) return false;
-  flushActiveEditor();
-  h.i += 1; setSrc(scope, h.stack[h.i], true); state.blockEdit = null; render(); return true;
+  h.i = i; setSrc(scope, h.stack[h.i], true); state.blockEdit = null; render(); return true;
 }
 
 // Commit the active block textarea into the source WITHOUT rendering. Idempotent
@@ -5475,7 +5443,7 @@ function renderNotePane() {
     pane.append(bookHead(book, bookCoverUrl(book), header, {
       onStage: (stage) => moveBook(book, stage),
       onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
-      onCover: () => addBookCover(book),
+      onCover: () => addCover(book),
     }));
   }
   // A movie: its poster beside the title, with its row and facts.
@@ -5484,7 +5452,7 @@ function renderNotePane() {
     pane.append(movieHead(movie, bookCoverUrl(movie), header, {
       onStage: (stage) => moveMovie(movie, stage),
       onRate: (n) => changeNoteText(state.openNote, (text) => setProp(text, 'rating', n || '')),
-      onPoster: () => addMoviePoster(movie),
+      onPoster: () => addCover(movie),
     }));
   }
   if (!book && !movie) pane.append(header);
@@ -6914,7 +6882,7 @@ document.addEventListener('keydown', (e) => {
     // Whole-document undo/redo for the block editor (overrides native undo).
     const editScope = state.blockEdit ? state.blockEdit.scope
       : (state.contentView === 'note' && state.openNote && state.noteView === 'blocks' ? 'note' : null);
-    if (editScope) { e.preventDefault(); if (e.shiftKey) histRedo(editScope); else histUndo(editScope); return; }
+    if (editScope) { e.preventDefault(); histStep(editScope, e.shiftKey ? 1 : -1); return; }
     if (isTextTarget(e.target)) return; // native text undo
     // A canvas is open but the focus is not on it (the card that had it was removed).
     if (state.contentView === 'canvas' && canvasBoard) { e.preventDefault(); if (e.shiftKey) canvasBoard.api.redo(); else canvasBoard.api.undo(); return; }
