@@ -6,11 +6,11 @@
 //   attachSuggest(textarea, { items(kind, query, trigger) → [{ label, detail?, insert, caret?, run?(ta) }] })
 
 import { detectTrigger, applySuggestion } from '../lib/suggest.mjs';
+import { el } from './dom.js';
 
 let box = null;
 let state = null; // { ta, trigger, rows, sel }
 
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 export function closeSuggest() {
   if (box) box.remove();

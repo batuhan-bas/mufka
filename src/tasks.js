@@ -17,6 +17,7 @@ import {
   CARD_TYPES, PRIORITIES,
 } from '../lib/kanban.mjs';
 import { icon } from './icons.js';
+import { el } from './dom.js';
 
 const K = (text) => keyLabel(text, Boolean(window.planner && window.planner.isMac));
 const TYPE_LABEL = { feature: 'Feature', bug: 'Bug', chore: 'Chore' };
@@ -30,7 +31,6 @@ let scrollLeft = 0;
 let focusAfter = null;   // { col, card } to focus after the next render
 let openAfter = null;    // { rel, col, card, draft } whose dialog opens after the next render
 
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function btn(cls, label, fn, title) {
   const b = el('button', cls, label);
   b.type = 'button';

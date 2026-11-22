@@ -82,6 +82,7 @@ import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
 import { comboOf, RESERVED, idOf, keyOf, customCommand, freedDefault, takenBy, assign as assignKeys, reset as resetKeys } from '../lib/hotkeys.mjs';
 import { foldPlan, headingFor, foldsHiding } from '../lib/fold.mjs';
 import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
+import { el as elem } from './dom.js';
 
 const plansApi = window.planner;
 // macOS: Mufka draws its own title bar (styles.css, "Title bar").
@@ -2403,7 +2404,6 @@ function searchFor(q) {
 }
 
 function hint(text) { const d = document.createElement('div'); d.className = 'ara-empty'; d.textContent = text; return d; }
-function elem(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 // --- Takvim sidebar: mini month + selected-day timed plans ---
 

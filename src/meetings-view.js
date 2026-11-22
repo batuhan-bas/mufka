@@ -2,13 +2,8 @@
 // was, who was there, how many of its action items are done.
 import { factsRow } from './jobs-view.js';
 import { progressBar } from './projects-view.js';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 
 export function meetingStrip(m) {
   const box = el('div', 'job-strip meeting-strip');

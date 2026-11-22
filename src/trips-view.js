@@ -4,13 +4,8 @@
 import { tripTime, tripDays } from '../lib/trips.mjs';
 import { factsRow } from './jobs-view.js';
 import { progressBar } from './projects-view.js';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const date = (key) => new Date(`${key.slice(0, 10)}T12:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 

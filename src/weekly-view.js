@@ -3,15 +3,10 @@
 // another day, add one with "+ Add", move what is left to the next day.
 import { weekSummary } from '../lib/weekly.mjs';
 import { periodNav } from './budget-view.js';
+import { el } from './dom.js';
 
 const NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
 
 // monday: the Date the week starts (for the dates under the day names), or null.

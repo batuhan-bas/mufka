@@ -6,13 +6,8 @@
 //      onOpenFile(file, event), onOpenUrl(url), pickNote() → Promise<path|null>,
 //      askText({ heading, value, placeholder }) → Promise<string|null> }
 import { edgeGeometry, anchor, curve, moveNodes, removeItems, updateItem, paintOrder, freeSpot, bounds, newId, PRESET_COLORS } from '../lib/canvas.mjs';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}) => { const e = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
 const colorClass = (c) => (PRESET_COLORS.includes(String(c)) ? ` cv-c${c}` : '');

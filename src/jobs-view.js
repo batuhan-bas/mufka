@@ -2,13 +2,8 @@
 // (its stage, one click to move it on; company, place, pay, link), the
 // ```jobs board of all applications by stage, and the form for a new one.
 import { jobColumns, jobStats, daysSince, REJECTED } from '../lib/jobs.mjs';
+import { el } from './dom.js';
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const ago = (date) => {
   const d = daysSince(date);
