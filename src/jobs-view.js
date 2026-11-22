@@ -3,6 +3,7 @@
 // ```jobs board of all applications by stage, and the form for a new one.
 import { jobColumns, jobStats, daysSince, REJECTED } from '../lib/jobs.mjs';
 import { el } from './dom.js';
+import { dayKey } from '../lib/dates.mjs';
 
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const ago = (date) => {
@@ -159,10 +160,7 @@ export function jobsBoard(jobs, { stages, onOpen, onMove, onNew }) {
   });
 }
 
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+const today = () => dayKey(new Date());
 
 // The new application form. onSave({ company, role, link, location, applied }).
 export function openJobDialog(onSave) {
