@@ -90,6 +90,9 @@ Planner.
   notes.
 - **Write in place**: notes always look formatted; click a paragraph to edit it.
   Tables, task lists, callouts, footnotes, properties, `==highlights==`.
+- **Fold headings**: the arrow beside a heading hides its section; folds stay
+  when the note opens again. **⌘.** folds the heading you are in, **⌥⌘[** /
+  **⌥⌘]** fold or unfold them all.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Details** panel: outline, outgoing links, unlinked mentions (one click turns

@@ -1844,3 +1844,20 @@ body.quick-page { margin: 0; overflow: hidden; background: var(--ground); }
 .quick-mic-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
 .quick-mic-time { font-size: 12px; font-variant-numeric: tabular-nums; }
 .quick-mic.wait { opacity: .55; pointer-events: none; }
+
+/* Heading folds (lib/fold.mjs): an arrow left of a heading that has blocks under it */
+.block.foldable :is(h1, h2, h3, h4, h5, h6) { position: relative; }
+.fold-toggle {
+  position: absolute; left: -26px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: none;
+  display: grid; place-items: center; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .12s;
+}
+.block.foldable:hover .fold-toggle, .block.folded .fold-toggle, .fold-toggle:focus-visible { opacity: 1; }
+.fold-toggle:hover { background: var(--hover-soft); color: var(--text); }
+.fold-toggle svg { width: 12px; height: 12px; transition: transform .15s; }
+.block.folded .fold-toggle svg { transform: rotate(-90deg); }
+.fold-more {
+  margin-left: 10px; vertical-align: middle; font: 500 12px/20px var(--font); color: var(--muted);
+  border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 8px; background: none; cursor: pointer;
+}
+.fold-more:hover { color: var(--text); background: var(--hover-soft); }

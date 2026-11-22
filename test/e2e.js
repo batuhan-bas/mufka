@@ -1987,6 +1987,37 @@ app.whenReady().then(() => setTimeout(async () => {
     // 64f. Right-click menus: a note's path is copied, it is duplicated and
     //      moved; a drawing in the sidebar is renamed (keeping .excalidraw)
     //      and deleted after asking.
+    // 64e5. Heading folds: the arrow folds a section (nested headings too),
+    //       the fold is still there when the note opens again, a link to a
+    //       heading inside it unfolds it, ⌥⌘] unfolds everything.
+    await step('64e5', 'fold a heading, kept on reopen, unfolded by a link and by unfold all', async () => {
+      const dir = path.join(tvault, 'Folds');
+      fs.mkdirSync(dir, { recursive: true });
+      const text = '# Lisbon\n\nFive days.\n\n## Flights\n\n- Out\n- Back\n\n## The flat\n\nAddress.\n\n### Keys\n\nAt the cafe.\n\n## Budget\n\nAbout 900.\n';
+      fs.writeFileSync(path.join(dir, 'Lisbon.md'), text);
+      fs.writeFileSync(path.join(dir, 'Pointer.md'), 'See [[Lisbon#Keys]].\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('Lisbon'); await enter();
+      const head = (t) => `[...document.querySelectorAll('.blocks .block-heading')].find(b => b.querySelector('h1,h2,h3')?.textContent.includes(${JSON.stringify(t)}))`;
+      assert(await waitFor(`!!(${head('The flat')})?.querySelector('.fold-toggle')`, 4000), 'no fold arrow on The flat');
+      await clickEval(`${head('The flat')}.querySelector('.fold-toggle')`, 'fold The flat');
+      const shown = (t) => `[...document.querySelectorAll('.blocks > .block')].some(b => b.textContent.includes(${JSON.stringify(t)}))`;
+      assert(await waitFor(`!${shown('Address.')} && !${shown('At the cafe.')} && ${shown('About 900.')} && /3 blocks/.test(${head('The flat')}.textContent)`, 3000), `fold did not hide the section: ${await js('[...document.querySelectorAll(".blocks > .block")].map(b => b.textContent).join(" | ")')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `fold-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG());
+      assert(fs.readFileSync(path.join(dir, 'Lisbon.md'), 'utf8') === text, 'folding changed the note');
+      await press('O', ['meta']); await typeText('Pointer'); await enter();
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Pointer"', 3000), 'Pointer did not open');
+      await press('O', ['meta']); await typeText('Lisbon'); await enter();
+      assert(await waitFor(`!!(${head('Flights')}) && !${shown('Address.')}`, 3000), 'the fold was not kept');
+      await press('O', ['meta']); await typeText('Pointer'); await enter();
+      await clickEval(`[...document.querySelectorAll('a[data-wiki]')].find(a => a.getAttribute('data-wiki') === 'Lisbon')`, 'link to Lisbon#Keys');
+      assert(await waitFor(`document.querySelector(".note-title")?.textContent === "Lisbon" && ${shown('At the cafe.')}`, 3000), 'the link did not unfold Keys');
+      await clickEval(`${head('Lisbon')}.querySelector('.fold-toggle')`, 'fold Lisbon');
+      assert(await waitFor(`!${shown('Five days.')}`, 3000), 'the top heading did not fold');
+      await press(']', ['meta', 'alt']);
+      assert(await waitFor(`${shown('Five days.')} && ${shown('At the cafe.')}`, 3000), '⌥⌘] did not unfold all');
+    });
+
     await step('64f', 'right-click: copy path, duplicate, move; rename and delete a drawing', async () => {
       const dir = path.join(tvault, 'Menus');
       fs.mkdirSync(path.join(dir, 'Inner'), { recursive: true });

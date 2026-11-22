@@ -68,6 +68,7 @@ import { fuzzyMatch, fuzzyFilter, pushRecent } from '../lib/fuzzy.mjs';
 import { outline, outgoingLinks, unlinkedMentions, linkMention } from '../lib/noteinfo.mjs';
 import { buildTagIndex } from '../lib/tags.mjs';
 import { eventsOnDay, eventWhen } from '../lib/calendar.mjs';
+import { foldPlan, headingFor, foldsHiding } from '../lib/fold.mjs';
 import { PALETTE, TREE_ICONS, folderColor, rowColor, isIconId, cleanEmoji, setStyle, remapStyles, pruneStyles } from '../lib/treestyle.mjs';
 
 const plansApi = window.planner;
@@ -1773,7 +1774,7 @@ document.getElementById('foot-keys').addEventListener('click', () => showShortcu
 // Keyboard shortcuts cheat sheet (⌘/, Help menu, sidebar footer).
 const SHORTCUTS = [
   ['Getting around', [['⌘O', 'Open a note (quick switcher)'], ['⌘P', 'Command palette'], ['⌘F', 'Find in this note'], ['⌥⌘F', 'Find and replace in this note'], ['⇧⌘F', 'Search all notes and plans'], ['⌘T', 'Home (today)'], ['⌘1', 'Planner (this week)'], ['⌘3', 'Tasks'], ['⌘4', 'Draw'], ['⌃Tab', 'Switch Notes / Planner / Tasks / Draw'], ['⌥⌘← / ⌥⌘→', 'Previous / next week in the Planner'], ['⌘2', 'Notes tree'], ['⌘G / ⇧⌘G', 'Graph / local graph'], ['⌘[ / ⌘]', 'Back / forward'], ['⌘-click', 'Open in a new tab'], ['⌥⌘-click', 'Open to the right'], ['⌥⌘T', 'New tab'], ['⌘W', 'Close tab'], ['⇧⌘[ / ⇧⌘]', 'Previous / next tab']]],
-  ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo']]],
+  ['Writing', [['⌘N', 'New note'], ['⌘E', 'Edit source / back to preview'], ['⇧⌘T', 'Insert template'], ['[[', 'Link a note (suggestions)'], ['#', 'Add a tag (suggestions)'], ['⌘Z / ⇧⌘Z', 'Undo / redo'], ['⌘.', 'Fold or unfold this heading'], ['⌥⌘[ / ⌥⌘]', 'Fold / unfold all headings']]],
   ['Window', [['⌘\\', 'Show / hide sidebar'], ['⇧⌘\\', 'Show / hide details (outline, links, tags)'], ['⌘/', 'This list'], ['⌘,', 'Settings']]],
 ];
 function showShortcuts() {
@@ -2154,6 +2155,9 @@ function commandList() {
     { label: 'Theme: dark', run: () => setTheme('dark') },
     { label: 'Theme: follow the system', run: () => setTheme('system') },
     { label: 'Open this note to the right', when: noteOpen, run: () => openSplit(state.openNote) },
+    { label: 'Fold all headings', hint: '⌥⌘[', when: () => noteOpen() && state.noteView === 'blocks', run: () => foldAll('note', true) },
+    { label: 'Unfold all headings', hint: '⌥⌘]', when: () => noteOpen() && state.noteView === 'blocks', run: () => foldAll('note', false) },
+    { label: 'Fold or unfold this heading', hint: '⌘.', when: () => noteOpen() && state.noteView === 'blocks', run: () => toggleFoldHere('note') },
     { label: 'Add property to this note', hint: '⌘;', when: () => noteOpen() && state.noteView === 'blocks', run: () => startAddProperty('note') },
     { label: 'Swap the two panes', when: () => !!split, run: () => swapSplit() },
     { label: 'Close the right pane', when: () => !!split, run: () => closeSplit() },
@@ -2866,6 +2870,7 @@ function noteActionItems(title, getSrc, saveUnsaved) {
     { label: 'Insert template…', fn: () => { closeMenu(); openTemplatePicker(); } },
     { label: 'Open to the right', fn: () => { closeMenu(); openSplit(state.openNote); } },
     { label: 'Add property', fn: () => { closeMenu(); startAddProperty('note'); } },
+    ...(state.noteView === 'blocks' ? [{ label: 'Fold all headings', fn: () => { closeMenu(); foldAll('note', true); } }, { label: 'Unfold all headings', fn: () => { closeMenu(); foldAll('note', false); } }] : []),
     { label: 'Version history…', fn: () => { closeMenu(); openNoteHistory(); } },
     { label: 'Export…', fn: () => openMenu('menu-note', () => exportSubItems(title, getSrc, saveUnsaved)) },
     { label: 'Delete', fn: () => openMenu('menu-note', () => [
@@ -3399,6 +3404,7 @@ async function openAttachment(rel) {
 function scrollToHeading(heading) {
   if (!heading) return;
   const want = foldTR(String(heading).trim());
+  if (state.contentView === 'note' && state.openNote && state.noteView === 'blocks') unfoldHeading('note', heading);
   requestAnimationFrame(() => {
     const h = [...contentEl.querySelectorAll('.md h1, .md h2, .md h3, .md h4, .md h5, .md h6')]
       .find((el) => foldTR(el.textContent.trim()) === want);
@@ -4897,11 +4903,88 @@ function propNewRow(scope) {
   return row;
 }
 
-function blockPreview(scope, b) {
+// --- heading folds (lib/fold.mjs): kept per note in this window's storage,
+// not in the note, as in Obsidian ---
+let folds = {};
+try { folds = JSON.parse(localStorage.getItem('mufka-folds') || '{}') || {}; } catch { /* none */ }
+function foldRel(scope) { return scope === 'note' ? state.openNote : (state.dailyNote.key ? dailyRel(state.dailyNote.key) : ''); }
+function foldPlanFor(scope, src = getSrcFor(scope), blocks = parseBlocks(src)) {
+  return foldPlan(blocks, (b) => blockText(src, b), new Set(folds[foldRel(scope)] || []));
+}
+function setFolds(scope, keys) {
+  const rel = foldRel(scope);
+  if (!rel) return;
+  if (keys.length) folds[rel] = keys; else delete folds[rel];
+  try { localStorage.setItem('mufka-folds', JSON.stringify(folds)); } catch { /* ignore */ }
+}
+function toggleFold(scope, key) {
+  const keys = new Set(folds[foldRel(scope)] || []);
+  if (keys.has(key)) keys.delete(key); else keys.add(key);
+  setFolds(scope, [...keys]);
+  render();
+}
+function foldAll(scope, on) {
+  if (state.blockEdit) flushActiveEditor();
+  setFolds(scope, on ? foldPlanFor(scope).heads.filter((h) => h.hidden > 0).map((h) => h.key) : []);
+  render();
+}
+// ⌘.: the heading of the block being edited, else of the first one in view.
+function toggleFoldHere(scope) {
+  const src = getSrcFor(scope);
+  const blocks = parseBlocks(src);
+  let start = state.blockEdit && state.blockEdit.scope === scope ? state.blockEdit.startLine ?? state.blockEdit.newAfter : null;
+  if (start == null) {
+    const top = contentEl.getBoundingClientRect().top;
+    const first = [...contentEl.querySelectorAll('.blocks > [data-block-start]')].find((x) => x.getBoundingClientRect().bottom > top + 40);
+    start = first ? Number(first.dataset.blockStart) : null;
+  }
+  const idx = blocks.findIndex((x) => x.start === start);
+  const head = idx < 0 ? null : headingFor(foldPlan(blocks, (b) => blockText(src, b), new Set(folds[foldRel(scope)] || [])), idx);
+  if (!head || head.hidden === 0) return;
+  if (state.blockEdit) flushActiveEditor();
+  toggleFold(scope, head.key);
+}
+// Unfold whatever hides a heading (followed link, outline click).
+function unfoldHeading(scope, text) {
+  const src = getSrcFor(scope);
+  const blocks = parseBlocks(src);
+  const plan = foldPlanFor(scope, src, blocks);
+  const want = foldTR(String(text).trim());
+  const h = plan.heads.find((x) => foldTR(x.text) === want);
+  const hiding = h ? foldsHiding(plan, h.index) : [];
+  if (!hiding.length) return false;
+  setFolds(scope, (folds[foldRel(scope)] || []).filter((k) => !hiding.includes(k)));
+  render();
+  return true;
+}
+const FOLD_ARROW = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function foldControl(el, scope, head) {
+  const h = el.querySelector('h1, h2, h3, h4, h5, h6');
+  if (!h || head.hidden === 0) return;
+  el.classList.add('foldable');
+  if (head.folded) el.classList.add('folded');
+  const btn = elem('button', 'fold-toggle');
+  btn.type = 'button';
+  btn.innerHTML = FOLD_ARROW;
+  btn.setAttribute('aria-expanded', String(!head.folded));
+  btn.setAttribute('aria-label', `${head.folded ? 'Unfold' : 'Fold'} ${head.text}`);
+  btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toggleFold(scope, head.key); });
+  h.prepend(btn);
+  if (head.folded) {
+    const more = elem('button', 'fold-more', `${head.hidden} ${head.hidden === 1 ? 'block' : 'blocks'}`);
+    more.type = 'button';
+    more.title = 'Unfold';
+    more.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toggleFold(scope, head.key); });
+    h.append(more);
+  }
+}
+
+function blockPreview(scope, b, head) {
   if (b.type === 'frontmatter') return propertiesBlock(scope, b);
   const el = elem('div', `block md block-${b.type}`); // block-image, block-heading… for spacing
   el.dataset.blockStart = String(b.start);
   mountBlockMarkdown(el, blockText(getSrcFor(scope), b), b.start, scope);
+  if (head) foldControl(el, scope, head);
   decorateBudgetBlock(el, scope === 'note' ? state.openNote : dailyRel(state.dailyNote.key), getSrcFor(scope), b);
   el.addEventListener('mousedown', (e) => {
     if (e.target.closest('a, input, img:not(.mermaid-img), button, [data-att], summary, .tag')) return; // keep links/tasks/folds/tags/buttons single-click
@@ -5012,9 +5095,11 @@ function renderBlockEditor(container, scope) {
   const wrap = elem('div', 'blocks');
   if (state.propAdding === scope && !blocks.some((b) => b.type === 'frontmatter')) wrap.append(propertiesBlock(scope, null));
   if (edit && edit.newAfter === -1) wrap.append(blockTextarea(scope, null, edit));
+  const plan = foldPlanFor(scope, src, blocks);
+  const heads = new Map(plan.heads.map((h) => [h.start, h]));
   for (const b of blocks) {
     if (edit && edit.startLine === b.start) { wrap.append(blockTextarea(scope, b, edit)); continue; }
-    wrap.append(blockPreview(scope, b));
+    if (!plan.hidden.has(b.start)) wrap.append(blockPreview(scope, b, heads.get(b.start)));
     if (edit && edit.newAfter === b.start) wrap.append(blockTextarea(scope, null, edit));
   }
   const tail = elem('div', 'block-tail'); tail.setAttribute('aria-hidden', 'true');
@@ -6275,6 +6360,10 @@ document.addEventListener('keydown', (e) => {
   if (k === 't') { e.preventDefault(); goToday(); return; }
   if (k === 'n') { e.preventDefault(); newNote(); return; }
   if (k === ',') { e.preventDefault(); openSettings(); return; }
+  const foldScope = state.blockEdit ? state.blockEdit.scope
+    : (state.contentView === 'note' && state.openNote && state.noteView === 'blocks' ? 'note' : null);
+  if (e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { if (foldScope) { e.preventDefault(); foldAll(foldScope, e.code === 'BracketLeft'); } return; }
+  if (e.code === 'Period' && !e.shiftKey && !e.altKey) { if (foldScope) { e.preventDefault(); toggleFoldHere(foldScope); } return; }
   if (e.key === '[' || e.code === 'BracketLeft') { if (!isTextTarget(e.target)) { e.preventDefault(); goNav(-1); } return; }
   if (e.key === ']' || e.code === 'BracketRight') { if (!isTextTarget(e.target)) { e.preventDefault(); goNav(1); } return; }
   if (k === '/') { e.preventDefault(); showShortcuts(); return; }
