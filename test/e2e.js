@@ -2091,6 +2091,30 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "Sapiens"', 3000), 'the card did not open its note');
     });
 
+    // 64e4. Tasks queries: a ```tasks block lists open tasks from across the
+    //       vault by due date (late ones together); ticking one ticks it in
+    //       its note with the ✅ date; its note opens from the row.
+    await step('64e4', 'tasks queries: grouped by due, tick in place, open the note', async () => {
+      const dir = path.join(tvault, 'TQ');
+      fs.mkdirSync(dir, { recursive: true });
+      const d = (n) => { const x = new Date(); x.setDate(x.getDate() + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+      fs.writeFileSync(path.join(dir, 'Work.md'), `# Clients\n- [ ] Send the invoice ⏫ 📅 ${d(-3)}\n- [ ] Write the notes 🔼 📅 ${d(0)}\n- [x] Old one ✅ ${d(-9)}\n`);
+      fs.writeFileSync(path.join(dir, 'Home.md'), `- [ ] Call the bank 🔽 📅 ${d(3)}\n- [ ] Someday\n`);
+      fs.writeFileSync(path.join(dir, 'This week.md'), '# This week\n\n```tasks\nnot done\nhas due date\npath includes TQ/\ngroup by due\n```\n\n```tasks\ngroup by wibble\n```\n');
+      await sleep(900);
+      await press('O', ['meta']); await typeText('This week'); await enter();
+      const groups = '[...document.querySelectorAll(".note-pane .tq .tq-group")].map(g => g.firstChild.textContent + ":" + g.querySelector(".tq-group-count").textContent).join("|")';
+      assert(await waitFor(`/^Overdue:1\\|Today · .*:1\\|.*:1$/.test(${groups})`, 4000), `groups: ${await js(groups)}`);
+      assert(await js('/3 tasks/.test(document.querySelector(".note-pane .tq-head")?.textContent || "") && /could not read "group by wibble"/.test(document.querySelector(".note-pane .tq-error")?.textContent || "")'), `head / error: ${await js('[...document.querySelectorAll(".note-pane .tq")].map(x => x.textContent).join(" || ")')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `tasks-query-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      const row = (txt) => `[...document.querySelectorAll(".note-pane .tq-task")].find(li => li.textContent.includes(${JSON.stringify(txt)}))`;
+      await clickEval(`${row('Send the invoice')}.querySelector(".tq-check")`, 'tick the invoice');
+      assert(await waitFor2(() => fs.readFileSync(path.join(dir, 'Work.md'), 'utf8').includes(`- [x] Send the invoice ⏫ 📅 ${d(-3)} ✅ ${d(0)}`), 3000), `not ticked:\n${fs.readFileSync(path.join(dir, 'Work.md'), 'utf8')}`);
+      assert(await waitFor(`!(${row('Send the invoice')}) && /2 tasks/.test(document.querySelector(".note-pane .tq-head")?.textContent || "")`, 3000), `still listed: ${await js('document.querySelector(".note-pane .tq")?.textContent')}`);
+      await clickEval(`${row('Call the bank')}.querySelector(".tq-src")`, 'Home link');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Home"', 3000), 'the task\'s note did not open');
+    });
+
     // 64f. Right-click menus: a note's path is copied, it is duplicated and
     //      moved; a drawing in the sidebar is renamed (keeping .excalidraw)
     //      and deleted after asking.
