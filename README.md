@@ -157,6 +157,12 @@ Planner.
   tasks and `file.*`; inline `` `= this.field` ``; ticking a task in a result
   ticks it in its note. ` ```dataviewjs ` scripts run too — in a sandbox with
   no files and no network.
+- **Bases**, like Obsidian's: a `.base` file in the sidebar opens as its views
+  — a table, cards (with an image property) or a list — with filters
+  (`file.hasTag`, `file.inFolder`, `and` / `or` / `not`, comparisons),
+  formulas, sorting, grouping and summaries (Average, Sum…). Change a note's
+  property right in the table; **+ New** makes a note that fits the view.
+  `![[Books.base#View]]` or a ` ```base ` block shows one in a note.
 - **Mermaid diagrams** (` ```mermaid `) are drawn in the app's colours, and
   **HTML** in notes works for formatting (`<kbd>`, `<details>`, `<br>`,
   `<mark>`, tables…); scripts, frames and styles never run.

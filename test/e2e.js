@@ -1984,6 +1984,50 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await js('document.querySelectorAll(".meeting-task-btn").length === 1'), 'the open action item has no Add to board');
     });
 
+    // 64e3. Obsidian Bases: a .base file in the tree opens as its views (a
+    //      table, cards); a cell changes the note; ![[X.base#View]] and a
+    //      ```base block draw it in a note.
+    await step('64e3', 'bases: a .base file as a table and cards, a cell edit, embeds', async () => {
+      const dir = path.join(tvault, 'Bookbase');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'hobbit.png'), makePng(30, 40));
+      fs.writeFileSync(path.join(dir, 'Sapiens.md'), '---\ntags: [book]\nauthor: Yuval Noah Harari\nstatus: Reading\nrating: 4\npages: 443\n---\n');
+      fs.writeFileSync(path.join(dir, 'Hobbit.md'), '---\ntags: [book]\nauthor: J. R. R. Tolkien\nstatus: Finished\nrating: 5\npages: 310\ncover: "[[hobbit.png]]"\n---\n');
+      fs.writeFileSync(path.join(dir, 'Dune.md'), '---\ntags: [book]\nauthor: Frank Herbert\nstatus: To read\npages: 412\n---\n');
+      fs.writeFileSync(path.join(dir, 'Books.base'), [
+        'filters:', '  and:', '    - file.hasTag("book")', '    - file.inFolder("Bookbase")',
+        'formulas:', '  per_star: if(rating, (pages / rating).round(1))',
+        'views:', '  - type: table', '    name: All books', '    order: [file.name, author, status, rating, formula.per_star]',
+        '    sort:', '      - property: rating', '        direction: DESC', '    summaries:', '      rating: Average',
+        '  - type: cards', '    name: Covers', '    image: note.cover', '    order: [file.name, author]', '    groupBy:', '      property: status', '',
+      ].join('\n'));
+      fs.writeFileSync(path.join(dir, 'Reading list.md'), '# Reading list\n\n![[Books.base#Covers]]\n\n```base\nfilters: status == "Reading"\nviews:\n  - type: list\n    order: [file.name, author]\n```\n');
+      await sleep(900);
+      await clickSel('#mode-notes'); await sleep(200);
+      const row = (n) => `[...document.querySelectorAll('.tree-row')].find(r => r.querySelector('.tree-name')?.textContent === ${JSON.stringify(n)})`;
+      if (!(await js(`!!(${row('Books')})`))) await clickUntil('document.querySelector(\'.tree-row[data-rel="Bookbase"]\')', `!!(${row('Books')})`, 'Bookbase folder');
+      assert(await waitFor(`${row('Books')}?.dataset.type === 'base'`, 3000), `Books.base not in the tree (${consoleErr}): ${await js(`[...document.querySelectorAll('.tree-row')].map(r => r.textContent).filter(t => /Bookbase|Books|Sapiens/.test(t)).join('|')`)}`);
+      await clickEval(row('Books'), 'Books.base');
+      const cells = '[...document.querySelectorAll(".base-pane .base-table tbody tr.base-row")].map(r => [...r.cells].map(c => c.textContent).join(";")).join(" | ")';
+      assert(await waitFor(`${cells} === "Hobbit;J. R. R. Tolkien;Finished;5;62 | Sapiens;Yuval Noah Harari;Reading;4;110.8 | Dune;Frank Herbert;To read;;"`, 4000), `table: ${await js(cells)}`);
+      assert(await js('/Average 4.5/.test(document.querySelector(".base-pane .base-table tfoot")?.textContent || "") && /3 results/.test(document.querySelector(".base-count")?.textContent || "")'), `summary/count: ${await js('document.querySelector(".base-pane tfoot")?.textContent')} ${await js('document.querySelector(".base-count")?.textContent')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `base-table-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      // Dune gets a rating from the table.
+      await clickEval('[...document.querySelectorAll(".base-pane tr.base-row")].find(r => r.dataset.rel === "Bookbase/Dune.md").querySelector("td[data-key=\\"note.rating\\"]")', 'Dune rating cell');
+      assert(await waitFor('document.activeElement?.classList.contains("base-cell-input")', 2000), 'the cell is not being edited');
+      await typeText('3'); await enter();
+      assert(await waitFor2(() => /rating: 3/.test(fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8')), 3000), `rating not written:\n${fs.readFileSync(path.join(dir, 'Dune.md'), 'utf8')}`);
+      assert(await waitFor('/Dune;Frank Herbert;To read;3;137.3/.test(' + cells + ')', 3000), `after the edit: ${await js(cells)}`);
+      await clickEval('[...document.querySelectorAll(".base-pane .base-tab")].find(t => t.textContent === "Covers")', 'Covers view');
+      assert(await waitFor('[...document.querySelectorAll(".base-pane .base-group-head .base-group-name")].map(x => x.textContent).join(",") === "Finished,Reading,To read" && !!document.querySelector(".base-pane .base-card[data-rel=\\"Bookbase/Hobbit.md\\"] .base-card-image img[src]")', 3000), `cards: ${await js('document.querySelector(".base-pane .base-view")?.textContent')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `base-cards-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await press('O', ['meta']); await typeText('Reading list'); await enter();
+      assert(await waitFor('document.querySelectorAll(".note-pane .base-view.embed .base-card").length === 3 && /Sapiens · Yuval Noah Harari/.test(document.querySelector(".note-pane .base-list")?.textContent || "")', 4000), `embeds: ${await js('[...document.querySelectorAll(".note-pane .base-view")].map(v => v.textContent).join(" || ")')}`);
+      if (process.env.MUFKA_E2E_SHOTS) fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `base-embed-${process.env.MUFKA_E2E_THEME || 'system'}.png`), (await wc.capturePage()).toPNG());
+      await clickEval('document.querySelector(".note-pane .base-view.embed .base-card[data-rel=\\"Bookbase/Sapiens.md\\"]")', 'Sapiens card');
+      assert(await waitFor('document.querySelector(".note-title")?.textContent === "Sapiens"', 3000), 'the card did not open its note');
+    });
+
     // 64f. Right-click menus: a note's path is copied, it is duplicated and
     //      moved; a drawing in the sidebar is renamed (keeping .excalidraw)
     //      and deleted after asking.
