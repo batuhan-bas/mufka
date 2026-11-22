@@ -8,7 +8,7 @@ import {
 } from '../lib/dates.mjs';
 import { weekDates } from '../lib/week.mjs';
 import { migrate, emptyStore } from '../lib/migrate.mjs';
-import { genId, searchPlans, foldTR } from '../lib/plans.mjs';
+import { genId, searchPlans, foldTR, byTimeThenCreated } from '../lib/plans.mjs';
 import { occursOn, describeRecur, repeatChoices, recurFromChoice, choiceFromRecur } from '../lib/recur.mjs';
 import { duePlans } from '../lib/notify.mjs';
 import { mergeOutside } from '../lib/outside.mjs';
@@ -191,8 +191,7 @@ function getDayItems(date) {
       });
     }
   }
-  return out.sort((a, b) => (a.time && b.time ? a.time.localeCompare(b.time)
-    : a.time ? -1 : b.time ? 1 : a.created - b.created));
+  return out.sort(byTimeThenCreated);
 }
 
 // Add an explicit plan. Title is stored verbatim (no time parsing from text).

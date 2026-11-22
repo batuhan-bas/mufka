@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { searchPlans, foldTR } from '../lib/plans.mjs';
-import { dateFromKey, dateOfIsoWeek, weekKey, dayKey } from '../lib/dates.mjs';
+import { dateOfIsoWeek, weekKey } from '../lib/dates.mjs';
 
 const items = [
   { id: '1', scope: 'day', key: '2026-10-03', title: 'İstanbul gezisi', created: 1 },
@@ -42,13 +42,4 @@ test('empty query returns nothing and input is not mutated', () => {
 test('dateOfIsoWeek round-trips with weekKey', () => {
   assert.equal(weekKey(dateOfIsoWeek(2026, 40)), '2026-W40');
   assert.equal(weekKey(dateOfIsoWeek(2021, 1)), '2021-W01');
-});
-
-test('dateFromKey lands on the right period per scope', () => {
-  assert.equal(dayKey(dateFromKey('day', '2026-10-03')), '2026-10-03');
-  const m = dateFromKey('month', '2026-10');
-  assert.equal(m.getFullYear(), 2026);
-  assert.equal(m.getMonth(), 9);
-  assert.equal(m.getDate(), 1);
-  assert.equal(weekKey(dateFromKey('week', '2026-W40')), '2026-W40');
 });

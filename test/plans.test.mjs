@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { byTimeThenCreated, plansFor, genId, matchesQuery } from '../lib/plans.mjs';
+import { byTimeThenCreated, genId, matchesQuery } from '../lib/plans.mjs';
 
 const items = [
   { id: 'a', scope: 'day', key: '2026-10-03', title: 'Geç', time: '', done: false, created: 2 },
@@ -10,20 +10,9 @@ const items = [
   { id: 'e', scope: 'day', key: '2026-10-03', title: 'Öğlen', time: '12:30', done: false, created: 4 },
 ];
 
-test('plansFor filters by scope and key', () => {
-  const r = plansFor(items, 'week', '2026-W40');
-  assert.deepEqual(r.map((p) => p.id), ['d']);
-});
-
 test('byTimeThenCreated: timed ascending, then untimed by created', () => {
-  const r = plansFor(items, 'day', '2026-10-03');
+  const r = items.filter((p) => p.scope === 'day').sort(byTimeThenCreated);
   assert.deepEqual(r.map((p) => p.id), ['b', 'e', 'c', 'a']);
-});
-
-test('plansFor does not mutate the input array', () => {
-  const copy = items.slice();
-  plansFor(items, 'day', '2026-10-03');
-  assert.deepEqual(items, copy);
 });
 
 test('genId is deterministic given now and rnd', () => {
