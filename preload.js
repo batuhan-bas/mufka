@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('notes', {
   chooseVault: () => ipcRenderer.invoke('vault:choose'),
   useDefaultVault: () => ipcRenderer.invoke('vault:useDefault'),
   openExternal: (url) => ipcRenderer.invoke('notes:openExternal', url),
+  clipFetch: (url) => ipcRenderer.invoke('clip:fetch', url),
   copy: (text) => ipcRenderer.invoke('app:copy', text),
   clipboardText: () => ipcRenderer.invoke('app:clipboardText'),
   exportMarkdown: (title, content) => ipcRenderer.invoke('notes:exportMarkdown', title, content),

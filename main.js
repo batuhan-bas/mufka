@@ -2057,6 +2057,30 @@ ipcMain.handle('calendar:disconnect', wrap((id) => calDisconnect(String(id))));
 ipcMain.handle('calendar:refresh', wrap(() => calRefresh()));
 ipcMain.handle('calendar:setShown', wrap((id, calId, shown) => setCalendarShown(String(id), String(calId), Boolean(shown))));
 ipcMain.handle('calendar:events', wrap((from, to) => calendarEvents(String(from), String(to))));
+// Web clipper: the page's HTML, fetched here (the renderer's CSP allows no
+// network). http(s) only, text/html only, at most 5 MB, 20 seconds.
+ipcMain.handle('clip:fetch', wrap(async (url) => {
+  let u;
+  try { u = new URL(String(url)); } catch { return { error: 'That is not a web address' }; }
+  if (!/^https?:$/.test(u.protocol)) return { error: 'Only http and https pages can be clipped' };
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 20000);
+  try {
+    const res = await fetch(u.href, { signal: ac.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36', Accept: 'text/html,application/xhtml+xml' } });
+    if (!res.ok) return { error: `The page answered ${res.status}` };
+    const type = res.headers.get('content-type') || '';
+    if (!/html|xml/i.test(type)) return { error: 'That address is not a web page' };
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > 5 * 1024 * 1024) return { error: 'The page is too large' };
+    const charset = (/charset=([\w-]+)/i.exec(type) || [])[1] || 'utf-8';
+    let html;
+    try { html = new TextDecoder(charset).decode(buf); } catch { html = buf.toString('utf8'); }
+    return { html, url: res.url || u.href };
+  } catch (e) {
+    return { error: e.name === 'AbortError' ? 'The page took too long' : 'Could not reach the page' };
+  } finally { clearTimeout(timer); }
+}));
+
 ipcMain.handle('notes:openExternal', wrap((url) => {
   if (!/^https?:\/\//i.test(String(url))) return { error: 'blocked' };
   shell.openExternal(url);

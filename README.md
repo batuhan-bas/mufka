@@ -97,6 +97,10 @@ Planner.
   notes, links and groups joined by arrows. Drag, resize, colour; double-click
   the board for a new card; **New canvas** from the command palette or a
   folder's menu.
+- **Clip web pages**: **Clip web page…** in the command palette takes an
+  address and saves the article (not the menus and ads) as a note in
+  Clippings, with its source, author, dates and the `clippings` tag, as
+  Obsidian Web Clipper does.
 - **`[[Links]]`** with autocomplete, **backlinks** under every note, **page
   preview** on hover, `![[embeds]]` of other notes and images.
 - **Block links**: `[[Note#^` lists that note's paragraphs and list items;

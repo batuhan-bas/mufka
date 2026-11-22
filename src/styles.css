@@ -2074,3 +2074,11 @@ body.quick-page { margin: 0; overflow: hidden; background: var(--ground); }
 .cv-zoom-btn:first-child { border-top: 0; }
 .cv-zoom-btn:hover { color: var(--text); background: var(--hover-soft); }
 .cv-node > .cv-link { overflow: hidden !important; }
+
+/* Web clipper (lib/clip.mjs) */
+.clip-dialog { width: min(520px, 92vw); }
+.clip-url { width: 100%; box-sizing: border-box; }
+.clip-folder { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.clip-folder-select { font: inherit; font-size: 13px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--raised); color: var(--text); max-width: 70%; }
+.clip-status { margin: 0; min-height: 18px; font-size: 13px; color: var(--muted); }
+.clip-status.error { color: var(--danger); }

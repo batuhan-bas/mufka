@@ -25,6 +25,7 @@ import { createGraphView } from './graph-view.js';
 import { createCanvasView } from './canvas-view.js';
 import { parseCanvas, stringifyCanvas } from '../lib/canvas.mjs';
 import { embedSection } from '../lib/embed.mjs';
+import { clipPage } from '../lib/clip.mjs';
 import { renderPlanner, plannerFocus, announce } from './planner.js';
 import { renderTasks, tasksEditing, tasksAnnounce, openTaskAfterRender, prettyDue } from './tasks.js';
 import { createDataview } from './dataview-view.js';
@@ -1000,6 +1001,58 @@ function canvasRow(n, depth) {
   addMenuBtn(row, `c:${n.rel}`, items);
   onRightClick(row, `c:${n.rel}`, items);
   return row;
+}
+
+// --- Web clipper (lib/clip.mjs): a web page's article as a note ---
+// main fetches the page; it is parsed here inert (no scripts, no loads).
+function openClipper(url = '') {
+  const layer = elem('div', 'palette-layer');
+  const box = elem('div', 'palette plan-dialog clip-dialog');
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Clip a web page');
+  box.append(elem('div', 'plan-dialog-title', 'Clip a web page'), elem('p', 'ask-text', "The article's text becomes a note, with where it came from."));
+  const input = document.createElement('input');
+  input.className = 'ask-input clip-url'; input.value = url; input.placeholder = 'https://…'; input.setAttribute('aria-label', 'Web address');
+  const folderRow = elem('label', 'clip-folder');
+  const select = document.createElement('select');
+  select.className = 'clip-folder-select';
+  for (const f of [...new Set(['Clippings', ...state.treeFolders])]) { const o = document.createElement('option'); o.value = f; o.textContent = f.split('/').join(' / '); select.append(o); }
+  folderRow.append(elem('span', null, 'Folder'), select);
+  const status = elem('p', 'clip-status');
+  box.append(input, folderRow, status);
+  const restore = document.activeElement;
+  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
+  let busy = false;
+  const go = async () => {
+    let u = input.value.trim();
+    if (!u || busy) { input.focus(); return; }
+    if (!/^[a-z]+:/i.test(u)) u = `https://${u}`;
+    busy = true; yes.disabled = true; status.textContent = 'Clipping…'; status.classList.remove('error');
+    const res = await notesApi.clipFetch(u);
+    if (!res || res.error) { busy = false; yes.disabled = false; status.textContent = (res && res.error) || 'Could not clip the page'; status.classList.add('error'); return; }
+    const doc = new DOMParser().parseFromString(res.html, 'text/html');
+    const { name, content } = clipPage(doc, res.url, dayKey(new Date()));
+    const made = await notesApi.create(select.value, name);
+    if (!made || !made.rel) { busy = false; yes.disabled = false; status.textContent = 'Could not make the note'; status.classList.add('error'); return; }
+    await notesApi.write(made.rel, content);
+    close();
+    await refreshTree();
+    await rebuildBacklinks();
+    await openNote(made.rel, 'oku');
+    showToast(`Clipped to ${select.value}`);
+  };
+  const actions = elem('div', 'plan-dialog-actions');
+  const cancel = elem('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
+  const yes = elem('button', 'btn primary', 'Clip'); yes.type = 'button'; yes.addEventListener('click', go);
+  actions.append(cancel, yes);
+  box.append(actions);
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target === input) { e.preventDefault(); go(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  });
+  layer.append(box);
+  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
+  document.body.append(layer);
+  input.focus();
 }
 
 // --- graph view (src/graph-view.js) ---
@@ -2305,6 +2358,7 @@ function commandList(all = false) {
     { label: 'Open draw', hint: '⌘4', run: () => openDraw() },
     { label: 'New drawing', run: () => newDrawing() },
     { label: 'New canvas', run: () => newCanvas() },
+    { label: 'Clip web page…', run: () => openClipper() },
     ...drawingList().map((d) => ({ label: `Open drawing: ${d.title}`, run: () => openDraw(d.rel) })),
     { label: 'Open graph view', hint: '⌘G', run: () => openGraph() },
     { label: 'Open local graph', hint: '⇧⌘G', when: noteOpen, run: () => openGraph({ local: true }) },

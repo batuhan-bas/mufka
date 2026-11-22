@@ -2244,6 +2244,38 @@ app.whenReady().then(() => setTimeout(async () => {
       assert(await waitFor('document.querySelector(".note-title")?.textContent === "Spec"', 3000), 'the note did not open');
     });
 
+    // 64e8. Web clipper: "Clip web page…" from the command palette takes an
+    //       address; the article (not the menu, sidebar or footer) becomes a
+    //       note in Clippings with source, author, dates and the clippings tag.
+    await step('64e8', 'clip a web page into a note', async () => {
+      const http = require('http');
+      const page = '<!doctype html><html><head><title>Plain text wins | Blog</title><meta property="og:title" content="Plain text wins"><meta name="author" content="Jane Doe"><meta property="article:published_time" content="2026-11-10T09:00:00Z"><meta name="description" content="Why notes should outlive their apps."></head><body><nav><a href="/">Home</a></nav><aside class="sidebar"><p>Subscribe to the newsletter for weekly posts like this one.</p></aside><article><h1>Plain text wins</h1><p>Files you can read in any editor outlive every app that made them, and that is the point.</p><h2>Links</h2><p>See <a href="/more">more</a> about it.</p></article><footer><p>All rights reserved by the blog, forever and ever.</p></footer></body></html>';
+      const server = http.createServer((req, res) => { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(page); });
+      await new Promise((r) => server.listen(0, '127.0.0.1', r));
+      const url = `http://127.0.0.1:${server.address().port}/posts/plain-text`;
+      try {
+        await press('P', ['meta']); await typeText('Clip web'); 
+        assert(await waitFor('document.querySelector(".palette-item.selected .palette-label")?.textContent === "Clip web page…"', 2000), 'no clip command');
+        await enter();
+        assert(await waitFor('document.activeElement?.classList.contains("clip-url")', 2000), 'no address field');
+        await typeText(url); await enter();
+        const file = path.join(tvault, 'Clippings', 'Plain text wins.md');
+        assert(await waitFor2(() => fs.existsSync(file), 5000), `no clipped note: ${await js('document.querySelector(".clip-status")?.textContent')}`);
+        const text = fs.readFileSync(file, 'utf8');
+        assert(text.startsWith(`---\ntitle: "Plain text wins"\nsource: "${url}"\nauthor:\n  - "[[Jane Doe]]"\npublished: 2026-11-10\ncreated: ${todayK}\ndescription: "Why notes should outlive their apps."\ntags:\n  - clippings\n---\n`), text);
+        assert(/^Files you can read in any editor/m.test(text) && /\[more\]\(http:\/\/127\.0\.0\.1:\d+\/more\)/.test(text) && !/Subscribe|rights reserved|Home/.test(text), text);
+        assert(await waitFor('document.querySelector(".note-title")?.textContent === "Plain text wins"', 3000), 'the clipped note did not open');
+        if (process.env.MUFKA_E2E_SHOTS) { await sleep(300); fs.writeFileSync(path.join(process.env.MUFKA_E2E_SHOTS, `clip-${process.env.MUFKA_E2E_THEME || 'dark'}.png`), (await wc.capturePage()).toPNG()); }
+        // A page that cannot be reached says so and keeps the dialog.
+        await press('P', ['meta']); await typeText('Clip web'); await enter();
+        assert(await waitFor('document.activeElement?.classList.contains("clip-url")', 2000), 'no address field');
+        await typeText('http://127.0.0.1:1/nothing'); await enter();
+        assert(await waitFor('/Could not reach the page/.test(document.querySelector(".clip-status.error")?.textContent || "")', 6000), `no error: ${await js('document.querySelector(".clip-status")?.textContent')}`);
+        await press('Escape');
+        assert(await waitFor('!document.querySelector(".clip-dialog")', 2000), 'the dialog did not close');
+      } finally { server.close(); }
+    });
+
     await step('64f', 'right-click: copy path, duplicate, move; rename and delete a drawing', async () => {
       const dir = path.join(tvault, 'Menus');
       fs.mkdirSync(path.join(dir, 'Inner'), { recursive: true });
