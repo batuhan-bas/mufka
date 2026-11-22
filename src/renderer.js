@@ -3846,7 +3846,11 @@ async function openAttachment(rel) {
 // Scroll the open note's rendered body to a heading by its (folded) text.
 function scrollToHeading(heading) {
   if (!heading) return;
-  if (String(heading).startsWith('^')) { scrollToBlock(String(heading).slice(1)); return; }
+  if (String(heading).startsWith('^')) {
+    if (state.contentView === 'note' && state.openNote && state.noteView === 'blocks') unfoldBlock(String(heading).slice(1));
+    scrollToBlock(String(heading).slice(1));
+    return;
+  }
   const want = foldTR(String(heading).trim());
   if (state.contentView === 'note' && state.openNote && state.noteView === 'blocks') unfoldHeading('note', heading);
   requestAnimationFrame(() => {
@@ -5407,6 +5411,18 @@ function unfoldHeading(scope, text) {
   setFolds(scope, (folds[foldRel(scope)] || []).filter((k) => !hiding.includes(k)));
   render();
   return true;
+}
+// Unfold whatever hides a block ([[Note#^id]] followed).
+function unfoldBlock(id) {
+  const src = getSrcFor('note');
+  const at = findBlock(src, id);
+  if (!at) return;
+  const blocks = parseBlocks(src);
+  const idx = blocks.findIndex((x) => x.start <= at.start && x.end >= at.start);
+  const hiding = idx < 0 ? [] : foldsHiding(foldPlanFor('note', src, blocks), idx);
+  if (!hiding.length) return;
+  setFolds('note', (folds[foldRel('note')] || []).filter((k) => !hiding.includes(k)));
+  render();
 }
 const FOLD_ARROW = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function foldControl(el, scope, head) {
