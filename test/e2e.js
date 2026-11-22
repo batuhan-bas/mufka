@@ -2238,6 +2238,8 @@ app.whenReady().then(() => setTimeout(async () => {
       await clickEval(`document.querySelector('.cv-node[data-id="l1"]')`, 'link card');
       await press('Backspace');
       assert(await waitFor2(() => !data().nodes.some((n) => n.id === 'l1') && !data().edges.some((e) => e.toNode === 'l1'), 3000), 'not deleted');
+      // On Windows the focus falls to the page when the card goes: undo must still work.
+      await js(`document.activeElement?.blur?.()`);
       await press('Z', ['meta']);
       if (!(await waitFor2(() => data().nodes.some((n) => n.id === 'l1') && data().edges.some((e) => e.toNode === 'l1'), 3000))) assert(false, `undo did not bring it back: ${await cvDiag()}`);
       // Opening the note card's title opens the note.

@@ -224,9 +224,6 @@ export function createCanvasView(host, data, o) {
     if (!sel.size) return;
     const ids = [...sel]; sel = new Set();
     commit(removeItems(c, ids));
-    // The removed card may have held the focus; keep it on the board so
-    // Cmd/Ctrl+Z reaches the board's undo, not the app's.
-    host.focus({ preventScroll: true });
   }
 
   // --- opening, editing ---
@@ -326,6 +323,12 @@ export function createCanvasView(host, data, o) {
     if (ev.ctrlKey || ev.metaKey) setZoom(view.z * Math.exp(-ev.deltaY * 0.01), ev.clientX, ev.clientY);
     else { view.x -= ev.deltaX; view.y -= ev.deltaY; applyView(); }
   }, { passive: false });
+  // Undo (or redo) one change.
+  function step(back) {
+    const [from, to] = back ? [redo, undo] : [undo, redo];
+    if (!from.length) return;
+    to.push(c); c = from.pop(); sel = new Set([...sel].filter((id) => itemOf(id))); o.onChange(c); draw();
+  }
   host.addEventListener('keydown', (ev) => {
     if (ev.target.closest('textarea, input')) return;
     const mod = ev.metaKey || ev.ctrlKey;
@@ -333,9 +336,7 @@ export function createCanvasView(host, data, o) {
     if (ev.key === 'Escape' && sel.size) { ev.stopPropagation(); sel = new Set(); draw(); return; }
     if (mod && ev.code === 'KeyZ') {
       ev.preventDefault(); ev.stopPropagation();
-      const [from, to] = ev.shiftKey ? [redo, undo] : [undo, redo];
-      if (!from.length) return;
-      to.push(c); c = from.pop(); sel = new Set([...sel].filter((id) => itemOf(id))); o.onChange(c); draw();
+      step(ev.shiftKey);
       return;
     }
     if (mod && ev.code === 'KeyA') { ev.preventDefault(); ev.stopPropagation(); select(c.nodes.map((n) => n.id)); }
@@ -379,5 +380,8 @@ export function createCanvasView(host, data, o) {
     // The file changed outside (another app): show it, keep the selection.
     setData(next) { if (editing) return; c = next; sel = new Set([...sel].filter((id) => itemOf(id))); draw(); },
     data: () => c,
+    // For Cmd/Ctrl+Z pressed while the focus is outside the board.
+    undo: () => step(false),
+    redo: () => step(true),
   };
 }

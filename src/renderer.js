@@ -7046,8 +7046,10 @@ document.addEventListener('keydown', (e) => {
     const editScope = state.blockEdit ? state.blockEdit.scope
       : (state.contentView === 'note' && state.openNote && state.noteView === 'blocks' ? 'note' : null);
     if (editScope) { e.preventDefault(); if (e.shiftKey) histRedo(editScope); else histUndo(editScope); return; }
-    if (e.shiftKey) return;
     if (isTextTarget(e.target)) return; // native text undo
+    // A canvas is open but the focus is not on it (the card that had it was removed).
+    if (state.contentView === 'canvas' && canvasBoard) { e.preventDefault(); if (e.shiftKey) canvasBoard.api.redo(); else canvasBoard.api.undo(); return; }
+    if (e.shiftKey) return;
     e.preventDefault();
     if (state.contentView === 'tasks') undoBoard(); else undoDelete();
     return;
