@@ -955,32 +955,46 @@ async function newCanvas(folder = targetFolder()) {
   await openCanvas(rel);
 }
 // A canvas in the tree: its own icon; a click opens the board.
-function canvasRow(n, depth) {
-  const row = elem('div', 'tree-row note-row canvas-row' + (state.contentView === 'canvas' && state.canvas && state.canvas.rel === n.rel ? ' selected' : ''));
+// A sidebar row for a file that is not a note (a canvas, a base): its icon
+// and title, a click opens it, and its menu (Open in new tab, copy items,
+// Reveal, then `more`).
+function fileRow(n, depth, { type, icon: iconName, title, selected, open, menuKey, copy, more = [] }) {
+  const row = elem('div', `tree-row note-row ${type}-row${selected ? ' selected' : ''}`);
   row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
-  row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'canvas';
+  row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = type;
   const color = rowColor(n.rel, 'note', state.treeStyles);
   if (color) row.style.setProperty('--row-c', color);
-  row.append(treeIcon(n.rel, 'kanban'));
-  row.append(elem('span', 'tree-name', canvasTitleOf(n.rel)));
-  row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openCanvas(n.rel); });
-  row.addEventListener('keydown', (e) => { if (e.key === 'Enter') openCanvas(n.rel); });
+  row.append(treeIcon(n.rel, iconName));
+  row.append(elem('span', 'tree-name', title));
+  row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; open(); });
   const items = () => [
-    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'canvas', rel: n.rel }); } },
+    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: type, rel: n.rel }); } },
     SEP,
-    ...copyItems(n.rel, [{ label: 'Copy link', fn: () => { closeMenu(); copyText(`[[${leafOf(n.rel)}]]`, 'the link'); } }]),
+    ...copyItems(n.rel, [copy]),
     SEP,
     revealItem(n.rel),
-    SEP,
-    { label: 'Delete', danger: true, fn: () => { closeMenu(); askDialog({ heading: `Delete “${canvasTitleOf(n.rel)}”?`, text: 'The canvas goes to the trash.', okLabel: 'Delete', danger: true }, async () => {
-      const r = await notesApi.remove(n.rel);
-      if (r && r.error) { showToast('Could not delete the canvas'); return; }
-      if (canvasBoard && canvasBoard.rel === n.rel) { clearTimeout(canvasBoard.timer); canvasBoard = null; if (state.contentView === 'canvas') { state.canvas = null; state.contentView = 'day'; } }
-      await refreshTree(); render();
-    }); } },
+    ...more,
   ];
-  addMenuBtn(row, `c:${n.rel}`, items);
-  onRightClick(row, `c:${n.rel}`, items);
+  addMenuBtn(row, `${menuKey}:${n.rel}`, items);
+  onRightClick(row, `${menuKey}:${n.rel}`, items);
+  return row;
+}
+
+function canvasRow(n, depth) {
+  const row = fileRow(n, depth, {
+    type: 'canvas', icon: 'kanban', title: canvasTitleOf(n.rel), menuKey: 'c',
+    selected: state.contentView === 'canvas' && state.canvas && state.canvas.rel === n.rel,
+    open: () => openCanvas(n.rel),
+    copy: { label: 'Copy link', fn: () => { closeMenu(); copyText(`[[${leafOf(n.rel)}]]`, 'the link'); } },
+    more: [SEP,
+      { label: 'Delete', danger: true, fn: () => { closeMenu(); askDialog({ heading: `Delete “${canvasTitleOf(n.rel)}”?`, text: 'The canvas goes to the trash.', okLabel: 'Delete', danger: true }, async () => {
+        const r = await notesApi.remove(n.rel);
+        if (r && r.error) { showToast('Could not delete the canvas'); return; }
+        if (canvasBoard && canvasBoard.rel === n.rel) { clearTimeout(canvasBoard.timer); canvasBoard = null; if (state.contentView === 'canvas') { state.canvas = null; state.contentView = 'day'; } }
+        await refreshTree(); render();
+      }); } }],
+  });
+  row.addEventListener('keydown', (e) => { if (e.key === 'Enter') openCanvas(n.rel); });
   return row;
 }
 
@@ -1710,32 +1724,44 @@ function tasksApi() {
   };
 }
 // The sidebar's Tasks section: one row per board.
-function renderBoardsSection() {
-  const body = sidebarSection('tasks', 'Tasks', [
-    iconAction('plus', 'New board', () => newTaskBoard(), 'New task board'),
-  ], 'kanban');
-  if (!sectionOpen('tasks')) return;
-  const boards = boardList();
-  if (!boards.length) {
+// A sidebar section listing boards or drawings, each a row that opens it, with
+// its menu. c: { id, title, icon, newLabel, newTip, onNew, list(), emptyText,
+// isOn(item), open(item), key, menu(item), extra(row, item) }.
+function renderListSection(c) {
+  const body = sidebarSection(c.id, c.title, [iconAction('plus', c.newLabel, c.onNew, c.newTip)], c.icon);
+  if (!sectionOpen(c.id)) return;
+  const list = c.list();
+  if (!list.length) {
     const empty = elem('div', 'side-empty');
-    empty.append(document.createTextNode('No boards yet. '), smallButton('New board', null, () => newTaskBoard()));
+    empty.append(document.createTextNode(c.emptyText), smallButton(c.newLabel, null, c.onNew));
     body.append(empty);
     return;
   }
-  for (const b of boards) {
-    const on = state.contentView === 'tasks' && state.board && state.board.rel === b.rel;
+  for (const x of list) {
+    const on = c.isOn(x);
     const row = elem('button', `board-row${on ? ' selected' : ''}`);
     row.type = 'button';
-    row.title = b.rel;
-    row.append(icon('kanban', { size: 15 }), elem('span', 'board-name', b.title));
-    const board = parseBoard(b.content);
-    const open = board.columns.filter((c) => !c.complete).reduce((n, c) => n + c.cards.length, 0);
-    if (open) row.append(elem('span', 'place-count', String(open)));
+    row.title = x.rel;
+    row.append(icon(c.icon, { size: 15 }), elem('span', 'board-name', x.title));
+    if (c.extra) c.extra(row, x);
     if (on) row.setAttribute('aria-current', 'page');
-    row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openTasks(b.rel); });
-    sideRowMenu(row, `b:${b.rel}`, () => boardRowMenuItems(b));
+    row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; c.open(x); });
+    sideRowMenu(row, `${c.key}:${x.rel}`, () => c.menu(x));
     body.append(row);
   }
+}
+
+function renderBoardsSection() {
+  renderListSection({
+    id: 'tasks', title: 'Tasks', icon: 'kanban', newLabel: 'New board', newTip: 'New task board', onNew: () => newTaskBoard(),
+    list: boardList, emptyText: 'No boards yet. ',
+    isOn: (b) => state.contentView === 'tasks' && state.board && state.board.rel === b.rel,
+    open: (b) => openTasks(b.rel), key: 'b', menu: boardRowMenuItems,
+    extra: (row, b) => {
+      const open = parseBoard(b.content).columns.filter((col) => !col.complete).reduce((n, col) => n + col.cards.length, 0);
+      if (open) row.append(elem('span', 'place-count', String(open)));
+    },
+  });
 }
 
 // --- Draw (src/draw.js): Excalidraw drawings, each a note ------------------
@@ -1850,28 +1876,12 @@ function drawApi() {
 }
 // The sidebar's Drawings section: one row per drawing.
 function renderDrawingsSection() {
-  const body = sidebarSection('drawings', 'Drawings', [
-    iconAction('plus', 'New drawing', () => newDrawing(), 'New drawing'),
-  ], 'tiPenLine');
-  if (!sectionOpen('drawings')) return;
-  const list = drawingList();
-  if (!list.length) {
-    const empty = elem('div', 'side-empty');
-    empty.append(document.createTextNode('No drawings yet. '), smallButton('New drawing', null, () => newDrawing()));
-    body.append(empty);
-    return;
-  }
-  for (const d of list) {
-    const on = state.contentView === 'draw' && state.drawing && state.drawing.rel === d.rel;
-    const row = elem('button', `board-row${on ? ' selected' : ''}`);
-    row.type = 'button';
-    row.title = d.rel;
-    row.append(icon('tiPenLine', { size: 15 }), elem('span', 'board-name', d.title));
-    if (on) row.setAttribute('aria-current', 'page');
-    row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openDraw(d.rel); });
-    sideRowMenu(row, `d:${d.rel}`, () => drawingMenuItems(d));
-    body.append(row);
-  }
+  renderListSection({
+    id: 'drawings', title: 'Drawings', icon: 'tiPenLine', newLabel: 'New drawing', newTip: 'New drawing', onNew: () => newDrawing(),
+    list: drawingList, emptyText: 'No drawings yet. ',
+    isOn: (d) => state.contentView === 'draw' && state.drawing && state.drawing.rel === d.rel,
+    open: (d) => openDraw(d.rel), key: 'd', menu: drawingMenuItems,
+  });
 }
 
 function renderPaneTitle() {
@@ -3242,24 +3252,12 @@ function resolveBaseTarget(target, fromRel) {
 }
 // A base in the tree: its own icon; a click opens its views.
 function baseRow(n, depth) {
-  const row = elem('div', 'tree-row note-row base-row' + (state.contentView === 'base' && state.base && state.base.rel === n.rel ? ' selected' : ''));
-  row.style.paddingLeft = `${8 + depth * 16 + 16}px`;
-  row.tabIndex = 0; row.dataset.rel = n.rel; row.dataset.type = 'base';
-  const color = rowColor(n.rel, 'note', state.treeStyles);
-  if (color) row.style.setProperty('--row-c', color);
-  row.append(treeIcon(n.rel, 'template'));
-  row.append(elem('span', 'tree-name', baseTitleOf(n.rel)));
-  row.addEventListener('click', (e) => { if (e.target.closest('.menu-btn')) return; openBase(n.rel); });
-  const items = () => [
-    { label: 'Open in new tab', fn: () => { closeMenu(); newTab({ view: 'base', rel: n.rel }); } },
-    SEP,
-    ...copyItems(n.rel, [{ label: 'Copy embed', fn: () => { closeMenu(); copyText(`![[${leafOf(n.rel)}]]`, 'the embed'); } }]),
-    SEP,
-    revealItem(n.rel),
-  ];
-  addMenuBtn(row, `b:${n.rel}`, items);
-  onRightClick(row, `b:${n.rel}`, items);
-  return row;
+  return fileRow(n, depth, {
+    type: 'base', icon: 'template', title: baseTitleOf(n.rel), menuKey: 'b',
+    selected: state.contentView === 'base' && state.base && state.base.rel === n.rel,
+    open: () => openBase(n.rel),
+    copy: { label: 'Copy embed', fn: () => { closeMenu(); copyText(`![[${leafOf(n.rel)}]]`, 'the embed'); } },
+  });
 }
 
 // --- Tasks queries (lib/tasks-query.mjs, src/tasks-view.js) ---
@@ -4354,6 +4352,21 @@ function askDelete(rel, what, after) {
     await after();
   });
 }
+// "Rename" in a drawing's or board's row menu; the open one is reopened under
+// its new name.
+function renameItem(noun, x, suffix, isOpen, reopen) {
+  return { label: 'Rename', fn: () => {
+    closeMenu();
+    askDialog({ heading: `Rename ${noun}`, value: x.title, okLabel: 'Rename' }, async (to) => {
+      const res = await notesApi.rename(x.rel, `${to}${suffix}`);
+      if (!res || res.error || !res.rel) { showToast(`Could not rename the ${noun}`); return; }
+      remapRel(x.rel, res.rel);
+      await refreshTree(); await rebuildBacklinks();
+      if (isOpen()) await reopen(res.rel); else render();
+      reportLinks(res);
+    });
+  } };
+}
 function drawingMenuItems(d) {
   const name = noteTitleOf(d.rel);
   return [
@@ -4367,17 +4380,7 @@ function drawingMenuItems(d) {
     SEP,
     revealItem(d.rel),
     SEP,
-    { label: 'Rename', fn: () => {
-      closeMenu();
-      askDialog({ heading: 'Rename drawing', value: d.title, okLabel: 'Rename' }, async (to) => {
-        const res = await notesApi.rename(d.rel, `${to}.excalidraw`);
-        if (!res || res.error || !res.rel) { showToast('Could not rename the drawing'); return; }
-        remapRel(d.rel, res.rel);
-        await refreshTree(); await rebuildBacklinks();
-        if (state.drawing && state.drawing.rel === d.rel) await openDraw(res.rel); else render();
-        reportLinks(res);
-      });
-    } },
+    renameItem('drawing', d, '.excalidraw', () => state.drawing && state.drawing.rel === d.rel, openDraw),
     SEP,
     { label: 'Delete', danger: true, fn: () => askDelete(d.rel, 'drawing', async () => {
       if (state.drawing && state.drawing.rel === d.rel) { state.drawing = null; await openDraw(); } else render();
@@ -4397,17 +4400,7 @@ function boardRowMenuItems(b) {
     SEP,
     revealItem(b.rel),
     SEP,
-    { label: 'Rename', fn: () => {
-      closeMenu();
-      askDialog({ heading: 'Rename board', value: b.title, okLabel: 'Rename' }, async (to) => {
-        const res = await notesApi.rename(b.rel, to);
-        if (!res || res.error || !res.rel) { showToast('Could not rename the board'); return; }
-        remapRel(b.rel, res.rel);
-        await refreshTree(); await rebuildBacklinks();
-        if (state.board && state.board.rel === b.rel) await openTasks(res.rel); else render();
-        reportLinks(res);
-      });
-    } },
+    renameItem('board', b, '', () => state.board && state.board.rel === b.rel, openTasks),
     SEP,
     { label: 'Delete', danger: true, fn: () => askDelete(b.rel, 'board and its tasks', async () => {
       if (state.board && state.board.rel === b.rel) {

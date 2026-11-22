@@ -2,7 +2,7 @@
 // in, what went out and what is left, a ring of where it went, and the dialog
 // that adds an income or an expense as a row of the note's table.
 import { budgetSummary, categoryChoices, parseAmount } from '../lib/budget.mjs';
-import { el } from './dom.js';
+import { el, formDialog } from './dom.js';
 import { dayKey } from '../lib/dates.mjs';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -189,27 +189,14 @@ const today = () => dayKey(new Date());
 export function openAddDialog({ kind, categories = [], currency = '', colourOf = () => 'bud-c0' }, onSave) {
   const expense = kind === 'expenses';
   const heading = expense ? 'Add expense' : 'Add income';
-  const layer = el('div', 'palette-layer');
-  const box = el('div', 'palette plan-dialog bud-dialog');
-  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', heading);
-  box.append(el('div', 'plan-dialog-title', heading));
-
-  let n = 0;
-  const field = (label, input) => {
-    const id = `bud-f${(n += 1)}`;
-    input.id = id;
-    const f = el('div', 'bud-field');
-    const l = el('label', '', label); l.htmlFor = id;
-    f.append(l, input);
-    return f;
-  };
+  const { box, close, field, show } = formDialog(heading);
   const input = (cls, attrs = {}) => { const i = el('input', `ask-input ${cls}`); Object.assign(i, attrs); return i; };
   const what = input('bud-what', { placeholder: expense ? 'Coffee beans' : 'Salary' });
   const amount = input('bud-amount', { inputMode: 'decimal', placeholder: currency ? `${currency} 0` : '0' });
   const date = input('bud-date', { type: 'date', value: today() });
-  box.append(field(expense ? 'What' : 'Source', what));
+  box.append(field(expense ? 'What' : 'Source', what, 'bud-f1'));
   const two = el('div', 'bud-two');
-  two.append(field('Amount', amount), field('Date', date));
+  two.append(field('Amount', amount, 'bud-f2'), field('Date', date, 'bud-f3'));
   box.append(two);
 
   let category = ''; let fresh = null;
@@ -239,8 +226,6 @@ export function openAddDialog({ kind, categories = [], currency = '', colourOf =
 
   const err = el('div', 'bud-error'); err.setAttribute('role', 'alert');
   box.append(err);
-  const restore = document.activeElement;
-  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
   const save = () => {
     const value = parseAmount(amount.value);
     if (value == null) { err.textContent = 'Enter an amount.'; amount.focus(); return; }
@@ -248,18 +233,5 @@ export function openAddDialog({ kind, categories = [], currency = '', colourOf =
     close();
     onSave({ date: date.value || today(), what: what.value.trim(), category: cat, amount: value });
   };
-  const actions = el('div', 'plan-dialog-actions');
-  actions.append(el('span', 'bud-keys', '↵ add · esc cancel'));
-  const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
-  const ok = el('button', 'btn primary', 'Add'); ok.type = 'button'; ok.addEventListener('click', save);
-  actions.append(cancel, ok);
-  box.append(actions);
-  box.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); save(); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-  });
-  layer.append(box);
-  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
-  document.body.append(layer);
-  what.focus();
+  show('Add', save, what);
 }

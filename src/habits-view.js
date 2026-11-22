@@ -3,7 +3,7 @@
 // that adds a habit.
 import { habitSummary } from '../lib/habits.mjs';
 import { periodNav } from './budget-view.js';
-import { el } from './dom.js';
+import { el, formDialog } from './dom.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -106,15 +106,9 @@ export function decorateHabitTable(container, table, { today = -1, onToggle }) {
 
 // The add dialog. onSave({ name, goal }).
 export function openHabitDialog(onSave) {
-  const layer = el('div', 'palette-layer');
-  const box = el('div', 'palette plan-dialog bud-dialog');
-  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', 'Add habit');
-  box.append(el('div', 'plan-dialog-title', 'Add habit'));
-  const nameField = el('div', 'bud-field');
-  const label = el('label', '', 'Habit'); label.htmlFor = 'hab-name';
-  const name = el('input', 'ask-input hab-name-input'); name.id = 'hab-name'; name.placeholder = '🧘 Stretch for 10 minutes';
-  nameField.append(label, name);
-  box.append(nameField);
+  const { box, close, field, show } = formDialog('Add habit');
+  const name = el('input', 'ask-input hab-name-input'); name.placeholder = '🧘 Stretch for 10 minutes';
+  box.append(field('Habit', name, 'hab-name'));
   const goalField = el('div', 'bud-field');
   goalField.append(el('div', 'bud-field-label', 'Days a week'));
   const pills = el('div', 'bud-pills hab-goals');
@@ -130,25 +124,10 @@ export function openHabitDialog(onSave) {
   pick(7);
   goalField.append(pills);
   box.append(goalField);
-  const restore = document.activeElement;
-  const close = () => { layer.remove(); if (restore && restore.isConnected) restore.focus(); };
   const save = () => {
     if (!name.value.trim()) { name.focus(); return; }
     close();
     onSave({ name: name.value.trim(), goal });
   };
-  const actions = el('div', 'plan-dialog-actions');
-  actions.append(el('span', 'bud-keys', '↵ add · esc cancel'));
-  const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
-  const ok = el('button', 'btn primary', 'Add'); ok.type = 'button'; ok.addEventListener('click', save);
-  actions.append(cancel, ok);
-  box.append(actions);
-  box.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); save(); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-  });
-  layer.append(box);
-  layer.addEventListener('mousedown', (e) => { if (e.target === layer) close(); });
-  document.body.append(layer);
-  name.focus();
+  show('Add', save, name);
 }
